@@ -7972,7 +7972,7 @@ declare extern type vos_app_Location with
 	--- Create a directory and the missing ones above it; one already there is not an error.
 	---
 	--- Yields the calling coroutine while it waits.
-	createDir: (self: vos_app_Location, path: string) -> (boolean?, vos_app_FileError?)
+	create_dir: (self: vos_app_Location, path: string) -> (boolean?, vos_app_FileError?)
 	--- Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.
 	---
 	--- Yields the calling coroutine while it waits.
@@ -8118,7 +8118,7 @@ export type vos_app = {
 	--- Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is
 	--- asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
 	--- JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
-	openWindow: (params: { [string]: any }?) -> (),
+	open_window: (params: { [string]: any }?) -> (),
 	--- `app.notify { title, body }`: tell the person something now. It reaches the clients connected now; one that
 	--- is not connected never gets it (nothing is kept for later). The host sends the app's id with it, never text
 	--- from the app, and each shell client draws it as a banner above its windows with the app's name and icon

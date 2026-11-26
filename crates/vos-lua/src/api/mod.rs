@@ -12,7 +12,7 @@
 //! app.t.string { ... } ...        input schema builders
 //! app.notify { ... }              a notification
 //! app.emit(name, data)            an event for the app's open pages (and, unless `_name`, other apps' listeners)
-//! app.openWindow(params?)         the app's window, opened or brought forward
+//! app.open_window(params?)         the app's window, opened or brought forward
 //! app.agents:list()               the agent contacts
 //! app.log(message)                a line in the host's log
 //!
@@ -69,7 +69,7 @@ pub(crate) const RPC_MODULE: &str = "vos:rpc";
 /// `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
 /// per app). The backend's entry returns the handlers its page calls (`Handlers`).
 #[mlua_ir::module("vos:app")]
-#[allow(non_upper_case_globals, non_camel_case_types, non_snake_case)] // the names are the script's: `app.db`, `app.t`, `app.openWindow`
+#[allow(non_upper_case_globals, non_camel_case_types)] // the names are the script's: `app.db`, `app.t`
 pub mod app {
     use super::data::{Db, Kv};
     use super::files::Files;
@@ -112,7 +112,7 @@ pub mod app {
     /// Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is
     /// asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
     /// JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
-    pub fn openWindow(lua: &Lua, params: Option<WindowParams>) -> mlua::Result<()> {
+    pub fn open_window(lua: &Lua, params: Option<WindowParams>) -> mlua::Result<()> {
         misc::open_window(&*super::shared(lua)?, params)
     }
 

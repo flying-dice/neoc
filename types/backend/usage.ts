@@ -38,8 +38,8 @@ const total = app.db.tx(() => app.db.all('select * from notes').length) as numbe
 const stored: unknown = app.kv.get('seen')
 app.kv.delete('seen')
 vos.notify({ title: 'Saved' })
-vos.openWindow()
-vos.openWindow({ note: 1 })
+vos.open_window()
+vos.open_window({ note: 1 })
 const id: string = vos.id
 vos.emit('notes.changed', { id: 1 })
 

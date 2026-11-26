@@ -66,7 +66,7 @@ local handlers: rpc.Handlers = {
     local docs = app.files.documents
     local folder = string.match(params.path, "^(.*)/[^/]+$")
     if folder then
-      local _, why = docs:createDir(folder)
+      local _, why = docs:create_dir(folder)
       if why then
         return ctx:fail(`The file could not be written: {why.message}`)
       end

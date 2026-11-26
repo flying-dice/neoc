@@ -3,7 +3,7 @@
 //!
 //! ```lua
 //! local docs = app.files.documents                 -- also app.files.cache and app.files.temp
-//! local ok, err = docs:createDir("notes")          -- true | nil, err (and the missing directories above it)
+//! local ok, err = docs:create_dir("notes")          -- true | nil, err (and the missing directories above it)
 //! ok, err = docs:write("notes/a.txt", "hello")     -- replaces the file in one step; the parent must exist
 //! local text, err = docs:read("notes/a.txt")       -- the whole file, binary-safe
 //! local entries = docs:list("notes")               -- { { name, kind, size, modified } }, sorted by name
@@ -177,7 +177,6 @@ pub struct Location {
 }
 
 #[mlua_ir::object(module = "vos:app")]
-#[allow(non_snake_case)] // `createDir` is the script's name
 impl Location {
     /// The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
     #[host("Vm")]
@@ -217,9 +216,9 @@ impl Location {
 
     /// Create a directory and the missing ones above it; one already there is not an error.
     #[host("Vm")]
-    pub async fn createDir(&self, lua: Lua, path: String) -> mlua::Result<Result<(), FileError>> {
+    pub async fn create_dir(&self, lua: Lua, path: String) -> mlua::Result<Result<(), FileError>> {
         let at = self.at;
-        call(&shared(&lua)?, "createDir", true, |f| async move { f.create_dir(at, &path).await }).await
+        call(&shared(&lua)?, "create_dir", true, |f| async move { f.create_dir(at, &path).await }).await
     }
 
     /// Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.

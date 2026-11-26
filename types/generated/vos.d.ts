@@ -9474,7 +9474,7 @@ interface vos_app_Location {
    *
    * Yields the calling coroutine while it waits.
    */
-  createDir(path: string): LuaMultiReturn<[boolean, undefined] | [undefined, vos_app_FileError]>
+  create_dir(path: string): LuaMultiReturn<[boolean, undefined] | [undefined, vos_app_FileError]>
   /**
    * Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.
    *
@@ -9638,7 +9638,7 @@ declare module "vos:app" {
    * asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
    * JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
    */
-  export function openWindow(this: void, params?: { [key: string]: unknown }): void
+  export function open_window(this: void, params?: { [key: string]: unknown }): void
   /**
    * `app.notify { title, body }`: tell the person something now. It reaches the clients connected now; one that
    * is not connected never gets it (nothing is kept for later). The host sends the app's id with it, never text

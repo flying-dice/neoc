@@ -15,7 +15,7 @@ const BACKEND: &str = r#"
 local docs = app.files.documents
 return {
   seed = function()
-    assert(docs:createDir("notes/2026"))
+    assert(docs:create_dir("notes/2026"))
     assert(docs:write("notes/2026/todo.txt", "buy milk"))
     assert(docs:write("report.csv", "a,b\n1,2\n"))
     assert(docs:write("evil.html", "<script>alert(document.cookie)</script>"))

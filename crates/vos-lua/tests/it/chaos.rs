@@ -11,7 +11,7 @@
 //!
 //! A program is a few *steps*. A step is one **leaf** (an idle wait, a database or key-value read or write, a
 //! mutex, a write through `state` (an in-memory value whose assignment sends an event to the app's pages), `app.notify` or
-//! `app.openWindow`), put inside a **context** where the host
+//! `app.open_window`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
 //! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
 //! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
@@ -126,7 +126,7 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
         Leaf { code: format!("app.kv:set('k1', {n}) wrote('kv')"), idle: false },
         Leaf { code: format!("attempt('state', function() state.v = {n} end)"), idle: false },
         Leaf { code: "attempt('notify', function() app.notify { title = 'chaos' } end)".into(), idle: false },
-        Leaf { code: "attempt('window', function() app.openWindow() end)".into(), idle: false },
+        Leaf { code: "attempt('window', function() app.open_window() end)".into(), idle: false },
     ];
     if kind == Kind::OwnServer {
         leaves.push(Leaf { code: "hyper.get(OWN)".into(), idle: true });
@@ -348,7 +348,7 @@ local function TX(body)
 end
 
 app.db:migrate { [1] = "create table t(a integer primary key autoincrement, v integer)" }
--- the app's one window is its page's: `app.openWindow()` asks the shell for it
+-- the app's one window is its page's: `app.open_window()` asks the shell for it
 "#;
 
 const TOOLS: &str = r#"
@@ -391,7 +391,7 @@ app.tool { name = "peek", readOnly = true, run = function()
   refused("kv", function() app.kv:set("k1", 97) end)
   refused("state", function() state.v = 97 end)
   refused("notify", function() app.notify { title = "peek" } end)
-  refused("window", function() app.openWindow() end)
+  refused("window", function() app.open_window() end)
   refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
   steal("a readOnly call")
   resume_scripts()

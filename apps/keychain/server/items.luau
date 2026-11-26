@@ -5,8 +5,6 @@
 --
 -- A function that changes something answers with a plain sentence when it refused (the handler and the tool pass it
 -- on as it is), and with nothing when it did what it was asked.
-local app = require("vos:app")
-local rpc = require("../.app/rpc")
 local strings = require("lib:text")
 local vault = require("./vault")
 local db = app.db
@@ -24,18 +22,18 @@ db:migrate {
   ]],
 }
 
-local function itemOf(row: { [string]: any }): rpc.Item
+local function itemOf(row: { [string]: any }): keychain_Item
   return { id = row.id, service = row.service, account = row.account }
 end
 
-function items.item(id: number): rpc.Item?
+function items.item(id: number): keychain_Item?
   local row = db:one("select id, service, account from items where id = :id", { id = id })
   return if row then itemOf(row) else nil
 end
 
 -- by service, then account, whatever their capitals
-function items.all(): { rpc.Item }
-  local all: { rpc.Item } = {}
+function items.all(): { keychain_Item }
+  local all: { keychain_Item } = {}
   for _, row in
     db:all("select id, service, account from items order by service collate nocase, account collate nocase, id")
   do
@@ -44,7 +42,7 @@ function items.all(): { rpc.Item }
   return all
 end
 
-function items.overview(): rpc.Overview
+function items.overview(): keychain_Overview
   return { keychain = vault.status(), items = items.all() }
 end
 

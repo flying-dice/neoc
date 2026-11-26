@@ -155,7 +155,7 @@ export interface Notifications { changed: { params: void }; _tick: { params: Tic
 sendRequest<M extends keyof Requests>(method: M, ...params: ParamsArg<Requests[M]['params']>): Promise<Requests[M]['result']>
 ```
 
-The page's `rpc` has `sendRequest` and `onNotification` only. `host` keeps the non-RPC surface (`theme`, `context`, `openLink`, `onTeardown`, `host:reconnected`). `api` and
+The page's `rpc` has `sendRequest` and `onNotification` only. `host` keeps the non-RPC surface (`theme`, `context`, `open_link`, `on_teardown`, `host:reconnected`). `api` and
 `host.on` go.
 
 ### Backend (Luau, the global `RPC`; types in `types/vos.d.luau`)

@@ -82,7 +82,7 @@ mod tests {
                 "kv",
                 "log",
                 "notify",
-                "openWindow",
+                "open_window",
                 "t",
                 "tool",
                 "tools"

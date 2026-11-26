@@ -2,8 +2,8 @@
 /**
  * Checks every Luau fixture with `luau-lsp analyze` in strict mode against the generated declarations
  * (types/generated/vos.d.luau: the `app` API, the std:/lib:/vnd: modules an app is offered, and the one
- * `declare require`; written by vos-codegen). An app is a Vite project and checks its own backend with `vos lint`
- * and `vos typecheck` (against its generated router), so nothing under `apps/` is checked here.
+ * `declare require`; written by vos-codegen), and every app's backend against its own `types/vos.d.luau` (the same
+ * declarations with the global `RPC` typed for that app and its dependencies, written by `@vos/vite-plugin-v2`).
  *
  *  1. Positive: every `.luau` file of a fixture (`crates/<crate>/tests/fixtures/`,
  *     `scripts/fixtures/` outside `negative/`) and of the Luau the host carries (`crates/vos-lua/lua/`: `vos:docker`,
@@ -27,6 +27,10 @@
  *     this gate is what catches the errors.)
  *  4. Requires: every literal `require` of a source is a relative path, `vos:app` or a module the
  *     declarations offer (the second pass's check, stated as a plain rule with a clearer message).
+ *  5. Apps: every app under `apps/` and `e2e/apps/` (a folder with a `vite.config.ts` and an `openrpc.json`) has its
+ *     `types/` written first, by resolving its Vite config (what every Vite command does, and so what the plugin
+ *     generates on), then each `.luau` file of its `server/` is checked as a positive source, in the same two passes,
+ *     against that app's `types/vos.d.luau`.
  *
  * luau-lsp is found on PATH or at ~/.local/bin/luau-lsp and must be the pinned version (its messages change between
  * releases). When it is missing the check SKIPS with a message and exits 0 on a developer machine, and FAILS in the
@@ -36,9 +40,11 @@
  */
 import { Glob } from 'bun'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
 import { skipTool } from './gate'
 
@@ -246,7 +252,21 @@ function findLuauLsp(): string | undefined {
   return findTool('luau-lsp', join(homedir(), '.local/bin/luau-lsp'))
 }
 
-function main(): void {
+/** The apps (`apps/*`, `e2e/apps/*`: a Vite project with a contract), each with its backend's `.luau` files. */
+function listApps(): { dir: string; files: string[] }[] {
+  const apps: { dir: string; files: string[] }[] = []
+  for (const parent of ['apps', 'e2e/apps']) {
+    for (const found of new Glob(`${parent}/*/openrpc.json`).scanSync({ cwd: root })) {
+      const dir = found.replaceAll('\\', '/').replace(/\/openrpc\.json$/, '')
+      if (!existsSync(join(root, dir, 'vite.config.ts'))) continue
+      const files = [...new Glob(`${dir}/server/**/*.luau`).scanSync({ cwd: root })].map((f) => f.replaceAll('\\', '/')).sort()
+      apps.push({ dir, files })
+    }
+  }
+  return apps.sort((a, b) => a.dir.localeCompare(b.dir))
+}
+
+async function main(): Promise<void> {
   const INSTALL =
     `install luau-lsp ${LUAU_LSP_VERSION}: the release binary from\n` +
     `  https://github.com/JohnnyMorganz/luau-lsp/releases/tag/${LUAU_LSP_VERSION} unpacked somewhere on PATH (or ~/.local/bin)`
@@ -280,11 +300,23 @@ function main(): void {
   const usageRequires = new Set(requiredNames(usageSource).map((r) => r.name))
   for (const name of offered) if (!usageRequires.has(name)) problems.push(`${usage} never requires ${name}`)
 
+  // every app's types, written by its plugin as any Vite command does
+  const apps = listApps()
+  for (const app of apps) {
+    try {
+      // the app's own Vite (the repository's root has none)
+      const vite = (await import(pathToFileURL(createRequire(join(root, app.dir, 'package.json')).resolve('vite')).href)) as typeof import('vite')
+      await vite.resolveConfig({ root: join(root, app.dir), logLevel: 'silent' }, 'build')
+    } catch (error) {
+      problems.push(`${app.dir}: its types could not be written: ${(error as Error).message}`)
+    }
+  }
+
   // luau-lsp over everything, twice: against the declarations, then against the declarations without their `declare
   // require` (see the header: an app's own modules get their real types in the second pass)
   const files = [...positive, ...negative]
   const scratch = mkdtempSync(join(tmpdir(), 'vos-lint-luau-'))
-  const analyze = (definitions: string): Map<string, Finding[]> => {
+  const analyze = (definitions: string, files: string[]): Map<string, Finding[]> => {
     const run = spawnSync(
       luauLsp,
       ['analyze', '--formatter=plain', '--platform=standard', `--definitions:@vos=${definitions}`, ...files],
@@ -294,13 +326,24 @@ function main(): void {
   }
   const found = new Map<string, Finding[]>()
   try {
-    const first = analyze(DEFINITIONS)
-    // the file keeps its name: parseAnalysis treats any output that names it as a definitions failure
-    const bare = join(scratch, 'vos.d.luau')
-    writeFileSync(bare, withoutRequire(definitions))
-    const second = analyze(bare)
-    for (const file of files) {
-      found.set(file, mergeFindings(first.get(file) ?? [], dropKnownUnknownRequires(second.get(file) ?? [], offered)))
+    const twice = (path: string, text: string, files: string[], at: string): void => {
+      if (files.length === 0) return
+      const first = analyze(path, files)
+      // the file keeps its name: parseAnalysis treats any output that names it as a definitions failure
+      mkdirSync(join(scratch, at), { recursive: true })
+      const bare = join(scratch, at, 'vos.d.luau')
+      writeFileSync(bare, withoutRequire(text))
+      const second = analyze(bare, files)
+      for (const file of files) {
+        found.set(file, mergeFindings(first.get(file) ?? [], dropKnownUnknownRequires(second.get(file) ?? [], offered)))
+      }
+    }
+    twice(DEFINITIONS, definitions, files, 'host')
+    for (const app of apps) {
+      const own = `${app.dir}/types/vos.d.luau`
+      if (!existsSync(join(root, own))) continue // its types could not be written: said above
+      twice(own, readFileSync(join(root, own), 'utf8'), app.files, app.dir)
+      positive.push(...app.files)
     }
   } catch (error) {
     console.error(`lint:luau FAILED: ${(error as Error).message}`)
@@ -333,9 +376,9 @@ function main(): void {
   }
   const markers = Object.values(NEGATIVE_MARKERS).reduce((a, b) => a + b, 0)
   console.log(
-    `lint:luau OK (${positive.length} sources clean in strict mode in two passes (with and without the typed require), ${negative.length} negative fixtures flag exactly their ${markers} markers; ` +
+    `lint:luau OK (${apps.length} apps; ${positive.length} sources clean in strict mode in two passes (with and without the typed require), ${negative.length} negative fixtures flag exactly their ${markers} markers; ` +
       `${offered.size} offered modules; luau-lsp ${version})`
   )
 }
 
-if (import.meta.main) main()
+if (import.meta.main) await main()

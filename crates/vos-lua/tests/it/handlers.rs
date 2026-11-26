@@ -436,12 +436,12 @@ async fn a_panic_on_one_emit_of_a_batch_leaves_the_others_delivered_once_each() 
 
 const OPENER: &str = r#"
 local app = require("vos:app")
-app.tool { name = "open", description = "open", input = {}, run = function() app.openWindow() return {} end }
-app.tool { name = "open_main", description = "open main", input = {}, run = function() app.openWindow({ tab = "all" }) return {} end }
-app.tool { name = "open_other", description = "open another", input = {}, run = function() app.openWindow("settings") return {} end }
-app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app.openWindow() return {} end }
+app.tool { name = "open", description = "open", input = {}, run = function() app.open_window() return {} end }
+app.tool { name = "open_main", description = "open main", input = {}, run = function() app.open_window({ tab = "all" }) return {} end }
+app.tool { name = "open_other", description = "open another", input = {}, run = function() app.open_window("settings") return {} end }
+app.tool { name = "peek", description = "read only", readOnly = true, input = {}, run = function() app.open_window() return {} end }
 return {
-  show = function() app.openWindow() return "ok" end,
+  show = function() app.open_window() return "ok" end,
 }
 "#;
 

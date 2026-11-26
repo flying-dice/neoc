@@ -26,8 +26,8 @@ app.tool {
   -- writes the app's files
   run = function()
     local r: { [string]: Step } = {}
-    r.createDir = step(docs:createDir("notes/2026"))
-    r.createAgain = step(docs:createDir("notes/2026"))
+    r.create_dir = step(docs:create_dir("notes/2026"))
+    r.createAgain = step(docs:create_dir("notes/2026"))
     r.writeNoParent = step(docs:write("drafts/a.txt", "x"))
     r.write = step(docs:write("notes/2026/todo.txt", "buy milk"))
     r.overwrite = step(docs:write("notes/2026/todo.txt", "buy milk\nwalk the dog"))

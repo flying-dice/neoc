@@ -396,13 +396,13 @@ impl InstalledAppStore for MemInstalled {
     }
 }
 
-/// `(app, window, params)` of an `app.openWindow`.
+/// `(app, window, params)` of an `app.open_window`.
 pub type OpenedWindow = (String, String, Map<String, Value>);
 
 /// Records what apps asked of the shell.
 #[derive(Default)]
 pub struct RecordingShell {
-    /// `(app, window, params)` of every `app.openWindow`.
+    /// `(app, window, params)` of every `app.open_window`.
     pub windows: Mutex<Vec<OpenedWindow>>,
     /// `(app, name, data)` of every `app.emit`.
     pub events: Mutex<Vec<(String, String, Value)>>,

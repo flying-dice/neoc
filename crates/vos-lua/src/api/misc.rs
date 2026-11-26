@@ -1,4 +1,4 @@
-//! `app.id`, `app.openWindow`, `app.notify`, `app.emit`, `app.agents`.
+//! `app.id`, `app.open_window`, `app.notify`, `app.emit`, `app.agents`.
 
 use super::{json::Json, shared};
 use crate::vm::{Effect, Shared};
@@ -30,22 +30,22 @@ mlua_ir::unknown_reason!(
     PageData = "JSON the app hands its own page: its shape is the app's"
 );
 
-/// What `app.openWindow` hands the page: named JSON values.
+/// What `app.open_window` hands the page: named JSON values.
 pub type WindowParams = Json<BTreeMap<String, Unknown<PageData>>>;
 
 /// The data of an event: any JSON value.
 pub type EventData = Json<Unknown<PageData>>;
 
 pub(super) fn open_window(sh: &Shared, params: Option<WindowParams>) -> mlua::Result<()> {
-    sh.writable("app.openWindow")?;
+    sh.writable("app.open_window")?;
     let params = match params.map(|params| params.value) {
         None => Value::Null,
         Some(named @ Value::Object(_)) => named,
         // an empty table reads as `[]`: no parameters
         Some(Value::Array(none)) if none.is_empty() => Value::Null,
-        // an app has one window, so there is no name to give: `app.openWindow("settings")` is a mistake
+        // an app has one window, so there is no name to give: `app.open_window("settings")` is a mistake
         Some(_) => return Err(mlua::Error::runtime(
-            "app.openWindow: `params` is a table of named values (an app has one window: it takes no name)",
+            "app.open_window: `params` is a table of named values (an app has one window: it takes no name)",
         )),
     };
     sh.push_effect(Effect::OpenWindow { name: Shared::WINDOW.to_owned(), params })

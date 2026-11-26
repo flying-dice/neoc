@@ -252,11 +252,11 @@ pub trait InstalledAppStore: Send + Sync {
 
 // ---- shell -------------------------------------------------------------------------------------
 
-/// What an app asks of the desktop shell: `app.openWindow` (an agent's tool bringing an app forward) and
+/// What an app asks of the desktop shell: `app.open_window` (an agent's tool bringing an app forward) and
 /// `app.emit` (an event for the app's open clients). Both are delivered to the connected clients.
 #[async_trait]
 pub trait Shell: Send + Sync {
-    /// `app.openWindow(params)`: the connected shells open the window or bring the app's forward.
+    /// `app.open_window(params)`: the connected shells open the window or bring the app's forward.
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>);
     /// `app.emit(name, data)`: the app's backend tells its open clients something changed. The connected shells
     /// hand it to the frames of that app.

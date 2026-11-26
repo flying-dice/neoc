@@ -29,11 +29,12 @@
 //
 // `vos` is the rest:
 //
-//   vos.host                 the host page: theme, context, capabilities, hosted, ready, on('host:...'), onContext,
-//                            onTeardown, openLink(url), requestDisplayMode(mode)
+//   vos.host                 the host page: theme, context, capabilities, hosted, ready, on('host:...'), on_context,
+//                            on_teardown, open_link(url), request_display_mode(mode)
 //   vos.tracing              spans and events, after Rust's `tracing`
 //
-// and underneath, which the older generated modules (`@<app id>/rpc`, `@vos/host`, `@vos/tracing`) read:
+// and underneath, deprecated: what the v1 plugin's generated modules (`@<app id>/rpc`, `@vos/host`, `@vos/tracing`)
+// read. It goes with v1:
 //
 //   vos.ready                a promise: the handshake is done (`vos.context` and `vos.capabilities` are set)
 //   vos.call(method, params) a JSON-RPC request to the host; rejects with an Error that carries `code` and `data`
@@ -46,14 +47,14 @@
 //   vos.capabilities         what the host offers (MCP Apps' hostCapabilities)
 //   vos.tracing              spans and events, after Rust's `tracing`: what the generated `@vos/tracing` module reads
 //
-// Tracing (NEOC-521 POC): each backend call is a span, a child of the span the page is in when it makes the call (else
+// Tracing (NEOC-521 POC): each request (`RPC.send_request`) is a span, a child of the span the page is in when it makes the call (else
 // the root of a trace of its own), and its W3C `traceparent` goes with the call (`_meta`, next to `params`) so the
-// host's and the backend's spans join it. A page opens spans of its own (`span(name, fields).inScope(fn)`) and writes
+// host's and the backend's spans join it. A page opens spans of its own (`span(name, fields).in_scope(fn)`) and writes
 // events (`info(message, fields)`); errors after the start, unhandled rejections and a failed start are error events.
 // Records are sent to the host page in batches (`vos/telemetry`): every 2 s, at 50 records, and when the page goes.
 //
 // The span the page is in: the page has no async context (a JavaScript engine does not carry one across `await`), so
-// `inScope` makes its span current for what its function does before it first waits, and, while its promise is
+// `in_scope` makes its span current for what its function does before it first waits, and, while its promise is
 // pending, for any call or event outside every other scope as long as it is the only scope pending (with two pending,
 // which one a later call belongs to is not known, so it belongs to neither). An event in no span joins the trace of the
 // call that answered last, if it answered under a second before (a render that fails on what a call returned).
@@ -103,7 +104,7 @@
   var lastCall = null
   var CORRELATE_MS = 1000
   var LEVELS = ['trace', 'debug', 'info', 'warn', 'error']
-  /** The span whose function is running now (`inScope`), innermost last. */
+  /** The span whose function is running now (`in_scope`), innermost last. */
   var stack = []
   /** The scopes whose function returned a promise that has not settled. */
   var pendingScopes = new Set()
@@ -216,7 +217,7 @@
     })
   }
   /** Run `body` in the span and end it when `body` returns, or when the promise it returns settles. */
-  Span.prototype.inScope = function (body) {
+  Span.prototype.in_scope = function (body) {
     var self = this
     stack.push(self)
     var result
@@ -247,6 +248,9 @@
     return result
   }
 
+  /** Deprecated: the v1 plugin's generated `@vos/tracing` calls it by this name. It goes with v1. */
+  Span.prototype.inScope = Span.prototype.in_scope
+
   vos.tracing = {
     span: function (name, fields, options) {
       return new Span(name, fields, options)
@@ -256,7 +260,7 @@
         var args = arguments
         var fields = options && typeof options.fields === 'function' ? options.fields.apply(null, args) : undefined
         var that = this
-        return new Span(name, fields, options).inScope(function () {
+        return new Span(name, fields, options).in_scope(function () {
           return body.apply(that, args)
         })
       }
@@ -340,9 +344,14 @@
 
   vos.call = function (method, params) {
     var name = String(method)
-    // the app's own backend calls are traced, each a child of the span the page is in; the dialect's (`ui/...`,
-    // `vos/...`) are not
-    var span = name.indexOf('/') < 0 ? new Span('rpc ' + name, { 'rpc.method': name }) : null
+    // requests are traced, each a child of the span the page is in: a bus request (`vos/request`) and a v1 call of the
+    // app's own backend (a plain name); the rest of the dialect (`ui/...`, `vos/...`) is not
+    var bus = name === 'vos/request' && params && typeof params === 'object' ? params : null
+    var span = bus
+      ? new Span('rpc ' + bus.method, { 'rpc.service': String(bus.app), 'rpc.method': String(bus.method) })
+      : name.indexOf('/') < 0
+        ? new Span('rpc ' + name, { 'rpc.method': name })
+        : null
     function end(error) {
       if (!span) return
       lastCall = { traceId: span.traceId, spanId: span.spanId, endMs: nowMs() }
@@ -436,16 +445,16 @@
     get ready() {
       return vos.ready.then(function () {})
     },
-    onContext: function (fn) {
+    on_context: function (fn) {
       return vos.onContext(fn)
     },
-    onTeardown: function (fn) {
+    on_teardown: function (fn) {
       return vos.onTeardown(fn)
     },
-    openLink: function (url) {
+    open_link: function (url) {
       return vos.call('ui/open-link', { url: url }).then(function () {})
     },
-    requestDisplayMode: function (mode) {
+    request_display_mode: function (mode) {
       return vos.call('ui/request-display-mode', { mode: mode }).then(function (r) {
         return r.mode
       })

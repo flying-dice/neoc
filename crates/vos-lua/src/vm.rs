@@ -196,7 +196,7 @@ pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Notify(Notification),
-    /// `app.openWindow(params?)`.
+    /// `app.open_window(params?)`.
     OpenWindow {
         name: String,
         params: Value,
@@ -280,7 +280,7 @@ pub(crate) struct Shared {
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
     /// slice) ends or pauses at a wait, and when any call that has raised a notification pauses at a wait, so the
-    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app.openWindow`).
+    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app.open_window`).
     pub effects_signal: Arc<Notify>,
     /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
     /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
@@ -346,7 +346,7 @@ impl Shared {
         Ok(())
     }
 
-    /// The window `app.openWindow` asks the shell for. An app has one window, the frame that shows its page: it is
+    /// The window `app.open_window` asks the shell for. An app has one window, the frame that shows its page: it is
     /// called `main`, and that is the only name the shell is ever asked for.
     pub const WINDOW: &'static str = "main";
 

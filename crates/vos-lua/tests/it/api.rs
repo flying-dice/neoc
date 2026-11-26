@@ -319,7 +319,7 @@ async fn notify_emit_and_open_window_become_effects_for_the_host() {
         app.notify { title = "Reminder", body = "Call mum" }
         app.notify { title = "No body" }
         app.emit("notes.changed", { id = 12 })
-        app.openWindow({ noteId = 12 })
+        app.open_window({ noteId = 12 })
         return {}
     "#;
     let vm = AppVm::load(&id("probe"), package(src, &[]), db(), VmConfig::default()).await.unwrap();

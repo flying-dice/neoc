@@ -36,7 +36,7 @@ fn check_workflow(out: &Value) {
         assert_eq!(out[step]["kind"], kind, "{step}: {out}");
     };
     for step in
-        ["createDir", "createAgain", "write", "overwrite", "move", "copyFile", "copyTree", "removeTree"]
+        ["create_dir", "createAgain", "write", "overwrite", "move", "copyFile", "copyTree", "removeTree"]
     {
         ok(step);
     }
@@ -138,7 +138,7 @@ async fn no_path_leaves_the_apps_location() {
           try("through link read", docs:read("link/secret.txt"))
           try("through link write", docs:write("link/new.txt", "x"))
           try("through link list", docs:list("link"))
-          try("through link create", docs:createDir("link/sub"))
+          try("through link create", docs:create_dir("link/sub"))
           try("through link remove", docs:remove("link/secret.txt"))
           try("through link move out", docs:move("link/secret.txt", "stolen.txt"))
           try("through link move in", docs:move("real/plain.txt", "link/plain.txt"))
@@ -228,7 +228,7 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
         local seen = {}
         local function refused(f) local ok, e = pcall(f) return { ok = ok, err = tostring(e) } end
         app.tool { name = "seed", run = function()
-          assert(docs:createDir("d"))
+          assert(docs:create_dir("d"))
           return assert(docs:write("d/a.txt", "kept"))
         end }
         app.tool { name = "ro", readOnly = true, run = function()
@@ -241,7 +241,7 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
             listed = #assert(docs:list("d")),
             size = assert(docs:info("d/a.txt")).size,
             write = refused(function() return docs:write("d/a.txt", "changed") end),
-            createDir = refused(function() return docs:createDir("e") end),
+            create_dir = refused(function() return docs:create_dir("e") end),
             remove = refused(function() return docs:remove("d", { recursive = true }) end),
             move = refused(function() return docs:move("d/a.txt", "b.txt") end),
             copy = refused(function() return docs:copy("d/a.txt", "b.txt") end),
@@ -254,7 +254,7 @@ async fn a_read_only_tool_reads_files_and_cannot_write_them_nor_can_the_tasks_it
     assert_eq!(tool(&vm, "seed").await, json!(true));
     let out = tool(&vm, "ro").await;
     assert_eq!((&out["read"], &out["listed"], &out["size"]), (&json!("kept"), &json!(1), &json!(4)), "{out}");
-    for write in ["write", "createDir", "remove", "move", "copy", "cache"] {
+    for write in ["write", "create_dir", "remove", "move", "copy", "cache"] {
         assert_eq!(out[write]["ok"], false, "{write}: {out}");
         assert!(out[write]["err"].as_str().unwrap().contains("readOnly"), "{write}: {out}");
     }

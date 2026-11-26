@@ -18,7 +18,7 @@ app.window("main", { render = function() end }) -- expect-error: Key 'window' no
 local _state = app.state { count = 1 } -- expect-error: Key 'state' not found in table 'vos_app'
 local _open = app:windows("main") -- expect-error: Key 'windows' not found in table 'vos_app'
 local _live = app.db:query("select 1 as id", { key = "id" }) -- expect-error: Key 'query' not found in external type 'vos_app_Db'
-app.openWindow(5) -- expect-error: Expected this to be '{ [string]: any }?', but got 'number'
+app.open_window(5) -- expect-error: Expected this to be '{ [string]: any }?', but got 'number'
 app:notify { title = "a method call passes app first" } -- expect-error: not compatible with type 'vos_app_Notification' -- expect-error: Function 'app.notify' expects 1 argument, but 2 are specified
 app.emit(5) -- expect-error: Expected this to be 'string', but got 'number'
 app.t.string { description = 5 } -- expect-error: Expected this to be 'vos_app_SchemaOptions?'
@@ -26,14 +26,14 @@ local _name: string = json.nope -- expect-error: Key 'nope' not found in table '
 app.files.documents:write("a.txt") -- expect-error: expects 3 arguments, but only 2 are specified
 app.files.documents:remove("a", { recursive = "yes" }) -- expect-error: Expected this to be 'vos_app_RemoveOptions?' but got
 app.files.photos:read("a.jpg") -- expect-error: Key 'photos' not found in external type 'vos_app_Files'
-app.files.cache:createDir(5) -- expect-error: Expected this to be 'string', but got 'number'
+app.files.cache:create_dir(5) -- expect-error: Expected this to be 'string', but got 'number'
 app.timer.every(60, function() end) -- expect-error: Key 'timer' not found in table 'vos_app'
 app.shell.deepLink("note/:id", function() end) -- expect-error: Key 'shell' not found in table 'vos_app'
 app.on("event", function() end) -- expect-error: Key 'on' not found in table 'vos_app'
 local _kind: string = app.files.errorKind(nil) -- expect-error: Key 'errorKind' not found in external type 'vos_app_Files'
 app.tools.register { name = "x", run = function() end } -- expect-error: Key 'register' not found in table 'vos_app_toolsStatics'
 app.notify { title = "fine", body = "this line is correct" }
-app.openWindow()
+app.open_window()
 app.emit("fine", { changed = true })
 app.tool {
   name = "fine",

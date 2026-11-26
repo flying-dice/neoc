@@ -166,13 +166,13 @@ interface VosHost {
   /** Resolves when the handshake with the host is done. */
   readonly ready: Promise<void>
   /** Hear a change of the host context; returns a function that stops listening. */
-  onContext(fn: (context: { readonly [key: string]: unknown }) => void): () => void
+  on_context(fn: (context: { readonly [key: string]: unknown }) => void): () => void
   /** Run \`fn\` before the host removes the page; it may return a promise. */
-  onTeardown(fn: () => void | Promise<void>): () => void
+  on_teardown(fn: () => void | Promise<void>): () => void
   /** Open a link outside the app: http and https only. */
-  openLink(url: string): Promise<void>
+  open_link(url: string): Promise<void>
   /** Ask for a display mode; resolves with the mode the host ended in. */
-  requestDisplayMode(mode: 'inline' | 'fullscreen' | 'pip'): Promise<'inline' | 'fullscreen' | 'pip'>
+  request_display_mode(mode: 'inline' | 'fullscreen' | 'pip'): Promise<'inline' | 'fullscreen' | 'pip'>
 }
 
 type VosLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
@@ -183,8 +183,8 @@ interface VosSpan {
   /** Record \`value\` under \`key\` on the span. */
   record(key: string, value: unknown): void
   /** Run \`body\` in the span and end it when \`body\` returns, or when the promise it returns settles. */
-  inScope<T>(body: () => T): T
-  /** End the span now, if \`inScope\` did not. */
+  in_scope<T>(body: () => T): T
+  /** End the span now, if \`in_scope\` did not. */
   end(): void
 }
 
