@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Server } from '@pages/rpc'
+type Server = VosApp.Pages.Server
 import { IMAGE, NO_FOLDER, SITES, site } from './fakeApi'
 import { addressesOf, attentionOf, hostnamesOf, isServing, machineOf, portOf, servedCount, serverLabel, serverTone, sitesSummary } from './format'
 

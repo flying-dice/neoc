@@ -7,10 +7,11 @@
 -- Ending a program is the one thing here that can do harm, so it is narrow: it is only ever the program a window chose,
 -- through the id the backend issued for that choice, held by a reference that a reused PID cannot move; a choice that
 -- is no longer held is refused, never made again; asking it to quit (`terminate`) is never turned into forcing it; and
--- what the operating system refused is told to the person in a sentence.
+-- what the operating system refused is told to the person in a sentence. It serves on the RPC bus through the global
+-- `RPC`, typed by the generated `types/vos.d.luau`; the page's methods are private (`_snapshot`, `_select`, ...), and no
+-- agent is offered any of them.
 local monitor = require("./monitor")
 local pins = require("./pins")
-local rpc = require("../.app/rpc")
 
 -- Why the operating system or this app would not end a program, for the person who pressed the button.
 local function sentence(err: vnd_sysinfo_Error, name: string, force: boolean): string
@@ -38,7 +39,7 @@ end
 local LOST = "Choose the program again: Processes no longer holds it."
 
 -- Whether the window may offer to end the program, and if not, why: looking at a program never needs the right to end it.
-local function controlOf(selection: pins.Selection): rpc.Control
+local function controlOf(selection: pins.Selection): processes_Control
   local process = selection.process
   if not process:alive() then
     return { available = false, reason = `{process.name} has quit.` }
@@ -53,7 +54,7 @@ end
 -- What is shown of a choice. A program only just seen is shown as it is, but not held (`unknown_identity`): once a later
 -- reading has told it apart, the reading has another observation than the one the person chose, so what is shown is
 -- that program, read, and it still cannot be ended through this choice: the person chooses it again.
-local function detailOf(selection: pins.Selection, current: vnd_sysinfo_System): rpc.Detail
+local function detailOf(selection: pins.Selection, current: vnd_sysinfo_System): processes_Detail
   local process = selection.process
   local blocked = selection.blocked
   if blocked and blocked.kind == "unknown_identity" and not process:alive() then
@@ -65,50 +66,51 @@ local function detailOf(selection: pins.Selection, current: vnd_sysinfo_System):
   return monitor.detail(process, controlOf(selection))
 end
 
-local handlers: rpc.Handlers = {
-  snapshot = function(ctx, params)
-    local current, problem = monitor.refresh()
-    if not current then
-      return ctx:fail(problem or "This machine could not be measured.")
+RPC.on_request("_snapshot", function(params: processes_SnapshotParams, ctx: vos_app_Context): processes_SnapshotResult
+  local current, problem = monitor.refresh()
+  if not current then
+    return ctx:fail(problem or "This machine could not be measured.")
+  end
+  pins.sweep()
+  local overview, processes = monitor.read(current)
+  local snapshot: processes_Snapshot = { overview = overview, processes = processes }
+  local selected = params.selected
+  if selected then
+    -- the process as the window chose it, even after it has quit; an id that is not held is said so, and never looked up by PID
+    local selection = pins.get(selected)
+    if selection then
+      snapshot.detail = detailOf(selection, current)
+    else
+      snapshot.selectionLost = true
     end
-    pins.sweep()
-    local overview, processes = monitor.read(current)
-    local snapshot: rpc.Snapshot = { overview = overview, processes = processes }
-    local selected = params.selected
-    if selected then
-      -- the process as the window chose it, even after it has quit; an id that is not held is said so, and never looked up by PID
-      local selection = pins.get(selected)
-      if selection then
-        snapshot.detail = detailOf(selection, current)
-      else
-        snapshot.selectionLost = true
-      end
-    end
-    return snapshot
-  end,
+  end
+  return snapshot
+end)
 
-  select = function(ctx, params)
-    local current, problem = monitor.system()
-    if not current then
-      return ctx:fail(problem or "This machine could not be measured.")
-    end
-    local process = monitor.find(current, params.process)
-    if not process then
-      return ctx:fail("That program has quit.")
-    end
-    local selection, err = pins.hold(process)
-    if not selection then
-      return ctx:fail(sentence(err :: vnd_sysinfo_Error, process.name, false))
-    end
-    return { selection = selection.id, detail = detailOf(selection, current) }
-  end,
+RPC.on_request("_select", function(params: processes_SelectParams, ctx: vos_app_Context): processes_SelectResult
+  local current, problem = monitor.system()
+  if not current then
+    return ctx:fail(problem or "This machine could not be measured.")
+  end
+  local process = monitor.find(current, params.process)
+  if not process then
+    return ctx:fail("That program has quit.")
+  end
+  local selection, err = pins.hold(process)
+  if not selection then
+    return ctx:fail(sentence(err :: vnd_sysinfo_Error, process.name, false))
+  end
+  return { selection = selection.id, detail = detailOf(selection, current) }
+end)
 
-  release = function(_ctx, params)
-    pins.release(params.selection)
-    return { released = true }
-  end,
+RPC.on_request("_release", function(params: processes_ReleaseParams): processes_ReleaseResult
+  pins.release(params.selection)
+  return { released = true }
+end)
 
-  terminate = function(ctx, params)
+RPC.on_request(
+  "_terminate",
+  function(params: processes_TerminateParams, ctx: vos_app_Context): processes_TerminateResult
     -- only what this window chose, and still holds: nothing is chosen again on the way
     local selection = pins.get(params.selection)
     if not selection then
@@ -131,7 +133,5 @@ local handlers: rpc.Handlers = {
       return ctx:fail(sentence(err, process.name, params.force))
     end
     return { sent = true, force = params.force }
-  end,
-}
-
-return handlers
+  end
+)

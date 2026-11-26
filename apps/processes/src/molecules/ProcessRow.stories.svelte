@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { ProcessRow } from '@processes/rpc'
+  type ProcessRow = VosApp.Processes.ProcessRow
   import ProcessRowItem from './ProcessRow.svelte'
 
   interface Args {

@@ -2,8 +2,6 @@
 -- The projects, their issues and their pages, in the app's own database. Everything that changes them is here, and
 -- says why when it cannot: a function that changes something answers with a plain sentence when it refused (the
 -- handler and the tool pass it on as it is), and with nothing when it did what it was asked.
-local app = require("vos:app")
-local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 local unicode = require("lib:unicode")
 local db = app.db
@@ -12,9 +10,9 @@ local db = app.db
 export type IssueChanges = {
   title: string?,
   description: string?,
-  type: rpc.IssueType?,
-  priority: rpc.Priority?,
-  status: rpc.Status?,
+  type: projects_IssueType?,
+  priority: projects_Priority?,
+  status: projects_Status?,
 }
 
 local store = {}
@@ -67,7 +65,7 @@ local function isKey(text: string): boolean
   return string.match(text, "^%u[%u%d]+$") ~= nil and #text >= 2 and #text <= 5
 end
 
-local function issueOf(row: { [string]: any }): rpc.Issue
+local function issueOf(row: { [string]: any }): projects_Issue
   return {
     id = row.id,
     project = row.project_id,
@@ -81,12 +79,12 @@ local function issueOf(row: { [string]: any }): rpc.Issue
   }
 end
 
-local function pageOf(row: { [string]: any }): rpc.Page
+local function pageOf(row: { [string]: any }): projects_Page
   return { id = row.id, project = row.project_id, parent = row.parent_id, title = row.title, updated = row.updated }
 end
 
-function store.projects(): { rpc.Project }
-  local projects: { rpc.Project } = {}
+function store.projects(): { projects_Project }
+  local projects: { projects_Project } = {}
   for _, row in db:all("select id, key, name, color from projects order by id") do
     table.insert(projects, { id = row.id, key = row.key, name = row.name, color = row.color })
   end
@@ -94,7 +92,7 @@ function store.projects(): { rpc.Project }
 end
 
 -- the project called `name` or keyed `name`, whatever its capitals: how an agent names a project
-function store.projectNamed(name: string): rpc.Project?
+function store.projectNamed(name: string): projects_Project?
   local wanted = trim(name)
   for _, project in store.projects() do
     if unicode.caseless_eq(project.key, wanted) or unicode.caseless_eq(project.name, wanted) then
@@ -105,8 +103,8 @@ function store.projectNamed(name: string): rpc.Project?
 end
 
 -- the issues in the order they were added; of one project when `project` is given
-function store.issues(project: number?): { rpc.Issue }
-  local issues: { rpc.Issue } = {}
+function store.issues(project: number?): { projects_Issue }
+  local issues: { projects_Issue } = {}
   local rows = if project
     then db:all(ISSUE .. " where i.project_id = :p order by i.id", { p = project })
     else db:all(ISSUE .. " order by i.id")
@@ -116,20 +114,20 @@ function store.issues(project: number?): { rpc.Issue }
   return issues
 end
 
-function store.issue(id: number): rpc.Issue?
+function store.issue(id: number): projects_Issue?
   local row = db:one(ISSUE .. " where i.id = :id", { id = id })
   return if row then issueOf(row) else nil
 end
 
 -- the issue called `key` (WEB-12), whatever its capitals: how an agent names an issue
-function store.issueKeyed(key: string): rpc.Issue?
+function store.issueKeyed(key: string): projects_Issue?
   local row = db:one(ISSUE .. " where upper(p.key || '-' || i.number) = upper(:k)", { k = trim(key) })
   return if row then issueOf(row) else nil
 end
 
 -- the pages by title; of one project when `project` is given
-function store.pages(project: number?): { rpc.Page }
-  local pages: { rpc.Page } = {}
+function store.pages(project: number?): { projects_Page }
+  local pages: { projects_Page } = {}
   local rows = if project
     then db:all(PAGE .. " where project_id = :p order by title collate nocase, id", { p = project })
     else db:all(PAGE .. " order by title collate nocase, id")
@@ -139,13 +137,13 @@ function store.pages(project: number?): { rpc.Page }
   return pages
 end
 
-function store.page(id: number): rpc.Page?
+function store.page(id: number): projects_Page?
   local row = db:one(PAGE .. " where id = :id", { id = id })
   return if row then pageOf(row) else nil
 end
 
 -- the page of a project called `title`, whatever its capitals: how an agent names a page
-function store.pageTitled(project: number, title: string): rpc.Page?
+function store.pageTitled(project: number, title: string): projects_Page?
   local row =
     db:one(PAGE .. " where project_id = :p and title = :t collate nocase order by id", { p = project, t = trim(title) })
   return if row then pageOf(row) else nil
@@ -156,11 +154,11 @@ function store.body(id: number): string?
   return if row then row.body else nil
 end
 
-function store.workspace(): rpc.Workspace
+function store.workspace(): projects_Workspace
   return { projects = store.projects(), issues = store.issues(), pages = store.pages() }
 end
 
-function store.addProject(name: string, key: string, color: rpc.Color): string?
+function store.addProject(name: string, key: string, color: projects_Color): string?
   local named = trim(name)
   local keyed = string.upper(trim(key))
   if named == "" then

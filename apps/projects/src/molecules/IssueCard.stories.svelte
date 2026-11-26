@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Issue } from '@projects/rpc'
+  type Issue = VosApp.Projects.Issue
   import IssueCard from './IssueCard.svelte'
   import { issue } from '../lib/fakeApi'
 

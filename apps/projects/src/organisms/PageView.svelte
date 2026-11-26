@@ -1,6 +1,6 @@
 <!-- @organism PageView — one page, open: its title, when it last changed and its text to read, with the pages under it and the field the next of those is named in; Edit turns the title and the text into fields, and Done keeps them; it is deleted, with the pages under it, after an alert asks -->
 <script lang="ts">
-  import type { Page } from '@projects/rpc'
+  type Page = VosApp.Projects.Page
   import Composer from '../molecules/Composer.svelte'
   import type { Leaf } from '../lib/catalog'
   import { moment } from '../lib/dates'

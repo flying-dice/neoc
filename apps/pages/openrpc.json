@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Pages",
-    "version": "0.1.0",
-    "description": "Host websites from folders of this machine: give each site a port, a name, or both. They are served by nginx, in a container in Docker which this app makes and keeps."
-  },
-  "x-app": {
-    "id": "pages",
-    "icon": "globe",
-    "tint": "green",
-    "description": "Host websites from folders of this machine: give each site a port, a name, or both. They are served by nginx, in a container in Docker which this app makes and keeps.",
-    "window": {
-      "w": 760,
-      "h": 620,
-      "minW": 420,
-      "minH": 440
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "overview",
+      "name": "_overview",
       "summary": "Whether Docker can be reached, how the web server's container is doing, and the settings and sites it is made from. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "connect",
+      "name": "_connect",
       "summary": "Choose the Docker the server runs in, and answer with what is there. A server left running in the Docker chosen before is not touched. The folders of the sites are folders of the machine that Docker runs on.",
       "params": [
         {
@@ -57,7 +44,7 @@
       ]
     },
     {
-      "name": "apply",
+      "name": "_apply",
       "summary": "Make the container again from the settings and the sites as they stand, and start it: the way out when it is not running, or was made from older ones. Does nothing while no site is on.",
       "params": [],
       "result": {
@@ -68,7 +55,7 @@
       }
     },
     {
-      "name": "saveSettings",
+      "name": "_save_settings",
       "summary": "Change the port that the sites with names share. A server that is running is made again with it.",
       "params": [
         {
@@ -96,7 +83,7 @@
       ]
     },
     {
-      "name": "addSite",
+      "name": "_create_site",
       "summary": "Host a folder as a site, on a port of its own, under names on the shared port, or both. It is on from the start, and the server is made again with it.",
       "params": [
         {
@@ -154,7 +141,7 @@
       ]
     },
     {
-      "name": "updateSite",
+      "name": "_update_site",
       "summary": "Change a site: what it is called, its folder, its port and its names. Whether it is on stays. The server is made again with it.",
       "params": [
         {
@@ -217,7 +204,7 @@
       ]
     },
     {
-      "name": "setSiteEnabled",
+      "name": "_set_site_enabled",
       "summary": "Turn a site on (it is served) or off (it is kept, and not served). With the last site off the container is removed. What Docker refused is said by `server.problem` of the answer.",
       "params": [
         {
@@ -250,7 +237,7 @@
       ]
     },
     {
-      "name": "removeSite",
+      "name": "_delete_site",
       "summary": "Stop hosting a site and forget it. Its folder and the files in it are not touched.",
       "params": [
         {
@@ -276,7 +263,7 @@
       ]
     },
     {
-      "name": "logs",
+      "name": "_logs",
       "summary": "The end of what the server has written: how it started, what it could not do, and every request it answered.",
       "params": [
         {
@@ -302,6 +289,138 @@
           "message": "Docker cannot be reached, or the server has no container: the message says which."
         }
       ]
+    },
+    {
+      "name": "list_sites",
+      "summary": "List the hosted sites",
+      "x-readOnly": true,
+      "description": "The websites this machine hosts, each a folder of files: its name, the folder, its own port (0 when it has none), the hostnames it answers to on the shared port, whether it is on (`enabled`), and why it is not served when its folder is missing (`problem`). Also how the web server is doing: the state of its container (`running`, `stopped`, `restarting`, or `absent` when there is none, as with every site off), the port the sites with hostnames share (`sharedPort`), and why it is not running when Docker refused (`problem`).",
+      "params": [],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "server": {
+              "$ref": "#/components/schemas/Brief"
+            },
+            "sites": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Hosted"
+              }
+            }
+          },
+          "required": [
+            "server",
+            "sites"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add_site",
+      "summary": "Host a site",
+      "description": "Serve a folder of this machine as a website: its `index.html` is the front page, and its files are only read. Give it a port of its own (`http://<machine>:8081`), hostnames it answers to on the shared port (`http://blog.home`, which must resolve to this machine), or both. It is served a moment later.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the site is called in the list",
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        {
+          "name": "folder",
+          "required": true,
+          "description": "The full path of the folder, like `/Users/me/Sites/blog`",
+          "schema": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        {
+          "name": "port",
+          "required": false,
+          "description": "A port of its own, like 8081; none when left out",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        {
+          "name": "hostnames",
+          "required": false,
+          "description": "Names it answers to on the shared port, like `blog.home`; none when left out",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "added",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "added": {
+              "type": "boolean"
+            },
+            "server": {
+              "$ref": "#/components/schemas/Brief"
+            }
+          },
+          "required": [
+            "added",
+            "server"
+          ]
+        }
+      }
+    },
+    {
+      "name": "remove_site",
+      "summary": "Stop hosting a site",
+      "description": "Stop serving a site and forget it, by its name as `list_sites` gives it. Its folder and the files in it are not touched.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "The name of the site",
+          "schema": {
+            "type": "string",
+            "maxLength": 80
+          }
+        }
+      ],
+      "result": {
+        "name": "removed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "removed": {
+              "type": "integer"
+            },
+            "server": {
+              "$ref": "#/components/schemas/Brief"
+            }
+          },
+          "required": [
+            "removed",
+            "server"
+          ]
+        }
+      }
+    },
+    {
+      "name": "changed",
+      "summary": "The server changed (Docker's events for its container, a change of the configuration): the open windows read the overview again.",
+      "params": []
     }
   ],
   "components": {
@@ -475,6 +594,61 @@
         "required": [
           "text",
           "truncated"
+        ]
+      },
+      "Brief": {
+        "type": "object",
+        "description": "How the web server is doing, as an agent reads it.",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ServerState"
+          },
+          "sharedPort": {
+            "type": "integer"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "sharedPort",
+          "problem"
+        ]
+      },
+      "Hosted": {
+        "type": "object",
+        "description": "A site as an agent reads it in a list.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "hostnames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "folder",
+          "port",
+          "hostnames",
+          "enabled",
+          "problem"
         ]
       }
     }

@@ -1,6 +1,6 @@
 <!-- @molecule SiteRow — one site in the list: its name, its folder, each address it is reached at as a button that opens it, the switch that turns it on and off, and the buttons that change it and take it away -->
 <script lang="ts">
-  import type { Site } from '@pages/rpc'
+  type Site = VosApp.Pages.Site
   import type { Address } from '../lib/format'
 
   interface Props {

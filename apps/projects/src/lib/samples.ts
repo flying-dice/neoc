@@ -2,7 +2,7 @@
  * A workspace with something in every part of it, for the stories: two projects, a board with issues in each column,
  * and pages with pages under them.
  */
-import type { Project } from '@projects/rpc'
+type Project = VosApp.Projects.Project
 import { WEBSITE, createFakeBackend, issue, page, type FakeBackend } from './fakeApi'
 
 export const APP: Project = { id: 2, key: 'APP', name: 'Mobile App', color: 'purple' }

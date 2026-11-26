@@ -1,6 +1,9 @@
 <!-- @organism IssueDetail — one issue, open: its title to type over, the kind of work it is, its priority and its column as choices, what is known about it to write, and the way to delete it, after an alert asks -->
 <script lang="ts">
-  import type { Issue, IssueType, Priority, Status } from '@projects/rpc'
+  type Issue = VosApp.Projects.Issue
+  type IssueType = VosApp.Projects.IssueType
+  type Priority = VosApp.Projects.Priority
+  type Status = VosApp.Projects.Status
   import { PRIORITIES, STATUSES, TYPES } from '../lib/catalog'
   import { moment } from '../lib/dates'
   import type { IssueChanges } from '../lib/projects.svelte'

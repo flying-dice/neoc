@@ -1,6 +1,6 @@
 <!-- @molecule ProcessRow — one process in the list: its name, its PID and user, and its CPU and memory in columns that line up with the rows around it -->
 <script lang="ts">
-  import type { ProcessRow } from '@processes/rpc'
+  type ProcessRow = VosApp.Processes.ProcessRow
   import { bytes, percent } from '../lib/format'
 
   interface Props {

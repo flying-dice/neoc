@@ -225,13 +225,13 @@ test.describe('Processes journeys', () => {
     // count the readings the window asks the backend for
     const body = frame(page).locator('body')
     await body.evaluate(() => {
-      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
-      const call = bridge.call.bind(bridge)
+      const bus = (globalThis as unknown as { RPC: { send_request: (app: string, method: string, params?: unknown) => Promise<unknown> } }).RPC
+      const send = bus.send_request.bind(bus)
       const counted = globalThis as unknown as { __readings: number }
       counted.__readings = 0
-      bridge.call = (method, params) => {
-        if (method === 'snapshot') counted.__readings += 1
-        return call(method, params)
+      bus.send_request = (app, method, params) => {
+        if (method === '_snapshot') counted.__readings += 1
+        return send(app, method, params)
       }
     })
     const readings = (): Promise<number> => body.evaluate(() => (globalThis as unknown as { __readings: number }).__readings)
@@ -261,14 +261,14 @@ test.describe('Processes journeys', () => {
     const body = frame(page).locator('body')
     // the ids the backend issues, as the window receives them
     await body.evaluate(() => {
-      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
-      const call = bridge.call.bind(bridge)
+      const bus = (globalThis as unknown as { RPC: { send_request: (app: string, method: string, params?: unknown) => Promise<unknown> } }).RPC
+      const send = bus.send_request.bind(bus)
       const seen = globalThis as unknown as { __ids: string[]; __chosen: unknown[] }
       seen.__ids = []
       seen.__chosen = []
-      bridge.call = async (method, params) => {
-        const answer = await call(method, params)
-        if (method === 'select') {
+      bus.send_request = async (app, method, params) => {
+        const answer = await send(app, method, params)
+        if (method === '_select') {
           seen.__ids.push((answer as { selection: string }).selection)
           seen.__chosen.push((params as { process: unknown }).process)
         }
@@ -278,9 +278,9 @@ test.describe('Processes journeys', () => {
     const ids = (): Promise<string[]> => body.evaluate(() => (globalThis as unknown as { __ids: string[] }).__ids)
     const terminate = (selection: string): Promise<string> =>
       body.evaluate(async (_body, id) => {
-        const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+        const bus = (globalThis as unknown as { RPC: { send_request: (app: string, method: string, params?: unknown) => Promise<unknown> } }).RPC
         try {
-          await bridge.call('terminate', { selection: id, force: true })
+          await bus.send_request('processes', '_terminate', { selection: id, force: true })
           return 'sent'
         } catch (e) {
           return (e as Error).message
@@ -303,10 +303,10 @@ test.describe('Processes journeys', () => {
     // the list still shows a process that is not the one with its PID now (a PID given to another process, even in the
     // same second): the same PID and start time with another sighting is refused, and nothing is held for it
     const refused = await body.evaluate(async () => {
-      const bridge = (globalThis as unknown as { vos: { call: (method: string, params?: unknown) => Promise<unknown> } }).vos
+      const bus = (globalThis as unknown as { RPC: { send_request: (app: string, method: string, params?: unknown) => Promise<unknown> } }).RPC
       const chosen = (globalThis as unknown as { __chosen: { observation: number }[] }).__chosen.at(-1)!
       try {
-        await bridge.call('select', { process: { ...chosen, observation: chosen.observation + 1000 } })
+        await bus.send_request('processes', '_select', { process: { ...chosen, observation: chosen.observation + 1000 } })
         return 'chosen'
       } catch (e) {
         return (e as Error).message

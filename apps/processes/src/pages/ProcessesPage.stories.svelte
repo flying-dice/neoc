@@ -3,13 +3,13 @@
   import { expect, waitFor } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import ProcessesPage from './ProcessesPage.svelte'
   import { PROGRAMS, createFailingBackend, createFakeBackend, type FakeBackend, type FakeOptions } from '../lib/fakeApi'
   import { Processes } from '../lib/processes.svelte'
 
-  // the window the contract asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -48,7 +48,7 @@
   {@const processes = new Processes(backend.rpc, backend.events)}
   <!-- a story reads the machine once: a window that read it on a timer would change under the story's checks -->
   {@const _ = processes.every(0)}
-  <AppWindow title={definition.info.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
+  <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <ProcessesPage {processes} />
   </AppWindow>
 {/snippet}

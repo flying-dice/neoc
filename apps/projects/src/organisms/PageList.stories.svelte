@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import PageList from './PageList.svelte'
-  import type { Page } from '@projects/rpc'
+  type Page = VosApp.Projects.Page
   import { tree, type Leaf } from '../lib/catalog'
   import { PAGES } from '../lib/samples'
 

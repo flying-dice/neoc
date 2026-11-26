@@ -9,7 +9,6 @@ local config = require("./config")
 local docker = require("vos:docker")
 local fs = require("std:fs")
 local nginx = require("./nginx")
-local rpc = require("../.app/rpc")
 
 local sidecar = {}
 
@@ -21,7 +20,7 @@ sidecar.FILTERS = container.filters
 -- What is known to be wrong with a site's folder. Docker would refuse the whole container for one folder that is
 -- not there, so such a site is left out of it instead. Only this machine's folders can be looked at: with another
 -- Docker chosen the folders are that machine's, and nothing is known.
-local function unusable(site: rpc.Site): string
+local function unusable(site: pages_Site): string
   if docker.host() ~= "" then
     return ""
   end
@@ -33,7 +32,7 @@ local function unusable(site: rpc.Site): string
 end
 
 -- Every site, each with what is known to be wrong with it when it is on.
-function sidecar.sites(): { rpc.Site }
+function sidecar.sites(): { pages_Site }
   local sites = config.sites()
   for _, site in sites do
     site.problem = if site.enabled then unusable(site) else ""
@@ -43,7 +42,7 @@ end
 
 -- What the container is made from now; nothing when there is no site to serve.
 local function declared(): vos_docker_Declaration?
-  local served: { rpc.Site } = {}
+  local served: { pages_Site } = {}
   for _, site in sidecar.sites() do
     if site.enabled and site.problem == "" then
       table.insert(served, site)
@@ -78,7 +77,7 @@ local function isWanted(): boolean
 end
 
 -- How the server is doing. With Docker away there is nothing to say of its container.
-function sidecar.server(): rpc.Server
+function sidecar.server(): pages_Server
   local status = container:status(declared())
   return {
     wanted = isWanted(),

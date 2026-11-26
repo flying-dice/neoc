@@ -1,14 +1,34 @@
-import type { Api, Engine, Logs, Overview, Server, Settings, Site } from '@pages/rpc'
-import type { Host } from '@vos/host'
+type Engine = VosApp.Pages.Engine
+type Logs = VosApp.Pages.Logs
+type Overview = VosApp.Pages.Overview
+type Server = VosApp.Pages.Server
+type Settings = VosApp.Pages.Settings
+type Site = VosApp.Pages.Site
 import { hostnamesOf, portOf } from './format'
 
-/** What the window needs of the backend: the overview, each way of changing it, and the server's log. */
-export type PagesRpc = Pick<
-  Api,
-  'overview' | 'connect' | 'apply' | 'saveSettings' | 'addSite' | 'updateSite' | 'setSiteEnabled' | 'removeSite' | 'logs'
->
-/** What the window needs of the host: the backend's events (`host.on`), and a site opened outside the app. */
-export type PagesHost = Pick<Host, 'on' | 'openLink'>
+/**
+ * What the window needs of the backend: the overview, each way of changing it, and the server's log (the app's private
+ * methods on the bus, `_overview` ...: `App.svelte` sends them).
+ */
+export interface PagesRpc {
+  overview(): Promise<Overview>
+  connect(params: VosApp.Pages.ConnectParams): Promise<Overview>
+  apply(): Promise<Overview>
+  saveSettings(params: VosApp.Pages.SaveSettingsParams): Promise<Overview>
+  addSite(params: VosApp.Pages.CreateSiteParams): Promise<Overview>
+  updateSite(params: VosApp.Pages.UpdateSiteParams): Promise<Overview>
+  setSiteEnabled(params: VosApp.Pages.SetSiteEnabledParams): Promise<Overview>
+  removeSite(params: VosApp.Pages.DeleteSiteParams): Promise<Overview>
+  logs(params?: VosApp.Pages.LogsParams): Promise<Logs>
+}
+/**
+ * What the window needs of the host: where it hears that the server changed (the backend's `changed`, and the host's
+ * `host:reconnected`), and a site opened outside the app.
+ */
+export interface PagesHost {
+  on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
+  open_link(url: string): Promise<void>
+}
 
 /** What of the server is looked at. */
 export type Tab = 'sites' | 'settings' | 'log'
@@ -193,7 +213,7 @@ export class Pages {
   /** Open one of a site's addresses outside the app. A host that will not is said, like any failure. */
   async open(url: string): Promise<void> {
     try {
-      await this.#host.openLink(url)
+      await this.#host.open_link(url)
     } catch (e) {
       this.#failure = messageOf(e)
     }

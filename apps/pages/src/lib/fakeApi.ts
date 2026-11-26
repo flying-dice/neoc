@@ -3,7 +3,12 @@
  * page, with no host and no Docker. It checks a site as the backend does, makes its container again on every change
  * that makes a difference, and writes a line of log for each.
  */
-import type { Logs, Overview, Server, ServerState, Settings, Site } from '@pages/rpc'
+type Logs = VosApp.Pages.Logs
+type Overview = VosApp.Pages.Overview
+type Server = VosApp.Pages.Server
+type ServerState = VosApp.Pages.ServerState
+type Settings = VosApp.Pages.Settings
+type Site = VosApp.Pages.Site
 import type { PagesHost, PagesRpc } from './pages.svelte'
 
 export interface FakeBackend {
@@ -259,7 +264,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       heard.add(fn)
       return () => heard.delete(fn)
     },
-    openLink(url) {
+    open_link(url) {
       opened.push(url)
       return Promise.resolve()
     }
@@ -307,7 +312,7 @@ export function createFailingBackend(message: string): FakeBackend {
       removeSite: refuse,
       logs: refuse
     },
-    host: { on: () => () => {}, openLink: refuse },
+    host: { on: () => () => {}, open_link: refuse },
     emit: () => {},
     outside: () => {},
     elsewhere: () => {},

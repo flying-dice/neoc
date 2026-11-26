@@ -1,6 +1,6 @@
 <!-- @organism UsageTiles — the top of the list: how busy the processor is, how much memory and swap is in use, and what the network is carrying -->
 <script lang="ts">
-  import type { Overview } from '@processes/rpc'
+  type Overview = VosApp.Processes.Overview
   import UsageTile from '../molecules/UsageTile.svelte'
   import { bytes, rate, share, whole } from '../lib/format'
 

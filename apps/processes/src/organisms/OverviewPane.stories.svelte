@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Overview } from '@processes/rpc'
+  type Overview = VosApp.Processes.Overview
   import OverviewPane from './OverviewPane.svelte'
   import { FIRST_READING, OVERVIEW } from './storyData'
 

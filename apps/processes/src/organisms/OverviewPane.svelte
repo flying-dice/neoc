@@ -1,6 +1,6 @@
 <!-- @organism OverviewPane — the machine as a whole: each core's load, memory and swap, the disks and what they read and write, the network interfaces, and what the machine is -->
 <script lang="ts">
-  import type { Overview } from '@processes/rpc'
+  type Overview = VosApp.Processes.Overview
   import { bytes, duration, percent, rate, share, whole } from '../lib/format'
 
   interface Props {

@@ -6,7 +6,6 @@
 --
 -- A function that could not do what it was asked answers with a plain sentence (the handler passes it on as it is).
 local sysinfo = require("vnd:sysinfo")
-local rpc = require("../.app/rpc")
 
 local monitor = {}
 
@@ -53,16 +52,16 @@ function monitor.canTerminate(): boolean
   return sysinfo.capabilities().terminate
 end
 
-local function overviewOf(current: vnd_sysinfo_System, count: number): rpc.Overview
+local function overviewOf(current: vnd_sysinfo_System, count: number): processes_Overview
   local cpu = current:cpu()
-  local cores: { rpc.Core } = {}
+  local cores: { processes_Core } = {}
   for _, core in cpu.cores do
     table.insert(cores, { usage = core.usage })
   end
   local load = cpu.load_average
   local memory = current:memory()
   local swap = current:swap()
-  local disks: { rpc.Disk } = {}
+  local disks: { processes_Disk } = {}
   for _, disk in current:disks() do
     table.insert(disks, {
       name = disk.name,
@@ -74,7 +73,7 @@ local function overviewOf(current: vnd_sysinfo_System, count: number): rpc.Overv
       writeRate = disk.write_rate,
     })
   end
-  local networks: { rpc.Network } = {}
+  local networks: { processes_Network } = {}
   for _, network in current:networks() do
     table.insert(
       networks,
@@ -109,7 +108,7 @@ local function overviewOf(current: vnd_sysinfo_System, count: number): rpc.Overv
   }
 end
 
-local function rowOf(process: vnd_sysinfo_Process): rpc.ProcessRow
+local function rowOf(process: vnd_sysinfo_Process): processes_ProcessRow
   return {
     pid = process.pid,
     startTime = process.start_time,
@@ -122,7 +121,7 @@ local function rowOf(process: vnd_sysinfo_Process): rpc.ProcessRow
   }
 end
 
-local function relatedOf(process: vnd_sysinfo_Process): rpc.Related
+local function relatedOf(process: vnd_sysinfo_Process): processes_Related
   return {
     pid = process.pid,
     startTime = process.start_time,
@@ -133,9 +132,9 @@ local function relatedOf(process: vnd_sysinfo_Process): rpc.Related
 end
 
 -- One process in full. One that has exited is what it was when it was last seen: its name, and nothing else.
-function monitor.detail(process: vnd_sysinfo_Process, control: rpc.Control): rpc.Detail
+function monitor.detail(process: vnd_sysinfo_Process, control: processes_Control): processes_Detail
   local parent = process:parent()
-  local children: { rpc.Related } = {}
+  local children: { processes_Related } = {}
   for _, child in process:children() do
     if #children >= MAX_CHILDREN then
       break
@@ -166,8 +165,8 @@ function monitor.detail(process: vnd_sysinfo_Process, control: rpc.Control): rpc
 end
 
 -- The overview and every process, as last measured.
-function monitor.read(current: vnd_sysinfo_System): (rpc.Overview, { rpc.ProcessRow })
-  local rows: { rpc.ProcessRow } = {}
+function monitor.read(current: vnd_sysinfo_System): (processes_Overview, { processes_ProcessRow })
+  local rows: { processes_ProcessRow } = {}
   for _, process in current:processes() do
     table.insert(rows, rowOf(process))
   end
@@ -176,7 +175,7 @@ end
 
 -- The process a window named, if it is still the one it saw: the PID, when it started, and which sighting of the PID it
 -- is (a PID that was given to another process since, even in the same second, has another number).
-function monitor.find(current: vnd_sysinfo_System, ref: rpc.ProcessRef): vnd_sysinfo_Process?
+function monitor.find(current: vnd_sysinfo_System, ref: processes_ProcessRef): vnd_sysinfo_Process?
   local process = current:process(ref.pid)
   if process and process.start_time == ref.startTime and process.observation == ref.observation then
     return process

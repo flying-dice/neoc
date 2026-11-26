@@ -5,13 +5,16 @@
  * of its project; a workspace lists the issues in the order they were added and the pages by title; a page goes with
  * the pages under it.
  */
-import type { Issue, Page, Project, Workspace } from '@projects/rpc'
+type Issue = VosApp.Projects.Issue
+type Page = VosApp.Projects.Page
+type Project = VosApp.Projects.Project
+type Workspace = VosApp.Projects.Workspace
 import type { ProjectsEvents, ProjectsRpc } from './projects.svelte'
 
 export interface FakeBackend {
   readonly rpc: ProjectsRpc
   readonly events: ProjectsEvents
-  /** Send an event to the window, as the backend (`projects.changed`) or the host (`host:reconnected`) does. */
+  /** Send an event to the window, as the backend (`projects_changed`) or the host (`host:reconnected`) does. */
   emit(name: string, data?: unknown): void
   /** Write a page behind the window's back, as an agent's tool does. */
   rewrite(page: number, body: string): void
