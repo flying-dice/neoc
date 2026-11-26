@@ -29,6 +29,9 @@ export default defineConfig({
   testDir: '.',
   testIgnore: ['**/node_modules/**', new RegExp(`^${ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]\\.claude[\\\\/]`)],
   outputDir: `test-results/output${RUN}`,
+  // One test at a time, in every project: the tests share one host and one machine, and running many at once only made
+  // the run slower and the machine unusable.
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never', outputFolder: `test-results/report${RUN}` }]],
@@ -48,7 +51,6 @@ export default defineConfig({
     {
       name: 'stories',
       testMatch: 'e2e/stories.spec.ts',
-      fullyParallel: true,
       use: { baseURL: STORYBOOKS }
     },
     {
@@ -63,10 +65,6 @@ export default defineConfig({
       testMatch: ['{apps,packages}/*/e2e/**/*.spec.ts', 'client/e2e/**/*.spec.ts', 'e2e/!(background|notifications).journeys.spec.ts'],
       dependencies: ['desktop'],
       fullyParallel: false,
-      // Every journey loads its pages from the one host, on connections of its own. On Windows, with the 12 workers a
-      // 24-core machine gets by default, a page load now and then failed with ERR_ADDRESS_IN_USE (and the journeys got in
-      // each other's way more often); with 6 the journeys take as long, and none did.
-      workers: process.platform === 'win32' ? 6 : undefined,
       use: { baseURL: ORIGIN, storageState: STATE }
     },
     {

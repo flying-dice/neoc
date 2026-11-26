@@ -35,23 +35,23 @@ async function discover(): Promise<Storybook[]> {
   return found.sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/** Build them one after another: each build already uses every core, and many at once only fight over them. */
 async function build(books: Storybook[]): Promise<void> {
-  const results = await Promise.all(
-    books.map(async (b) => {
-      const proc = Bun.spawn(['bunx', 'storybook', 'build', '-o', 'storybook-static', '--quiet'], {
-        cwd: b.dir,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' }
-      })
-      const code = await proc.exited
-      if (code !== 0) {
-        console.error(`✗ ${b.name}: storybook build failed\n${await new Response(proc.stderr).text()}`)
-      } else console.log(`✓ built ${b.name} Storybook`)
-      return code
+  let failed = false
+  for (const b of books) {
+    const proc = Bun.spawn(['bunx', 'storybook', 'build', '-o', 'storybook-static', '--quiet'], {
+      cwd: b.dir,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' }
     })
-  )
-  if (results.some((c) => c !== 0)) process.exit(1)
+    const code = await proc.exited
+    if (code !== 0) {
+      failed = true
+      console.error(`✗ ${b.name}: storybook build failed\n${await new Response(proc.stderr).text()}`)
+    } else console.log(`✓ built ${b.name} Storybook`)
+  }
+  if (failed) process.exit(1)
 }
 
 function serve(books: Storybook[]): void {
