@@ -8,18 +8,14 @@ local base64 = require("lib:base64")
 local yaml = require("vnd:serde_yaml")
 local helpers = require("./helpers")
 
-RPC.on_request(
-  "probe",
-  function()
-    local object = json.object()
-    object:set("n", 6)
-    return {
-      encoded = helpers.encode("hi"),
-      same_module = base64 == require("lib:base64"),
-      n = object:get("n"),
-      has_fs = type(fs.read) == "function",
-      yaml = type(yaml) == "table",
-    }
-  end,
-  { read_only = true }
-)
+RPC.on_request("probe", function()
+  local object = json.object()
+  object:set("n", 6)
+  return {
+    encoded = helpers.encode("hi"),
+    same_module = base64 == require("lib:base64"),
+    n = object:get("n"),
+    has_fs = type(fs.read) == "function",
+    yaml = type(yaml) == "table",
+  }
+end, { read_only = true })

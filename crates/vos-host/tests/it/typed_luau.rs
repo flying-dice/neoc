@@ -46,7 +46,7 @@ async fn a_typed_luau_app_loads_and_runs() {
     // the handler, over /rpc as the app's page: the typed handler ran, as the person
     let mut ws = browser(&r).await;
     let greeted =
-        rpc(&mut ws, 1, "app.call", json!({"app": "typed", "method": "greet", "args": {"name": "Ada"}}))
+        rpc(&mut ws, 1, "app.call", json!({"app": "typed", "method": "_greet", "args": {"name": "Ada"}}))
             .await;
     assert_eq!(greeted["result"], "Hello Ada from a user", "{greeted}");
     agent.cancel().await.unwrap();

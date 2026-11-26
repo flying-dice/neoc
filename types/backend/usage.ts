@@ -6,7 +6,8 @@
  * `packages/vite-plugin/src/typescript-backend.test.ts`.
  */
 import * as vos from 'vos:app'
-import { db, t, type Actor, type Context, type FileError } from 'vos:app'
+import { db, type Actor, type Context, type FileError } from 'vos:app'
+import * as rpc from 'vos:rpc'
 import * as fs from 'std:fs'
 import * as env from 'std:env'
 import { trim } from 'lib:text'
@@ -41,20 +42,22 @@ vos.notify({ title: 'Saved' })
 vos.open_window()
 vos.open_window({ note: 1 })
 const id: string = vos.id
-vos.emit('notes.changed', { id: 1 })
+rpc.send_notification('notes.changed', { id: 1 })
 
-vos.tool({
-  name: 'count_notes',
-  readOnly: true,
-  input: { folder: t.string({ optional: true, description: 'Only this folder' }) },
-  // the input is checked against `input` before `run`: the declarations cannot know its shape, the tool says it
-  run: (input, ctx) => (ctx.actor.kind === 'agent' ? { n: total, folder: (input as { folder?: string }).folder } : ctx.fail('Agents only.'))
-})
+rpc.on_request(
+  'count_notes',
+  // the declarations cannot know the shape of the params: the handler says it (the contract holds them to it)
+  (params, ctx) => (ctx.actor.kind === 'agent' ? { n: total, folder: (params as { folder?: string }).folder } : ctx.fail('Agents only.')),
+  {
+    description: 'How many notes there are',
+    read_only: true,
+    input_schema: { type: 'object', properties: { folder: { type: 'string', description: 'Only this folder' } } }
+  }
+)
 
-const handlers: vos_app_Handlers = {
-  who: (ctx: Context): Actor => ctx.actor,
-  fail: (ctx) => ctx.fail('No.')
-}
+// a private method (`_`) is the app's page's alone
+rpc.on_request('_who', (_params, ctx: Context): Actor => ctx.actor)
+rpc.on_request('_fail', (_params, ctx) => ctx.fail('No.'))
 
 // a failed file call returns a typed error: checking it narrows the value, and its kind is one of a declared set
 const [data, failed] = app.files.documents.read('notes/a.txt')
@@ -79,4 +82,4 @@ print('x')
 // @ts-expect-error an app has no `os`
 os.time()
 
-export { handlers, half, unparsed, home, id, length, misspelt, next, nothing, refused, row, same, size, stored, whole, why, workers }
+export { half, unparsed, home, id, length, misspelt, next, nothing, refused, row, same, size, stored, whole, why, workers }

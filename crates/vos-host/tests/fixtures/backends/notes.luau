@@ -1,8 +1,9 @@
 --!strict
--- Sample backend for the host end-to-end tests: a small Notes data model, the handlers its page calls and the tools
--- an agent calls. Whoever changes a note tells the open pages with an event, so a page reads again.
+-- Sample backend for the host end-to-end tests: a small Notes data model, the handlers its page calls (private, `_`)
+-- and the tools an agent calls (public). Whoever changes a note tells the open pages with a notification, so a page
+-- reads again.
 local app = require("vos:app")
-local t = app.t
+local RPC = require("vos:rpc")
 local db = app.db
 
 db:migrate {
@@ -18,78 +19,82 @@ db:migrate {
 }
 
 local function changed(id: number)
-  app.emit("notes.changed", { id = id })
+  RPC.send_notification("notes.changed", { id = id })
 end
 
 -- tools
-app.tool {
-  name = "add_note",
+RPC.on_request("add_note", function(input: { body: string }, ctx)
+  local r = db:exec(
+    "insert into notes(body, updated_at, author) values (:body, :now, :who)",
+    { body = input.body, now = ctx.now, who = ctx.actor.name }
+  )
+  app.notify { title = "Note added", body = input.body }
+  changed(r.last_insert_id)
+  return { id = r.last_insert_id }
+end, {
   title = "Add Note",
   description = "Add a note",
-  input = { body = t.string { description = "The note text" } },
-  run = function(input, ctx)
-    local r = db:exec(
-      "insert into notes(body, updated_at, author) values (:body, :now, :who)",
-      { body = input.body, now = ctx.now, who = ctx.actor.name }
-    )
-    app.notify { title = "Note added", body = input.body }
-    changed(r.last_insert_id)
-    return { id = r.last_insert_id }
-  end,
-}
+  input_schema = {
+    type = "object",
+    properties = { body = { type = "string", description = "The note text" } },
+    required = { "body" },
+  },
+})
 
-app.tool {
-  name = "append",
+RPC.on_request("append", function(input: { id: number, text: string }, ctx)
+  local r = db:exec(
+    [[update notes set body = body || char(10) || :text, rev = rev + 1, updated_at = :now, author = :who
+      where id = :id]],
+    { text = input.text, id = input.id, now = ctx.now, who = ctx.actor.name }
+  )
+  if r.changes == 0 then
+    return ctx:fail(`No note with id {input.id}`)
+  end
+  changed(input.id)
+  return { id = input.id }
+end, {
   title = "Append to Note",
   description = "Append text on a new line at the end of a note",
-  input = { id = t.integer { description = "Note id" }, text = t.string {} },
-  run = function(input: { id: number, text: string }, ctx)
-    local r = db:exec(
-      [[update notes set body = body || char(10) || :text, rev = rev + 1, updated_at = :now, author = :who
-        where id = :id]],
-      { text = input.text, id = input.id, now = ctx.now, who = ctx.actor.name }
-    )
-    if r.changes == 0 then
-      return ctx:fail(`No note with id {input.id}`)
-    end
-    changed(input.id)
-    return { id = input.id }
-  end,
-}
+  input_schema = {
+    type = "object",
+    properties = { id = { type = "integer", description = "Note id" }, text = { type = "string" } },
+    required = { "id", "text" },
+  },
+})
 
-app.tool {
-  name = "search",
+RPC.on_request("search", function(input: { query: string, limit: number? })
+  return db:all(
+    "select id, substr(body, 1, 60) as title from notes where body like '%' || :q || '%' order by id limit :n",
+    { q = input.query, n = input.limit or 10 }
+  )
+end, {
   title = "Search Notes",
-  readOnly = true,
   description = "Find notes whose text contains the query",
-  input = { query = t.string {}, limit = t.integer { default = 10, min = 1, max = 50 } },
-  run = function(input)
-    return db:all(
-      "select id, substr(body, 1, 60) as title from notes where body like '%' || :q || '%' order by id limit :n",
-      { q = input.query, n = input.limit }
-    )
-  end,
-}
+  read_only = true,
+  input_schema = {
+    type = "object",
+    properties = { query = { type = "string" }, limit = { type = "integer", minimum = 1, maximum = 50, default = 10 } },
+    required = { "query" },
+  },
+})
 
 -- what the page calls
-local handlers: vos_app_Handlers = {
-  list = function()
-    return db:all("select id, substr(body, 1, 60) as title, updated_at from notes order by id")
-  end,
-  get = function(_ctx, args)
-    return db:one("select id, body, rev, updated_at, author from notes where id = :id", { id = args.id })
-  end,
-  save = function(ctx, args)
-    local r = db:exec(
-      "update notes set body = :v, rev = rev + 1, updated_at = :now, author = :who where id = :id",
-      { v = args.body, id = args.id, now = ctx.now, who = ctx.actor.name }
-    )
-    if r.changes == 0 then
-      return ctx:fail("No note with id " .. args.id)
-    end
-    changed(args.id)
-    return db:one("select body, rev, author from notes where id = :id", { id = args.id })
-  end,
-}
+RPC.on_request("_list", function()
+  return db:all("select id, substr(body, 1, 60) as title, updated_at from notes order by id")
+end)
 
-return handlers
+RPC.on_request("_get", function(args: { id: number })
+  return db:one("select id, body, rev, updated_at, author from notes where id = :id", { id = args.id })
+end)
+
+RPC.on_request("_save", function(args: { id: number, body: string }, ctx)
+  local r = db:exec(
+    "update notes set body = :v, rev = rev + 1, updated_at = :now, author = :who where id = :id",
+    { v = args.body, id = args.id, now = ctx.now, who = ctx.actor.name }
+  )
+  if r.changes == 0 then
+    return ctx:fail("No note with id " .. args.id)
+  end
+  changed(args.id)
+  return db:one("select body, rev, author from notes where id = :id", { id = args.id })
+end)

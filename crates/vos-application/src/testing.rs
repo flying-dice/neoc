@@ -404,7 +404,7 @@ pub type OpenedWindow = (String, String, Map<String, Value>);
 pub struct RecordingShell {
     /// `(app, window, params)` of every `app.open_window`.
     pub windows: Mutex<Vec<OpenedWindow>>,
-    /// `(app, name, data)` of every `app.emit`.
+    /// `(app, name, data)` of every notification an app sends (`RPC.send_notification`).
     pub events: Mutex<Vec<(String, String, Value)>>,
 }
 #[async_trait]

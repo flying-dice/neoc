@@ -212,11 +212,11 @@ local json = require("lib:json")
 local _n: number = app.id
 app.nope()
 test.describe("x")
-local handlers: vos_app_Handlers = {}
-app.emit("changed", { count = 1 })
+local RPC = require("vos:rpc")
+RPC.send_notification("changed", { count = 1 })
 kv:set("count", 1)
 json.object():set("k", 1)
-return handlers
+RPC.on_request("_ping", function() return 1 end)
 "#;
 
 #[test]
@@ -277,12 +277,12 @@ fn the_language_server_types_the_vos_modules_as_the_editor_starts_it() {
         "{findings:?}"
     );
 
-    // hover on `emit` of `app.emit` shows its type and the doc the declarations carry
+    // hover on `send_notification` of `RPC.send_notification` shows its type and the doc the declarations carry
     let hover = client.request(
         "textDocument/hover",
         &json!({ "textDocument": { "uri": uri }, "position": { "line": 9, "character": 6 } }),
     );
     let text = hover["contents"]["value"].as_str().unwrap_or_default();
     assert!(text.contains("name: string"), "{hover}");
-    assert!(text.contains("Tell the app's open pages something changed"), "{hover}");
+    assert!(text.contains("Send one of this app's notifications on the RPC bus"), "{hover}");
 }

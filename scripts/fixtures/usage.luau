@@ -184,8 +184,8 @@ app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app.notify { title = "hello" }
 app.log("usage")
-app.emit("items.changed", { id = 1 })
-app.emit("items.cleared")
+rpc.send_notification("items.changed", { id = 1 })
+rpc.send_notification("items.cleared")
 app.open_window()
 app.open_window { item = 1 }
 local _id: string = app.id
@@ -193,34 +193,39 @@ for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end
 
-app.tool {
-  name = "add",
+-- ── the handlers: a public one is an agent tool, a private one (`_`) is the app's page's alone ───────────────────
+rpc.on_request("add", function(input: { name: string, n: number? }, ctx)
+  if (input.n or 1) > 3 then
+    return ctx:fail("too many")
+  end
+  local added = { added = input.name, by = ctx.actor.name, at = ctx.now }
+  return added
+end, {
   title = "Add",
   description = "Add an item",
-  readOnly = false,
-  input = { name = app.t.string { description = "The name" }, n = app.t.integer { default = 1, min = 1, max = 5 } },
-  run = function(input: { name: string, n: number }, ctx)
-    if input.n > 3 then
-      return ctx:fail("too many")
-    end
-    return { added = input.name, by = ctx.actor.name, at = ctx.now }
-  end,
-}
+  read_only = false,
+  input_schema = {
+    type = "object",
+    properties = {
+      name = { type = "string", description = "The name" },
+      n = { type = "integer", minimum = 1, maximum = 5, default = 1 },
+    },
+    required = { "name" },
+  },
+})
 
--- ── the handlers: what the entry returns, and the app's page calls with `rpc(name, args)` ───────────────────────
-local handlers: vos_app_Handlers = {
-  list = function(_ctx: vos_app_Context)
-    return app.db:all("select id, name from items order by id")
-  end,
-  rename = function(ctx: vos_app_Context, args: { id: number, name: string })
-    if args.name == "" then
-      return ctx:fail("A name cannot be empty")
-    end
-    local changed = app.db:exec("update items set name = :name where id = :id", { id = args.id, name = args.name })
-    app.emit("items.changed", { id = args.id, by = ctx.actor.name, kind = ctx.actor.kind, at = ctx.now })
-    return changed.changes
-  end,
-}
+rpc.on_request("_list", function(_params: any, _ctx: vos_app_Context)
+  return app.db:all("select id, name from items order by id")
+end)
+
+rpc.on_request("_rename", function(args: { id: number, name: string }, ctx: vos_app_Context)
+  if args.name == "" then
+    return ctx:fail("A name cannot be empty")
+  end
+  local changed = app.db:exec("update items set name = :name where id = :id", { id = args.id, name = args.name })
+  rpc.send_notification("items.changed", { id = args.id, by = ctx.actor.name, kind = ctx.actor.kind, at = ctx.now })
+  return changed.changes
+end)
 
 -- vos:docker: which Docker, one container the app owns, and its log
 local server = docker.container("vos-usage")
@@ -234,7 +239,7 @@ local reachable: boolean = docker.status().reachable and server:status(declared)
 local written = server:logs(50)
 local shown: string = if written then written.text else refused or docker.sentence(nil)
 task.spawn(docker.watch, server.filters, function()
-  app.emit("changed", { reachable = reachable, shown = shown, host = docker.host() })
+  rpc.send_notification("changed", { reachable = reachable, shown = shown, host = docker.host() })
 end)
 
 -- the RPC bus: the global `RPC`, and the same table required
@@ -245,5 +250,3 @@ local _same: boolean = rpc.send_notification == RPC.send_notification
 tracing.span("usage", { n = 1 }):in_scope(function()
   return nil
 end)
-
-return handlers

@@ -1,9 +1,9 @@
 --!strict
 -- Sample backend for the background-work test: a counter that a task of the app raises on its own, every 0.2 s, for
 -- as long as the app is loaded. The work starts at load without holding it up (`task.spawn` at the top level), it
--- tells the open pages about every tick by itself (`app.emit`), it goes on when no page is open, and it stops when
+-- tells the open pages about every tick by itself (`RPC.send_notification`), it goes on when no page is open, and it stops when
 -- the app is unloaded.
-local app = require("vos:app")
+local RPC = require("vos:rpc")
 local task = require("std:task")
 
 local ticks = 0
@@ -15,38 +15,35 @@ task.spawn(function()
     task.wait(0.2)
     if running then
       ticks += 1
-      app.emit("ticked", { ticks = ticks })
+      RPC.send_notification("ticked", { ticks = ticks })
     end
   end
 end)
 
-app.tool {
-  name = "ticks",
+RPC.on_request("ticks", function()
+  return { ticks = ticks, running = running }
+end, {
   title = "Ticks",
-  readOnly = true,
   description = "How many ticks the background loop has counted.",
-  input = {},
-  run = function()
-    return { ticks = ticks, running = running }
-  end,
-}
+  read_only = true,
+  input_schema = { type = "object", properties = {} },
+})
 
 -- what the page calls
-local handlers: vos_app_Handlers = {
-  state = function()
-    return { ticks = ticks, running = running }
-  end,
-  toggle = function()
-    running = not running
-    return { running = running }
-  end,
-  reset = function()
-    ticks = 0
-    return { ticks = ticks }
-  end,
-  fail = function()
-    error("the Fail button always fails")
-  end,
-}
+RPC.on_request("_state", function()
+  return { ticks = ticks, running = running }
+end)
 
-return handlers
+RPC.on_request("_toggle", function()
+  running = not running
+  return { running = running }
+end)
+
+RPC.on_request("_reset", function()
+  ticks = 0
+  return { ticks = ticks }
+end)
+
+RPC.on_request("_fail", function()
+  error("the Fail button always fails")
+end)

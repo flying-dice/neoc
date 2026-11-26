@@ -26,7 +26,7 @@ async fn the_page_the_host_and_the_backend_share_one_trace() {
     let mut ws = browser(&r).await;
 
     let call = json!({
-        "app": "traced", "method": "overview", "args": {},
+        "app": "traced", "method": "_overview", "args": {},
         "traceparent": format!("00-{TRACE}-{PAGE_SPAN}-01"),
     });
     let reply = rpc(&mut ws, 1, "app.call", call).await;

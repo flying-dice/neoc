@@ -31,11 +31,24 @@ fn publish_notes_app(root: &Path) -> String {
     publish_app(root, "notes")
 }
 
+/// The Notes app with a contract (`tests/fixtures/backends/notes.openrpc.json`): the bus holds its calls to it and an
+/// agent is shown its public methods as it describes them.
+fn publish_notes_app_with_contract(root: &Path) -> String {
+    let manifest = json!({
+        "id": "notes", "name": "Notes", "main": "app.luau", "ui": { "root": "static" }, "contract": "openrpc.json"
+    });
+    let contract = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/backends/notes.openrpc.json"),
+    )
+    .unwrap();
+    publish_app_ref(root, manifest, &[("app.luau", built_backend("notes")), ("openrpc.json", contract)])
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one journey, read top to bottom
 async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let tmp = temp("e2e");
-    let app_ref_url = publish_notes_app(&tmp.join("pkg"));
+    let app_ref_url = publish_notes_app_with_contract(&tmp.join("pkg"));
     prepare_data_dir(&tmp.join("data")).unwrap();
     let r = start(|c| {
         c.data_dir = Some(tmp.join("data"));
@@ -65,16 +78,16 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let search = tools.iter().find(|t| t.name == "notes__search").unwrap();
     assert_eq!(search.annotations.as_ref().and_then(|a| a.read_only_hint), Some(true));
     assert_eq!(search.title.as_deref(), Some("Search Notes"));
-    assert_eq!(search.input_schema["required"], json!(["query"]), "the schema the app.t builders compiled");
+    assert_eq!(search.input_schema["required"], json!(["query"]), "the schema the contract says");
 
     // --- the app's page (the shell forwards its calls as `app.call`) reads through a handler
     let notes = AppId::parse("notes").unwrap();
     let page = |method: &'static str, args: Value| json!({"app": "notes", "method": method, "args": args});
-    let list = rpc(&mut ws, 3, "app.call", page("list", json!({}))).await;
+    let list = rpc(&mut ws, 3, "app.call", page("_list", json!({}))).await;
     assert_eq!(list["result"], json!([]), "{list}");
 
     // --- the agent calls a tool: Lua runs as that agent, SQLite writes, app.notify reaches the UI, and the app
-    //     tells its open pages what changed (`app.emit`) with no window code in the host
+    //     tells its open pages what changed (a notification) with no window code in the host
     let out = call(&agent, "notes__add_note", json!({"body": "from the agent"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     // the typed `notification.deliver` message: the sender is the host's id for the app, not anything the app wrote
@@ -90,7 +103,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let event = next_notification(&mut ws, "app.event").await;
     assert_eq!(event, json!({"app": "notes", "name": "notes.changed", "data": {"id": 1}}));
     // the page reads again, as it does when it hears the event
-    let list = rpc(&mut ws, 4, "app.call", page("list", json!({}))).await;
+    let list = rpc(&mut ws, 4, "app.call", page("_list", json!({}))).await;
     assert_eq!(list["result"][0]["title"], "from the agent", "{list}");
     assert_eq!(list["result"].as_array().unwrap().len(), 1);
 
@@ -98,21 +111,25 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     let out = call(&agent, "notes__append", json!({"id": 1, "text": "- buy oat milk"})).await;
     assert_ne!(out.is_error, Some(true), "{out:?}");
     notification_where(&mut ws, "app.event", |p| p["name"] == "notes.changed" && p["data"]["id"] == 1).await;
-    let open = rpc(&mut ws, 6, "app.call", page("get", json!({"id": 1}))).await;
+    let open = rpc(&mut ws, 6, "app.call", page("_get", json!({"id": 1}))).await;
     assert_eq!(open["result"]["body"], "from the agent\n- buy oat milk", "{open}");
     assert_eq!((&open["result"]["rev"], &open["result"]["author"]), (&json!(1), &json!("Claude")));
 
     // --- the person edits the note in the page: the handler runs as them, and may write
-    let saved =
-        rpc(&mut ws, 7, "app.call", page("save", json!({"id": 1, "body": "From the agent\n- buy oat milk"})))
-            .await;
+    let saved = rpc(
+        &mut ws,
+        7,
+        "app.call",
+        page("_save", json!({"id": 1, "body": "From the agent\n- buy oat milk"})),
+    )
+    .await;
     assert_eq!(
         saved["result"],
         json!({"body": "From the agent\n- buy oat milk", "rev": 2, "author": "You"}),
         "{saved}"
     );
     // a handler's own failure is the app's error (-32010), with the message it gave
-    let missing = rpc(&mut ws, 8, "app.call", page("save", json!({"id": 99, "body": "x"}))).await;
+    let missing = rpc(&mut ws, 8, "app.call", page("_save", json!({"id": 99, "body": "x"}))).await;
     assert_eq!(missing["error"]["code"], -32010, "{missing}");
     assert_eq!(missing["error"]["message"], "No note with id 99");
     // and a method the backend does not have is JSON-RPC's own
@@ -125,7 +142,7 @@ async fn install_over_rpc_then_use_from_mcp_and_ui_and_uninstall() {
     assert!(text_of(&out).contains("No note with id 99"), "{out:?}");
     let out = call(&agent, "notes__append", json!({"id": "x", "text": "x"})).await;
     assert_eq!(out.is_error, Some(true));
-    assert!(text_of(&out).contains("invalid input"), "{out:?}");
+    assert!(text_of(&out).contains("Invalid params"), "{out:?}");
 
     // --- uninstall: the tool disappears for the agent (list_changed), VM + registry cleaned up
     let (agent2, counter) = connect_agent(addr, "tok-claude").await;
@@ -272,12 +289,10 @@ async fn dev_reload_rebuilds_the_vm_when_the_bundle_changes_and_keeps_the_data()
     call(&agent, "notes__add_note", json!({"body": "before"})).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // let the watcher settle
 
-    // "rebuild" the bundle: a new tool (declared before the entry returns its handlers), a new checksum
+    // "rebuild" the bundle: a new tool (a public handler served last), a new checksum
     let before = counter.0.load(Ordering::SeqCst);
     let lua = std::fs::read_to_string(pkg.join("app.luau")).unwrap();
-    let extra = "app.tool({ name = \"extra\", run = function() return \"v2\" end })";
-    let v2 = lua.replacen("\nreturn handlers", &format!("\n{extra}\nreturn handlers"), 1);
-    assert_ne!(v2, lua, "the bundle ends by returning its handlers: {lua}");
+    let v2 = format!("{lua}\nRPC.on_request(\"extra\", function() return \"v2\" end)\n");
     std::fs::write(pkg.join("app.luau"), &v2).unwrap();
     let mut app_ref: Value =
         serde_json::from_slice(&std::fs::read(pkg.join("app-ref.json")).unwrap()).unwrap();
