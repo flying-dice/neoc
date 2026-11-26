@@ -5,7 +5,7 @@
   import type { Screen, Terminal } from '../lib/terminal.svelte'
 
   interface Props {
-    /** This window's session; the composition root builds it with the real `api`, a story with a fake. */
+    /** This window's session; the composition root builds it with the real backend, a story with a fake. */
     terminal: Terminal
   }
 

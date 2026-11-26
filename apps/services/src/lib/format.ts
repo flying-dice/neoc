@@ -1,4 +1,7 @@
-import type { Manager, Restart, Service, State } from '@services/rpc'
+type Manager = VosApp.Services.Manager
+type Restart = VosApp.Services.Restart
+type Service = VosApp.Services.Service
+type State = VosApp.Services.State
 
 /** What a person reads of a state: words, never colour alone. */
 export const stateLabel = (state: State): string =>

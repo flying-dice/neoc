@@ -1,30 +1,36 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Telemetry",
-    "version": "0.1.0",
-    "description": "The traces and logs the host recorded: where an app's call went, and what failed on the way."
-  },
-  "x-app": {
-    "id": "telemetry",
-    "icon": "network",
-    "tint": "teal",
-    "description": "The traces and logs the host recorded: where an app's call went, and what failed on the way.",
-    "window": { "w": 1100, "h": 700, "minW": 480, "minH": 420 }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "probe",
+      "name": "_probe",
       "summary": "A call to try tracing with: the backend logs a line and answers, or fails when asked to.",
       "params": [
-        { "name": "fail", "required": false, "description": "Fail the call on purpose.", "schema": { "type": "boolean" } }
+        {
+          "name": "fail",
+          "required": false,
+          "description": "Fail the call on purpose.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
       ],
       "result": {
         "name": "probe",
         "schema": {
           "type": "object",
-          "properties": { "units": { "type": "integer", "description": "A made-up count the backend logged." } },
-          "required": ["units"]
+          "properties": {
+            "units": {
+              "type": "integer",
+              "description": "A made-up count the backend logged."
+            }
+          },
+          "required": [
+            "units"
+          ]
         }
       }
     }

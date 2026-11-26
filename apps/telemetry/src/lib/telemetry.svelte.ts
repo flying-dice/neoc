@@ -1,7 +1,6 @@
 // One Telemetry window's state: the traces and logs it shows, what is picked, what is searched for, and the probes it
 // sends. What it needs from outside arrives through the constructor (the reader, the backend, a way to run work later),
 // so a test or a story builds one with fakes.
-import type { Api } from '@telemetry/rpc'
 import {
   logKey,
   matchingLogs,
@@ -22,16 +21,18 @@ export interface TelemetryReader {
   query(q: LogQuery): Promise<Found>
 }
 
-/** The backend's one method: a call to try tracing with. */
-export type ProbeRpc = Pick<Api, 'probe'>
+/** The backend's one method: a call to try tracing with (the app's private `_probe` on the bus: `App.svelte` sends it). */
+export interface ProbeRpc {
+  probe(params: VosApp.Telemetry.ProbeParams): Promise<VosApp.Telemetry.ProbeResult>
+}
 
-/** What the window traces its own work with (`@vos/tracing`'s `span`): a probe is a span, and its call a child of it. */
+/** What the window traces its own work with (`vos.tracing`'s `span`): a probe is a span, and its call a child of it. */
 export interface Tracer {
-  span(name: string, fields?: { readonly [key: string]: unknown }): { inScope<T>(body: () => T): T }
+  span(name: string, fields?: { readonly [key: string]: unknown }): { in_scope<T>(body: () => T): T }
 }
 
 /** No tracing at all (a test, a story): the work runs as it is. */
-export const untraced: Tracer = { span: () => ({ inScope: (body) => body() }) }
+export const untraced: Tracer = { span: () => ({ in_scope: (body) => body() }) }
 
 export interface TelemetryOptions {
   /** Runs the page's failing render outside any handler, as a framework's render would (a timer, by default). */
@@ -228,7 +229,7 @@ export class Telemetry {
     if (this.#probing) return
     this.#probing = kind
     try {
-      await this.#tracer.span('probe', { kind }).inScope(() => this.#rpc.probe({ fail: kind === 'fail' }))
+      await this.#tracer.span('probe', { kind }).in_scope(() => this.#rpc.probe({ fail: kind === 'fail' }))
       if (kind === 'render') {
         this.#later(() => {
           throw new Error(RENDER_FAILURE)

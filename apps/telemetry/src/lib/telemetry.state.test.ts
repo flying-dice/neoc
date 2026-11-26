@@ -67,7 +67,7 @@ describe('Telemetry', () => {
   test('a probe is a span of its own, whatever its call did', async () => {
     const opened: [string, unknown][] = []
     const backend = createFakeBackend()
-    const tracer = { span: (name: string, fields?: unknown) => (opened.push([name, fields]), { inScope: <T,>(body: () => T) => body() }) }
+    const tracer = { span: (name: string, fields?: unknown) => (opened.push([name, fields]), { in_scope: <T,>(body: () => T) => body() }) }
     const telemetry = new Telemetry(backend.reader, backend.rpc, { tracer })
     await telemetry.probe('fail')
     expect(opened).toEqual([['probe', { kind: 'fail' }]])

@@ -1,11 +1,27 @@
-import type { Api, Outcome, Overview, Restart, Service, Status } from '@services/rpc'
-import type { Host } from '@vos/host'
 import { matches, search, type Filter } from './format'
 
-/** What the window needs of the backend. */
-export type ServicesRpc = Pick<Api, 'overview' | 'start' | 'stop' | 'restart' | 'configure' | 'register' | 'unregister'>
-/** Where the backend's events are heard (`host.on`). */
-export type ServicesEvents = Pick<Host, 'on'>
+type Outcome = VosApp.Services.Outcome
+type Overview = VosApp.Services.Overview
+type Restart = VosApp.Services.Restart
+type Service = VosApp.Services.Service
+type Status = VosApp.Services.Status
+
+/**
+ * What the window needs of the backend (the app's private methods on the bus, `_overview` ...: `App.svelte` sends them).
+ */
+export interface ServicesRpc {
+  overview(): Promise<Overview>
+  start(params: VosApp.Services.StartParams): Promise<Outcome>
+  stop(params: VosApp.Services.StopParams): Promise<Outcome>
+  restart(params: VosApp.Services.RestartParams): Promise<Outcome>
+  configure(params: VosApp.Services.ConfigureParams): Promise<Outcome>
+  register(params: VosApp.Services.RegisterParams): Promise<Outcome>
+  unregister(params: VosApp.Services.UnregisterParams): Promise<Outcome>
+}
+/** Where the window hears that the services changed (`changed`) and that the host came back (`host:reconnected`). */
+export interface ServicesEvents {
+  on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 export type Control = 'start' | 'stop' | 'restart'
 

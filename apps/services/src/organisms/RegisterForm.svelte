@@ -1,6 +1,7 @@
 <!-- @organism RegisterForm — the next service as it is typed, as a form of iPadOS is: a row each for its name, the program, the arguments, what it is for, the directory it starts in, whether it starts by itself and what happens when it ends and how long it waits; what the operating system refused in the footer; settings the manager does not keep are said so -->
 <script lang="ts">
-  import type { Manager, Restart } from '@services/rpc'
+  type Manager = VosApp.Services.Manager
+  type Restart = VosApp.Services.Restart
   import type { Draft, Notice } from '../lib/services.svelte'
   import { restartLabel } from '../lib/format'
 

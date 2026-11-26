@@ -1,6 +1,8 @@
 <!-- @organism ServiceDetail — one service looked at: how it is doing, the buttons that start, stop, restart and remove it, what the operating system answered when it would not, the settings that can be changed, and what the manager says of it -->
 <script lang="ts">
-  import type { Manager, Restart, Service } from '@services/rpc'
+  type Manager = VosApp.Services.Manager
+  type Restart = VosApp.Services.Restart
+  type Service = VosApp.Services.Service
   import StatusDot from '../atoms/StatusDot.svelte'
   import type { Notice } from '../lib/services.svelte'
   import { isUp, restartLabel, stateLabel, toneOf, unsaid } from '../lib/format'

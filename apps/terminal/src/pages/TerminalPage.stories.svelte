@@ -2,13 +2,13 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import TerminalPage from './TerminalPage.svelte'
   import { Terminal } from '../lib/terminal.svelte'
   import { createFakeBackend, type FakeBackend } from '../lib/fakeApi'
 
-  // the window the manifest asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -47,7 +47,7 @@
 {#snippet template(args: Args)}
   <!-- one session per story, as each window has one -->
   {@const terminal = new Terminal(args.backend.rpc, args.backend.events)}
-  <AppWindow title={definition.info.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
+  <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <TerminalPage {terminal} />
   </AppWindow>
 {/snippet}

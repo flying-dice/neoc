@@ -6,83 +6,70 @@
 --
 -- An agent can see which services there are and how they are doing (`list_services`). Changing a service needs the
 -- rights of the host and the person's say, so starting, stopping, registering and removing are left to the person.
-local app = require("vos:app")
+--
+-- It serves on the RPC bus through the global `RPC`, typed by the generated `types/vos.d.luau`. The page's methods are
+-- private (`_overview`, `_start`, ...); `list_services` is the public one, the agents' tool.
 local manager = require("./manager")
-local rpc = require("../.app/rpc")
-local t = app.t
 
-local handlers: rpc.Handlers = {
-  overview = function(_ctx)
-    return manager.overview()
-  end,
+RPC.on_request("_overview", function(): services_OverviewResult
+  return manager.overview()
+end)
 
-  start = function(_ctx, params)
-    return manager.control("start", params.label)
-  end,
+RPC.on_request("_start", function(params: services_StartParams): services_StartResult
+  return manager.control("start", params.label)
+end)
 
-  stop = function(_ctx, params)
-    return manager.control("stop", params.label)
-  end,
+RPC.on_request("_stop", function(params: services_StopParams): services_StopResult
+  return manager.control("stop", params.label)
+end)
 
-  restart = function(_ctx, params)
-    return manager.control("restart", params.label)
-  end,
+RPC.on_request("_restart", function(params: services_RestartParams): services_RestartResult
+  return manager.control("restart", params.label)
+end)
 
-  configure = function(_ctx, params)
-    return manager.configure(
-      params.label,
-      { autostart = params.autostart, description = params.description, restart = params.restart }
-    )
-  end,
+RPC.on_request("_configure", function(params: services_ConfigureParams): services_ConfigureResult
+  return manager.configure(
+    params.label,
+    { autostart = params.autostart, description = params.description, restart = params.restart }
+  )
+end)
 
-  register = function(_ctx, params)
-    local environment: { [string]: string }? = nil
-    if params.environment ~= nil then
-      local map: { [string]: string } = {}
-      for _, variable in params.environment do
-        map[variable.name] = variable.value
-      end
-      environment = map
+RPC.on_request("_register", function(params: services_RegisterParams): services_RegisterResult
+  local environment: { [string]: string }? = nil
+  if params.environment ~= nil then
+    local map: { [string]: string } = {}
+    for _, variable in params.environment do
+      map[variable.name] = variable.value
     end
-    return manager.register {
-      label = params.label,
-      program = params.program,
-      args = params.args,
-      description = params.description,
-      working_directory = params.workingDirectory,
-      environment = environment,
-      autostart = params.autostart,
-      restart = params.restart,
-      restart_delay_secs = params.restartDelaySecs,
-    }
-  end,
+    environment = map
+  end
+  return manager.register {
+    label = params.label,
+    program = params.program,
+    args = params.args,
+    description = params.description,
+    working_directory = params.workingDirectory,
+    environment = environment,
+    autostart = params.autostart,
+    restart = params.restart,
+    restart_delay_secs = params.restartDelaySecs,
+  }
+end)
 
-  unregister = function(_ctx, params)
-    return manager.unregister(params.label)
-  end,
-}
+RPC.on_request("_unregister", function(params: services_UnregisterParams): services_UnregisterResult
+  return manager.unregister(params.label)
+end)
 
-type Listed = { label: string, description: string?, state: rpc.State, autostart: boolean?, program: string? }
-
-app.tool {
-  name = "list_services",
-  title = "List the services",
-  readOnly = true,
-  description = "The background services of this machine, as its service manager (systemd, launchd or the Windows Service Control Manager) has them, whoever registered them: the label, what it is for, whether it is running, whether it starts by itself and the program it runs. Give `state` for the services in one state only.",
-  input = {
-    state = t.string {
-      optional = true,
-      description = "running, stopped, failed, starting, stopping, paused or unknown; every service when left out",
-    },
-  },
-  run = function(input: { state: string? }, ctx)
+RPC.on_request(
+  "list_services",
+  function(params: services_ListServicesParams, ctx: vos_app_Context): services_ListServicesResult
     local overview = manager.overview()
     if not overview.manager.available then
       return ctx:fail(overview.manager.problem)
     end
-    local services: { Listed } = {}
+    local services: { services_Listed } = {}
     for _, service in overview.services do
-      if input.state == nil or service.state == input.state then
+      if params.state == nil or service.state == params.state then
         table.insert(services, {
           label = service.label,
           description = service.description,
@@ -93,7 +80,5 @@ app.tool {
       end
     end
     return { manager = overview.manager.kind, services = services }
-  end,
-}
-
-return handlers
+  end
+)

@@ -4,7 +4,12 @@
  * a service it keeps for another user, it cannot start one whose program exits at once, and it can be changed behind
  * the app's back, as a terminal would change the real one.
  */
-import type { Manager, Outcome, Overview, Restart, Service, Status } from '@services/rpc'
+type Manager = VosApp.Services.Manager
+type Outcome = VosApp.Services.Outcome
+type Overview = VosApp.Services.Overview
+type Restart = VosApp.Services.Restart
+type Service = VosApp.Services.Service
+type Status = VosApp.Services.Status
 import type { ServicesEvents, ServicesRpc } from './services.svelte'
 
 export interface FakeBackend {
@@ -160,7 +165,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     on: (name, handler) => {
       const set = listeners.get(name) ?? new Set<() => void>()
       listeners.set(name, set)
-      const listener = (): void => void handler(undefined as never)
+      const listener = (): void => void handler()
       set.add(listener)
       return () => void set.delete(listener)
     }

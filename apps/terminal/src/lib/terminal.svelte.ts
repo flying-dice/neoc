@@ -1,10 +1,21 @@
-import type { Api, Exit } from '@terminal/rpc'
-import type { Host } from '@vos/host'
+type Exit = VosApp.Terminal.Exit
 
-/** What the window needs of the backend: a session, what is typed into it, and what it missed. */
-export type TerminalRpc = Pick<Api, 'open' | 'write' | 'resize' | 'ack' | 'replay' | 'close'>
-/** Where the backend's events are heard (`host.on`). */
-export type TerminalEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: a session, what is typed into it, and what it missed (the app's private methods
+ * on the bus, `_open` ...: `App.svelte` sends them).
+ */
+export interface TerminalRpc {
+  open(params: VosApp.Terminal.OpenParams): Promise<VosApp.Terminal.Opened>
+  write(params: VosApp.Terminal.WriteParams): Promise<null>
+  resize(params: VosApp.Terminal.ResizeParams): Promise<null>
+  ack(params: VosApp.Terminal.AckParams): Promise<VosApp.Terminal.Status>
+  replay(params: VosApp.Terminal.ReplayParams): Promise<VosApp.Terminal.Replay>
+  close(params: VosApp.Terminal.CloseParams): Promise<null>
+}
+/** Where the window hears the session's `output` and `exit` (the backend's notifications) and `host:reconnected`. */
+export interface TerminalEvents {
+  on(name: 'output' | 'exit' | 'host:reconnected', fn: (data: unknown) => void): () => void
+}
 
 /** What draws the output: the terminal emulator on the page (xterm.js), or a recorder in a test. */
 export interface Screen {

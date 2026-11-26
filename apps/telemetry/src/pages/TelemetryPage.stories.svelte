@@ -2,13 +2,13 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import TelemetryPage from './TelemetryPage.svelte'
   import { FAILED_TRACE, RENDER_TRACE, createFakeBackend, rpcError, type FakeBackend } from '../lib/fakeApi'
   import { Telemetry } from '../lib/telemetry.svelte'
 
-  // the window the contract asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -35,7 +35,7 @@
   {@const backend = args.backend()}
   <!-- the failing render is never run: a story's page must not throw -->
   {@const telemetry = new Telemetry(backend.reader, backend.rpc, { later: () => {} })}
-  <AppWindow title={definition.info.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
+  <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <!-- a story reads once: a window that read on a timer would change under the story's checks -->
     <TelemetryPage {telemetry} every={0} />
   </AppWindow>

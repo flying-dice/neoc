@@ -1,5 +1,5 @@
 // The host page's `vos/telemetry/query`, through the bridge's global: it is a service of the host page, not one of the
-// app's own methods, so `@telemetry/rpc` does not have it. Only the composition root uses this.
+// app's own methods, so the app's contract (`openrpc.json`) does not have it. Only the composition root uses this.
 import type { TelemetryReader } from './telemetry.svelte'
 import type { Found, TraceSummary } from './telemetry'
 

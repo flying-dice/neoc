@@ -1,79 +1,286 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Terminal",
-    "version": "0.1.0",
-    "description": "A shell on the machine vos runs on. A page opens a session and hears its output as `output` events (`{ session, offset, data }`: base64 of the bytes, `offset` the count of bytes before them) and its end as an `exit` event (`{ session, offset, code, signal }`)."
-  },
-  "x-app": {
-    "id": "terminal",
-    "icon": "terminal",
-    "tint": "gray",
-    "description": "A shell on the machine vos runs on: your own shell, in your home folder.",
-    "window": {
-      "w": 640,
-      "h": 420,
-      "minW": 320,
-      "minH": 240
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "open",
-      "summary": "Start the person's shell on a terminal of this size, and answer with the session. Its output follows as `output` events and its end as an `exit` event. At most 8 sessions are open at once.",
+      "name": "_open",
+      "summary": "Start the person's shell on a terminal of this size, and answer with the session. Its output follows as the `output` notification and its end as the `exit` notification. At most 8 sessions are open at once.",
       "params": [
-        { "name": "rows", "required": true, "schema": { "type": "integer", "minimum": 2, "maximum": 500 } },
-        { "name": "cols", "required": true, "schema": { "type": "integer", "minimum": 2, "maximum": 1000 } }
+        {
+          "name": "rows",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 500
+          }
+        },
+        {
+          "name": "cols",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 1000
+          }
+        }
       ],
-      "result": { "name": "opened", "schema": { "$ref": "#/components/schemas/Opened" } },
-      "errors": [{ "code": -32010, "message": "Too many terminals are open, or the shell could not be started." }]
+      "result": {
+        "name": "opened",
+        "schema": {
+          "$ref": "#/components/schemas/Opened"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Too many terminals are open, or the shell could not be started."
+        }
+      ]
     },
     {
-      "name": "write",
+      "name": "_write",
       "summary": "Send what was typed or pasted to the shell: base64 of at most 64 KiB of bytes. A page sends one write at a time, so the bytes arrive in order.",
       "params": [
-        { "name": "session", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
-        { "name": "data", "required": true, "description": "Base64 (standard alphabet, padded) of the bytes.", "schema": { "type": "string", "maxLength": 87384 } }
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "data",
+          "required": true,
+          "description": "Base64 (standard alphabet, padded) of the bytes.",
+          "schema": {
+            "type": "string",
+            "maxLength": 87384
+          }
+        }
       ],
-      "result": { "name": "done", "schema": { "type": "null" } },
-      "errors": [{ "code": -32010, "message": "The session has ended, or the bytes could not be written." }]
+      "result": {
+        "name": "done",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The session has ended, or the bytes could not be written."
+        }
+      ]
     },
     {
-      "name": "resize",
+      "name": "_resize",
       "summary": "Tell the session the size its page now draws.",
       "params": [
-        { "name": "session", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
-        { "name": "rows", "required": true, "schema": { "type": "integer", "minimum": 2, "maximum": 500 } },
-        { "name": "cols", "required": true, "schema": { "type": "integer", "minimum": 2, "maximum": 1000 } }
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "rows",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 500
+          }
+        },
+        {
+          "name": "cols",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 1000
+          }
+        }
       ],
-      "result": { "name": "done", "schema": { "type": "null" } },
-      "errors": [{ "code": -32010, "message": "The session has ended." }]
+      "result": {
+        "name": "done",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The session has ended."
+        }
+      ]
     },
     {
-      "name": "ack",
+      "name": "_ack",
       "summary": "Say how much of the output the page has drawn, and that the page is still there. The session sends no more than 256 KiB past this, and one that hears nothing from its page for 3 minutes is ended. Answers with where the output now ends, so a page can tell that an event did not reach it.",
       "params": [
-        { "name": "session", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
-        { "name": "offset", "required": true, "description": "The count of bytes of output drawn so far.", "schema": { "type": "integer", "minimum": 0 } }
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "offset",
+          "required": true,
+          "description": "The count of bytes of output drawn so far.",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       ],
-      "result": { "name": "status", "schema": { "$ref": "#/components/schemas/Status" } },
-      "errors": [{ "code": -32010, "message": "The session has ended." }]
+      "result": {
+        "name": "status",
+        "schema": {
+          "$ref": "#/components/schemas/Status"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The session has ended."
+        }
+      ]
     },
     {
-      "name": "replay",
+      "name": "_replay",
       "summary": "The output from `from` to where it now ends, for a page that missed events (its connection was away, or it was behind). The session keeps the last 384 KiB: when `from` is older than that, the answer starts later and says where.",
       "params": [
-        { "name": "session", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
-        { "name": "from", "required": true, "description": "The count of bytes of output the page already has.", "schema": { "type": "integer", "minimum": 0 } }
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "from",
+          "required": true,
+          "description": "The count of bytes of output the page already has.",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       ],
-      "result": { "name": "replay", "schema": { "$ref": "#/components/schemas/Replay" } },
-      "errors": [{ "code": -32010, "message": "The session has ended." }]
+      "result": {
+        "name": "replay",
+        "schema": {
+          "$ref": "#/components/schemas/Replay"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The session has ended."
+        }
+      ]
     },
     {
-      "name": "close",
+      "name": "_close",
       "summary": "End a session and its shell. A session that is not there is not an error.",
-      "params": [{ "name": "session", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } }],
-      "result": { "name": "done", "schema": { "type": "null" } }
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "done",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "output",
+      "summary": "Output of a session, in order: base64 of the bytes (at most 32 KiB), and `offset`, the count of bytes before them. A page that sees a gap in the offsets asks for the output again with `_replay`.",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "description": "The session's id.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "offset",
+          "required": true,
+          "description": "The count of bytes of output before these.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "data",
+          "required": true,
+          "description": "Base64 (standard alphabet, padded) of the bytes.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "exit",
+      "summary": "A session's shell ended: where the output ended (`offset`), and how (`code`, and the system's words for the `signal` when one ended it).",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "description": "The session's id.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "offset",
+          "required": true,
+          "description": "The count of bytes of output sent in all.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "code",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "signal",
+          "required": false,
+          "description": "The system's words for the signal that ended it, when one did.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
     }
   ],
   "components": {
@@ -81,35 +288,65 @@
       "Opened": {
         "type": "object",
         "properties": {
-          "session": { "type": "string", "description": "The session's id: random, and named by every call and event of the session." }
+          "session": {
+            "type": "string",
+            "description": "The session's id: random, and named by every call and event of the session."
+          }
         },
-        "required": ["session"]
+        "required": [
+          "session"
+        ]
       },
       "Exit": {
         "description": "How the shell ended.",
         "type": "object",
         "properties": {
-          "code": { "type": "integer" },
-          "signal": { "type": "string", "description": "The system's words for the signal that ended it, when one did." }
+          "code": {
+            "type": "integer"
+          },
+          "signal": {
+            "type": "string",
+            "description": "The system's words for the signal that ended it, when one did."
+          }
         },
-        "required": ["code"]
+        "required": [
+          "code"
+        ]
       },
       "Status": {
         "type": "object",
         "properties": {
-          "offset": { "type": "integer", "description": "The count of bytes of output sent so far." },
-          "exit": { "$ref": "#/components/schemas/Exit" }
+          "offset": {
+            "type": "integer",
+            "description": "The count of bytes of output sent so far."
+          },
+          "exit": {
+            "$ref": "#/components/schemas/Exit"
+          }
         },
-        "required": ["offset"]
+        "required": [
+          "offset"
+        ]
       },
       "Replay": {
         "type": "object",
         "properties": {
-          "from": { "type": "integer", "description": "The offset of the first byte of `data`: `from` as asked, or later when the output before it is no longer kept." },
-          "data": { "type": "string", "description": "Base64 of the bytes from there to where the output now ends." },
-          "exit": { "$ref": "#/components/schemas/Exit" }
+          "from": {
+            "type": "integer",
+            "description": "The offset of the first byte of `data`: `from` as asked, or later when the output before it is no longer kept."
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64 of the bytes from there to where the output now ends."
+          },
+          "exit": {
+            "$ref": "#/components/schemas/Exit"
+          }
         },
-        "required": ["from", "data"]
+        "required": [
+          "from",
+          "data"
+        ]
       }
     }
   }
