@@ -207,28 +207,6 @@ describe('the Luau side', () => {
   })
 })
 
-describe('the fixtures', () => {
-  const apps = resolve(import.meta.dir, '../../../e2e/apps')
-  for (const name of ['tasks-svelte', 'tasks-react']) {
-    test(`${name}'s contract parses and its backend has a handler for every method`, () => {
-      const project = join(apps, name)
-      const files = generate(project, DEFAULTS)
-      const kit = name === 'tasks-svelte' ? '.app/kit-svelte.d.ts' : '.app/kit-react.d.ts'
-      expect(files.map((f) => f.path)).toEqual(['.app/rpc.d.ts', '.app/rpc.js', '.app/host.d.ts', '.app/host.js', '.app/tracing.d.ts', '.app/tracing.js', '.app/rpc.luau', '.app/entry.luau', kit])
-      const text = readFileSync(join(project, 'openrpc.json'), 'utf8')
-      const contract = parseDefinition(text)
-      expect(contract.app.id).toBe(name)
-    })
-  }
-  test('the two fixtures share one contract: the same methods and schemas', () => {
-    const read = (name: string): unknown => {
-      const { methods, components } = JSON.parse(readFileSync(join(apps, name, 'openrpc.json'), 'utf8'))
-      return { methods, components }
-    }
-    expect(read('tasks-react')).toEqual(read('tasks-svelte'))
-  })
-})
-
 /** The handler check is the Luau type checker's: it needs luau-lsp, which the gate requires and a developer machine may lack. */
 const luauLsp = Bun.which('luau-lsp') ?? (existsSync(join(homedir(), '.local/bin/luau-lsp')) ? 'installed' : null)
 

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { parseContract, toolName } from './contract.ts'
+import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { parseContract, toolName, type Contract } from './contract.ts'
 
 const doc = (methods: unknown[], components: Record<string, unknown> = {}, openrpc = '1.4.0'): string =>
   JSON.stringify({ openrpc, info: { title: 'T', version: '1.0.0' }, methods, components: { schemas: components } })
@@ -64,4 +66,18 @@ describe('parseContract', () => {
 test('toolName: a public request is the agent tool of its snake-case name', () => {
   expect(toolName('calculate')).toBe('calculate')
   expect(toolName('addSite')).toBe('add_site')
+})
+
+describe('the fixtures', () => {
+  const apps = resolve(import.meta.dir, '../../../e2e/apps')
+  const read = (name: string): Contract => parseContract(readFileSync(join(apps, name, 'openrpc.json'), 'utf8'), `${name}/openrpc.json`)
+
+  test('the two task lists have one page API: the same private methods and the same schemas', () => {
+    const page = (c: Contract): unknown => ({
+      requests: c.requests.filter((r) => r.private),
+      notifications: c.notifications,
+      components: c.components
+    })
+    expect(page(read('tasks-react'))).toEqual(page(read('tasks-svelte')))
+  })
 })

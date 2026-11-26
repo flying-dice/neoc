@@ -895,16 +895,18 @@ impl AppVm {
         self.shared.rpc_handlers.lock().contains_key(method)
     }
 
-    /// The backend's handlers on the bus, as each described itself (a handler of the entry's table says nothing).
+    /// The backend's handlers on the bus (`RPC.on_request`), as each described itself: what its agent tools are made
+    /// from. A handler of the entry's table (a deprecated v1 app's page methods) is not listed: it serves the app's
+    /// page, as it always did, and is never an agent tool.
     pub fn handlers(&self) -> Vec<HandlerInfo> {
         let mut infos: Vec<HandlerInfo> = self
             .shared
             .rpc_handlers
             .lock()
-            .iter()
-            .map(|(method, handler)| match handler {
-                Handler::Registered(_, info) => info.clone(),
-                Handler::Returned(_) => HandlerInfo { method: method.clone(), ..HandlerInfo::default() },
+            .values()
+            .filter_map(|handler| match handler {
+                Handler::Registered(_, info) => Some(info.clone()),
+                Handler::Returned(_) => None,
             })
             .collect();
         infos.sort_by(|a, b| a.method.cmp(&b.method));
