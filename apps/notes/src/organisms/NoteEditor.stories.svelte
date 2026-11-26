@@ -2,7 +2,8 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog, pickerSelect, textArea } from '@vos/storybook/kit'
-  import type { Folder, Note } from '@notes/rpc'
+  type Folder = VosApp.Notes.Folder
+  type Note = VosApp.Notes.Note
   import NoteEditor from './NoteEditor.svelte'
   import { listed, note } from '../lib/fakeApi'
 

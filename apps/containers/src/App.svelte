@@ -1,11 +1,27 @@
 <script lang="ts">
-  import { api } from '@containers/rpc'
-  import { host } from '@vos/host'
-  import { Containers } from './lib/containers.svelte'
+  import { Containers, type ContainersEvents, type ContainersRpc } from './lib/containers.svelte'
   import ContainersPage from './pages/ContainersPage.svelte'
 
-  // The composition root: the one place the state meets the real backend and the host's events.
-  const containers = new Containers(api, host)
+  // The composition root: the one place the state meets the real backend (the app's private methods on the bus, the
+  // global `RPC`) and the host's events.
+  const rpc: ContainersRpc = {
+    overview: () => RPC.send_request('containers', '_overview'),
+    connect: (params) => RPC.send_request('containers', '_connect', params),
+    start: (params) => RPC.send_request('containers', '_start', params),
+    stop: (params) => RPC.send_request('containers', '_stop', params),
+    restart: (params) => RPC.send_request('containers', '_restart', params),
+    remove: (params) => RPC.send_request('containers', '_remove', params),
+    startStack: (params) => RPC.send_request('containers', '_stack_start', params),
+    stopStack: (params) => RPC.send_request('containers', '_stack_stop', params),
+    restartStack: (params) => RPC.send_request('containers', '_stack_restart', params),
+    removeStack: (params) => RPC.send_request('containers', '_stack_remove', params),
+    details: (params) => RPC.send_request('containers', '_details', params),
+    logs: (params) => RPC.send_request('containers', '_logs', params)
+  }
+  const events: ContainersEvents = {
+    on: (name, fn) => (name === 'changed' ? RPC.on_notification('containers', 'changed', fn) : vos.host.on(name, fn))
+  }
+  const containers = new Containers(rpc, events)
 </script>
 
 <ContainersPage {containers} />

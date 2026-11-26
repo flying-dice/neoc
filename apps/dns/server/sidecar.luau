@@ -8,7 +8,6 @@
 local config = require("./config")
 local dnsmasq = require("./dnsmasq")
 local docker = require("vos:docker")
-local rpc = require("../.app/rpc")
 
 local sidecar = {}
 
@@ -33,7 +32,7 @@ local function declared(): vos_docker_Declaration
 end
 
 -- How the server is doing. With Docker away there is nothing to say of its container.
-function sidecar.server(): rpc.Server
+function sidecar.server(): dns_Server
   local status = container:status(declared())
   return {
     enabled = config.enabled(),

@@ -170,7 +170,7 @@ test.describe('Notes journeys', () => {
     const title = unique('From the agent')
     await openNotes(page)
     await expect(row(page, title)).toHaveCount(0)
-    // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
+    // the agent calls the app's tools over MCP; a tool tells the open window with a notification: no reload, no click
     const made = JSON.parse(await callTool(`${ID}__create_note`, { body: `${title}\nSaid the agent` })) as { id: number; folder: string }
     expect(made.folder).toBe('Notes')
     await expect(row(page, title)).toContainText('Said the agent')

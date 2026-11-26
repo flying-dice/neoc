@@ -3,13 +3,13 @@
   import { expect, waitFor } from 'storybook/test'
   import { alertButton } from '@vos/storybook/kit'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import ContainersPage from './ContainersPage.svelte'
   import { Containers } from '../lib/containers.svelte'
   import { container, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
 
-  // the window the contract asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -58,7 +58,7 @@
   {@const backend = args.backend()}
   {@const containers = new Containers(backend.rpc, backend.events)}
   <AppWindow
-    title={definition.info.title}
+    title={app.title}
     width={args.width}
     height={args.height}
     minWidth={app.window.minW}

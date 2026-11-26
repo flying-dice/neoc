@@ -2,9 +2,7 @@
 -- What the server is made from, kept by the app: whether it is wanted on, its settings, and the records. This is
 -- the only copy (the container is made from it, never read back), so it is there with Docker away, and it is the
 -- same server in whichever Docker it is started.
-local app = require("vos:app")
 local dnsmasq = require("./dnsmasq")
-local rpc = require("../.app/rpc")
 
 local config = {}
 
@@ -16,7 +14,7 @@ local NEXT = "next"
 
 local MAX_RECORDS = 500
 local MAX_UPSTREAMS = 8
-local DEFAULTS: rpc.Settings = { port = dnsmasq.PORT, upstreams = { "1.1.1.1", "1.0.0.1" }, logQueries = false }
+local DEFAULTS: dns_Settings = { port = dnsmasq.PORT, upstreams = { "1.1.1.1", "1.0.0.1" }, logQueries = false }
 
 function config.enabled(): boolean
   return app.kv:get(ENABLED) == true
@@ -26,7 +24,7 @@ function config.setEnabled(enabled: boolean)
   app.kv:set(ENABLED, enabled)
 end
 
-function config.settings(): rpc.Settings
+function config.settings(): dns_Settings
   local kept = app.kv:get(SETTINGS)
   if type(kept) ~= "table" then
     return table.clone(DEFAULTS)
@@ -65,9 +63,9 @@ function config.saveSettings(port: number, upstreams: { string }, logQueries: bo
 end
 
 -- every record, by name and then by address
-function config.records(): { rpc.Record }
+function config.records(): { dns_Record }
   local kept = app.kv:get(RECORDS)
-  local records: { rpc.Record } = {}
+  local records: { dns_Record } = {}
   for _, record in if type(kept) == "table" then kept else {} do
     table.insert(records, {
       id = record.id,
@@ -110,8 +108,8 @@ function config.add(name: string, address: string, subdomains: boolean): string?
 end
 
 -- Take records away: every one `gone` says yes to. Answers with how many went.
-function config.remove(gone: (rpc.Record) -> boolean): number
-  local staying: { rpc.Record } = {}
+function config.remove(gone: (dns_Record) -> boolean): number
+  local staying: { dns_Record } = {}
   local records = config.records()
   for _, record in records do
     if not gone(record) then

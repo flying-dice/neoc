@@ -2,7 +2,7 @@
  * What the window can show: every note (All Notes), the notes of one folder, or the deleted ones (Recently Deleted).
  * Which notes a view shows, and under which headings, is decided here, from the board.
  */
-import type { Note } from '@notes/rpc'
+type Note = VosApp.Notes.Note
 import { groupOf } from './dates'
 
 export type View = { readonly kind: 'all' } | { readonly kind: 'folder'; readonly id: number } | { readonly kind: 'deleted' }

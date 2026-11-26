@@ -5,7 +5,6 @@
 --
 -- Nothing here talks to Docker or keeps anything: this is where a name and an address are checked, and where the
 -- arguments are written.
-local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 
 local dnsmasq = {}
@@ -97,7 +96,7 @@ end
 
 -- What dnsmasq is started with. It reads no file (not the image's own, not the container's resolv.conf or hosts),
 -- stays in front as a container's process must, and writes its log where Docker reads it.
-function dnsmasq.arguments(settings: rpc.Settings, records: { rpc.Record }): { string }
+function dnsmasq.arguments(settings: dns_Settings, records: { dns_Record }): { string }
   local arguments = {
     "--keep-in-foreground",
     "--conf-file=/dev/null",

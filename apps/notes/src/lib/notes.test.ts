@@ -322,7 +322,7 @@ describe('changes made elsewhere', () => {
     const notes = await opened(backend)
     await notes.open(find(notes, 1))
     backend.rewrite(1, 'Shopping\nMilk and bread\nEggs')
-    backend.emit('notes.changed')
+    backend.emit('notes_changed')
     await until(() => notes.text.endsWith('Eggs'))
     expect(notes.unsaved).toBe(false)
   })
@@ -333,7 +333,7 @@ describe('changes made elsewhere', () => {
     await notes.open(find(notes, 1))
     notes.text = 'Shopping\nMine'
     backend.rewrite(1, 'Shopping\nTheirs')
-    backend.emit('notes.changed')
+    backend.emit('notes_changed')
     await until(() => listedAs(notes, 1)?.preview === 'Theirs')
     expect(notes.text).toBe('Shopping\nMine')
   })

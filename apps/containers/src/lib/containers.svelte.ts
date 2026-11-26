@@ -1,24 +1,32 @@
-import type { Api, Container, Details, Engine, Logs, Overview, Stack } from '@containers/rpc'
-import type { Host } from '@vos/host'
+type Container = VosApp.Containers.Container
+type Details = VosApp.Containers.Details
+type Engine = VosApp.Containers.Engine
+type Logs = VosApp.Containers.Logs
+type Overview = VosApp.Containers.Overview
+type Stack = VosApp.Containers.Stack
 
-/** What the window needs of the backend: the overview, each way of changing it, and a container's details and logs. */
-export type ContainersRpc = Pick<
-  Api,
-  | 'overview'
-  | 'connect'
-  | 'start'
-  | 'stop'
-  | 'restart'
-  | 'remove'
-  | 'startStack'
-  | 'stopStack'
-  | 'restartStack'
-  | 'removeStack'
-  | 'details'
-  | 'logs'
->
-/** Where the backend's events are heard (`host.on`). */
-export type ContainersEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the overview, each way of changing it, and a container's details and logs (the
+ * app's private methods on the bus, `_overview` ...: `App.svelte` sends them).
+ */
+export interface ContainersRpc {
+  overview(): Promise<Overview>
+  connect(params: VosApp.Containers.ConnectParams): Promise<Overview>
+  start(params: VosApp.Containers.StartParams): Promise<Overview>
+  stop(params: VosApp.Containers.StopParams): Promise<Overview>
+  restart(params: VosApp.Containers.RestartParams): Promise<Overview>
+  remove(params: VosApp.Containers.RemoveParams): Promise<Overview>
+  startStack(params: VosApp.Containers.StackStartParams): Promise<Overview>
+  stopStack(params: VosApp.Containers.StackStopParams): Promise<Overview>
+  restartStack(params: VosApp.Containers.StackRestartParams): Promise<Overview>
+  removeStack(params: VosApp.Containers.StackRemoveParams): Promise<Overview>
+  details(params: VosApp.Containers.DetailsParams): Promise<Details>
+  logs(params: VosApp.Containers.LogsParams): Promise<Logs>
+}
+/** Where the window hears that Docker changed: the backend's `changed`, and the host's `host:reconnected`. */
+export interface ContainersEvents {
+  on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** What can be done to a container, and to a stack. */
 export type Action = 'start' | 'stop' | 'restart' | 'remove'

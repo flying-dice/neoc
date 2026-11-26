@@ -5,7 +5,6 @@
 -- A function that does something answers with a plain sentence when it could not (the handler and the tool pass it on
 -- as it is) and with nothing when it did what it was asked.
 local docker = require("vos:docker")
-local rpc = require("../.app/rpc")
 local stacks = require("./stacks")
 
 local engine = {}
@@ -13,7 +12,7 @@ local engine = {}
 -- what changes the list of containers; the rest of what Docker reports (every health probe, every `exec`) does not
 local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "rename", "health_status" }
 
-local STATES: { [string]: rpc.State } = {
+local STATES: { [string]: containers_State } = {
   created = "created",
   running = "running",
   paused = "paused",
@@ -58,7 +57,7 @@ local function portsOf(ports: { vnd_bollard_PortSummary }): { string }
 end
 
 -- a container, from an entry of Docker's list
-local function containerOf(summary: vnd_bollard_ContainerSummary): rpc.Container
+local function containerOf(summary: vnd_bollard_ContainerSummary): containers_Container
   local stack, service = stacks.of(summary.Labels or {})
   return {
     id = summary.Id or "",
@@ -72,7 +71,7 @@ local function containerOf(summary: vnd_bollard_ContainerSummary): rpc.Container
   }
 end
 
-local function unreachable(status: vos_docker_Status, problem: string): rpc.Overview
+local function unreachable(status: vos_docker_Status, problem: string): containers_Overview
   status.reachable = false
   status.version = ""
   status.problem = problem
@@ -80,7 +79,7 @@ local function unreachable(status: vos_docker_Status, problem: string): rpc.Over
 end
 
 -- Whether Docker can be reached, and what it has. Never fails: a Docker that is away is an answer.
-function engine.overview(): rpc.Overview
+function engine.overview(): containers_Overview
   local status = docker.status()
   local api = if status.reachable then docker.reader() else nil
   if not api then
@@ -90,7 +89,7 @@ function engine.overview(): rpc.Overview
   if not list then
     return unreachable(status, sentence(list_err))
   end
-  local containers: { rpc.Container } = {}
+  local containers: { containers_Container } = {}
   local folders: { [string]: string } = {}
   for _, summary in list do
     local container = containerOf(summary)
@@ -189,7 +188,7 @@ function engine.stack(action: Action, stack: string): string?
 end
 
 -- What a container was made with. The values of its environment are left out: they often hold passwords.
-function engine.details(container: string): (rpc.Details?, string?)
+function engine.details(container: string): (containers_Details?, string?)
   local api, problem = docker.reader()
   if not api then
     return nil, problem
@@ -239,7 +238,7 @@ function engine.details(container: string): (rpc.Details?, string?)
 end
 
 -- The end of what a container wrote, its output and its errors together in the order Docker has them.
-function engine.logs(container: string, tail: number?): (rpc.Logs?, string?)
+function engine.logs(container: string, tail: number?): (containers_Logs?, string?)
   local logs, problem = docker.logs(container, tail)
   if not logs then
     return nil, problem

@@ -1,12 +1,30 @@
-import type { Api, Engine, Logs, Overview, Record as DnsRecord, Server, Settings } from '@dns/rpc'
-import type { Host } from '@vos/host'
+type Engine = VosApp.Dns.Engine
+type Logs = VosApp.Dns.Logs
+type Overview = VosApp.Dns.Overview
+type DnsRecord = VosApp.Dns.Record
+type Server = VosApp.Dns.Server
+type Settings = VosApp.Dns.Settings
 import { portOf, upstreamsOf } from './format'
 import { addressProblem, nameProblem, portProblem, upstreamsProblem } from './validate'
 
-/** What the window needs of the backend: the overview, each way of changing it, and the server's log. */
-export type DnsRpc = Pick<Api, 'overview' | 'connect' | 'setEnabled' | 'apply' | 'saveSettings' | 'addRecord' | 'removeRecord' | 'logs'>
-/** Where the backend's events are heard (`host.on`). */
-export type DnsEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the overview, each way of changing it, and the server's log (the app's private
+ * methods on the bus, `_overview` ...: `App.svelte` sends them).
+ */
+export interface DnsRpc {
+  overview(): Promise<Overview>
+  connect(params: VosApp.Dns.ConnectParams): Promise<Overview>
+  setEnabled(params: VosApp.Dns.SetEnabledParams): Promise<Overview>
+  apply(): Promise<Overview>
+  saveSettings(params: VosApp.Dns.SaveSettingsParams): Promise<Overview>
+  addRecord(params: VosApp.Dns.CreateRecordParams): Promise<Overview>
+  removeRecord(params: VosApp.Dns.DeleteRecordParams): Promise<Overview>
+  logs(params?: VosApp.Dns.LogsParams): Promise<Logs>
+}
+/** Where the window hears that the server changed: the backend's `changed`, and the host's `host:reconnected`. */
+export interface DnsEvents {
+  on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** What of the server is looked at. */
 export type Tab = 'records' | 'settings' | 'log'

@@ -9,18 +9,16 @@
 -- server is not running and why (`server.problem`). A failed call is one whose input was refused.
 --
 -- The container changes without the app (it crashes, someone stops it in a terminal): a task watches Docker's events
--- for it for as long as the app is loaded and tells the open windows with a `changed` event, and they read the
+-- for it for as long as the app is loaded and tells the open windows with the `changed` notification, and they read the
 -- overview again.
 --
 -- An agent can read what the server answers with (`list_records`), and give and take names (`add_record`,
--- `remove_record`). Turning the server on and off, and its settings, are left to the person.
-local app = require("vos:app")
+-- `remove_record`). Turning the server on and off, and its settings, are left to the person. It serves on the RPC bus
+-- through the global `RPC`, typed by the generated `types/vos.d.luau`; the page's methods are private (`_overview`, ...).
 local config = require("./config")
 local docker = require("vos:docker")
-local rpc = require("../.app/rpc")
 local sidecar = require("./sidecar")
 local task = require("std:task")
-local t = app.t
 
 -- how long the windows are left alone after being told of a change, in seconds: making the container again is
 -- several of Docker's events
@@ -34,14 +32,14 @@ local function changed()
   telling = true
   task.delay(QUIET, function()
     telling = false
-    app.emit("changed")
+    RPC.send_notification("changed")
   end)
 end
 
 -- the watcher is the app's own task: it starts at load without holding it up, and stops when the app is unloaded
 task.spawn(docker.watch, sidecar.FILTERS, changed)
 
-local function overview(): rpc.Overview
+local function overview(): dns_Overview
   return {
     engine = docker.status(),
     server = sidecar.server(),
@@ -59,134 +57,97 @@ local function reconfigured()
   changed()
 end
 
-local handlers: rpc.Handlers = {
-  overview = function(_ctx)
-    return overview()
-  end,
+RPC.on_request("_overview", function(): dns_OverviewResult
+  return overview()
+end)
 
-  connect = function(ctx, params)
-    local refused = docker.use(params.host)
-    return if refused then ctx:fail(refused) else overview()
-  end,
+RPC.on_request("_connect", function(params: dns_ConnectParams, ctx: vos_app_Context): dns_ConnectResult
+  local refused = docker.use(params.host)
+  return if refused then ctx:fail(refused) else overview()
+end)
 
-  setEnabled = function(_ctx, params)
-    config.setEnabled(params.enabled)
-    if params.enabled then
-      sidecar.apply()
-    else
-      sidecar.remove()
-    end
-    changed()
-    return overview()
-  end,
+RPC.on_request("_set_enabled", function(params: dns_SetEnabledParams): dns_SetEnabledResult
+  config.setEnabled(params.enabled)
+  if params.enabled then
+    sidecar.apply()
+  else
+    sidecar.remove()
+  end
+  changed()
+  return overview()
+end)
 
-  apply = function(_ctx)
-    reconfigured()
-    return overview()
-  end,
+RPC.on_request("_apply", function(): dns_ApplyResult
+  reconfigured()
+  return overview()
+end)
 
-  saveSettings = function(ctx, params)
-    local refused = config.saveSettings(params.port, params.upstreams, params.logQueries)
-    if refused then
-      return ctx:fail(refused)
-    end
-    reconfigured()
-    return overview()
-  end,
+RPC.on_request("_save_settings", function(params: dns_SaveSettingsParams, ctx: vos_app_Context): dns_SaveSettingsResult
+  local refused = config.saveSettings(params.port, params.upstreams, params.logQueries)
+  if refused then
+    return ctx:fail(refused)
+  end
+  reconfigured()
+  return overview()
+end)
 
-  addRecord = function(ctx, params)
-    local refused = config.add(params.name, params.address, params.subdomains)
-    if refused then
-      return ctx:fail(refused)
-    end
-    reconfigured()
-    return overview()
-  end,
+RPC.on_request("_create_record", function(params: dns_CreateRecordParams, ctx: vos_app_Context): dns_CreateRecordResult
+  local refused = config.add(params.name, params.address, params.subdomains)
+  if refused then
+    return ctx:fail(refused)
+  end
+  reconfigured()
+  return overview()
+end)
 
-  removeRecord = function(ctx, params)
-    local gone = config.remove(function(record)
-      return record.id == params.record
-    end)
-    if gone == 0 then
-      return ctx:fail("There is no such record.")
-    end
-    reconfigured()
-    return overview()
-  end,
+RPC.on_request("_delete_record", function(params: dns_DeleteRecordParams, ctx: vos_app_Context): dns_DeleteRecordResult
+  local gone = config.remove(function(record)
+    return record.id == params.record
+  end)
+  if gone == 0 then
+    return ctx:fail("There is no such record.")
+  end
+  reconfigured()
+  return overview()
+end)
 
-  logs = function(ctx, params)
-    local logs, refused = sidecar.logs(params.tail)
-    return logs or ctx:fail(refused or "The server has no container.")
-  end,
-}
+RPC.on_request("_logs", function(params: dns_LogsParams, ctx: vos_app_Context): dns_LogsResult
+  local logs, refused = sidecar.logs(params.tail)
+  return logs or ctx:fail(refused or "The server has no container.")
+end)
 
 -- how the server is doing, as an agent reads it
-local function serverOf(): { enabled: boolean, state: rpc.ServerState, port: number, problem: string }
+local function serverOf(): { enabled: boolean, state: dns_ServerState, port: number, problem: string }
   local server = sidecar.server()
   return { enabled = server.enabled, state = server.state, port = config.settings().port, problem = server.problem }
 end
 
-app.tool {
-  name = "list_records",
-  title = "List the DNS records",
-  readOnly = true,
-  description = "The names this machine's DNS server answers for, each with its address (IPv4 or IPv6) and whether every name under it answers with the address too; the servers it asks for every other name (`upstreams`); and how the server is doing: whether it is wanted on (`enabled`), the state of its container (`running`, `stopped`, `restarting`, or `absent` when there is none), the port it answers on, and why it is not running when Docker refused (`problem`).",
-  input = {},
-  run = function(_input, _ctx)
-    local records: { { name: string, address: string, subdomains: boolean } } = {}
-    for _, record in config.records() do
-      table.insert(records, { name = record.name, address = record.address, subdomains = record.subdomains })
-    end
-    return { server = serverOf(), upstreams = config.settings().upstreams, records = records }
-  end,
-}
+RPC.on_request("list_records", function(): dns_ListRecordsResult
+  local records: { { name: string, address: string, subdomains: boolean } } = {}
+  for _, record in config.records() do
+    table.insert(records, { name = record.name, address = record.address, subdomains = record.subdomains })
+  end
+  return { server = serverOf(), upstreams = config.settings().upstreams, records = records }
+end)
 
-app.tool {
-  name = "add_record",
-  title = "Add a DNS record",
-  description = "Give a name an address on this machine's DNS server (`nas.home` -> `192.168.1.10`). A name may have several addresses: add each. A server that is on answers with it a moment later; one that is off keeps it for when it is turned on.",
-  input = {
-    name = t.string { description = "The name, like `nas.home`", maxLength = 253 },
-    address = t.string { description = "An IPv4 or IPv6 address", maxLength = 45 },
-    subdomains = t.boolean {
-      optional = true,
-      description = "Every name under it answers with the address too; false when left out",
-    },
-  },
-  run = function(input: { name: string, address: string, subdomains: boolean? }, ctx)
-    local refused = config.add(input.name, input.address, input.subdomains == true)
-    if refused then
-      return ctx:fail(refused)
-    end
-    reconfigured()
-    return { added = true, server = serverOf() }
-  end,
-}
+RPC.on_request("add_record", function(params: dns_AddRecordParams, ctx: vos_app_Context): dns_AddRecordResult
+  local refused = config.add(params.name, params.address, params.subdomains == true)
+  if refused then
+    return ctx:fail(refused)
+  end
+  reconfigured()
+  return { added = true, server = serverOf() }
+end)
 
-app.tool {
-  name = "remove_record",
-  title = "Remove a DNS record",
-  description = "Take a name away from this machine's DNS server, by the name as `list_records` gives it: every address it has, or only `address` when given.",
-  input = {
-    name = t.string { description = "The name of the record", maxLength = 253 },
-    address = t.string {
-      optional = true,
-      description = "One of the name's addresses; all of them when left out",
-      maxLength = 45,
-    },
-  },
-  run = function(input: { name: string, address: string? }, ctx)
-    local name = string.lower(input.name)
-    local address = if input.address then string.lower(input.address) else nil
-    local removed = config.remove(function(record)
-      return record.name == name and (address == nil or record.address == address)
-    end)
-    if removed == 0 then
-      return ctx:fail("There is no such record.")
-    end
-    reconfigured()
-    return { removed = removed, server = serverOf() }
-  end,
-}
-
-return handlers
+RPC.on_request("remove_record", function(params: dns_RemoveRecordParams, ctx: vos_app_Context): dns_RemoveRecordResult
+  local name = string.lower(params.name)
+  local address = if params.address then string.lower(params.address) else nil
+  local removed = config.remove(function(record)
+    return record.name == name and (address == nil or record.address == address)
+  end)
+  if removed == 0 then
+    return ctx:fail("There is no such record.")
+  end
+  reconfigured()
+  return { removed = removed, server = serverOf() }
+end)

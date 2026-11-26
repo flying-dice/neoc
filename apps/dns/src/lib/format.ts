@@ -1,4 +1,5 @@
-import type { Server, Settings } from '@dns/rpc'
+type Server = VosApp.Dns.Server
+type Settings = VosApp.Dns.Settings
 import type { Tone } from '@vos/docker'
 
 /** The server answers, with the settings and the names as they stand. */

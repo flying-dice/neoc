@@ -5,13 +5,15 @@
  * Recently Deleted; a deleted note cannot be changed; a note with nothing in it is deleted for good; and a board lists
  * the notes by title and preview, the most recently edited first.
  */
-import type { Board, Folder, Note } from '@notes/rpc'
+type Board = VosApp.Notes.Board
+type Folder = VosApp.Notes.Folder
+type Note = VosApp.Notes.Note
 import type { NotesEvents, NotesRpc } from './notes.svelte'
 
 export interface FakeBackend {
   readonly rpc: NotesRpc
   readonly events: NotesEvents
-  /** Send an event to the window, as the backend (`notes.changed`) or the host (`host:reconnected`) does. */
+  /** Send an event to the window, as the backend (`notes_changed`) or the host (`host:reconnected`) does. */
   emit(name: string, data?: unknown): void
   /** Write a note as an agent's tool does, with no event: the text a later read finds. */
   rewrite(id: number, body: string): void

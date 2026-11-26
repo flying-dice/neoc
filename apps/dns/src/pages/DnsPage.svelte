@@ -7,7 +7,7 @@
   import type { Dns, Tab } from '../lib/dns.svelte'
 
   interface Props {
-    /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
+    /** This window's state; the composition root builds it with the real `rpc` and `events`, a story with a fake. */
     dns: Dns
     /** How often the log that is shown is read again while the server runs, in milliseconds. */
     logEvery?: number

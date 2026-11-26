@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Containers",
-    "version": "0.1.0",
-    "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs."
-  },
-  "x-app": {
-    "id": "containers",
-    "icon": "rectangle.stack",
-    "tint": "teal",
-    "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs.",
-    "window": {
-      "w": 980,
-      "h": 640,
-      "minW": 440,
-      "minH": 420
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "overview",
+      "name": "_overview",
       "summary": "Whether Docker can be reached, and every container and Compose stack it has. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "connect",
+      "name": "_connect",
       "summary": "Choose the Docker this app manages, and answer with what it has.",
       "params": [
         {
@@ -57,7 +44,7 @@
       ]
     },
     {
-      "name": "start",
+      "name": "_start",
       "summary": "Start a container.",
       "params": [
         {
@@ -84,7 +71,7 @@
       ]
     },
     {
-      "name": "stop",
+      "name": "_stop",
       "summary": "Stop a container: Docker asks it to end, and kills it after ten seconds.",
       "params": [
         {
@@ -111,7 +98,7 @@
       ]
     },
     {
-      "name": "restart",
+      "name": "_restart",
       "summary": "Stop a container and start it again.",
       "params": [
         {
@@ -138,7 +125,7 @@
       ]
     },
     {
-      "name": "remove",
+      "name": "_remove",
       "summary": "Remove a container, running or not. Its named volumes stay.",
       "params": [
         {
@@ -165,7 +152,7 @@
       ]
     },
     {
-      "name": "startStack",
+      "name": "_stack_start",
       "summary": "Start every container of a Compose stack, the services others depend on first.",
       "params": [
         {
@@ -192,7 +179,7 @@
       ]
     },
     {
-      "name": "stopStack",
+      "name": "_stack_stop",
       "summary": "Stop every container of a Compose stack, the services others depend on last.",
       "params": [
         {
@@ -219,7 +206,7 @@
       ]
     },
     {
-      "name": "restartStack",
+      "name": "_stack_restart",
       "summary": "Stop a Compose stack and start it again.",
       "params": [
         {
@@ -246,7 +233,7 @@
       ]
     },
     {
-      "name": "removeStack",
+      "name": "_stack_remove",
       "summary": "Take a Compose stack down: remove its containers and its networks. Its volumes stay.",
       "params": [
         {
@@ -273,7 +260,7 @@
       ]
     },
     {
-      "name": "details",
+      "name": "_details",
       "summary": "What a container was made with: its command, restart policy, mounts, networks and the names of its environment variables.",
       "params": [
         {
@@ -300,7 +287,7 @@
       ]
     },
     {
-      "name": "logs",
+      "name": "_logs",
       "summary": "The end of what a container has written, both its output and its errors, as text.",
       "params": [
         {
@@ -335,6 +322,267 @@
           "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
         }
       ]
+    },
+    {
+      "name": "list_containers",
+      "summary": "List the containers",
+      "x-readOnly": true,
+      "description": "Every Docker container of this machine, running or not: its name, image, state (running, exited, paused, ...), Docker's own words for it (`Up 2 hours`), its published ports (`8080:80`) and the Compose stack it belongs to (empty for a container on its own). Give `stack` for the containers of one stack only.",
+      "params": [
+        {
+          "name": "stack",
+          "required": false,
+          "description": "The name of a Compose stack; every container when left out",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "docker": {
+              "type": "string"
+            },
+            "containers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Listed"
+              }
+            }
+          },
+          "required": [
+            "docker",
+            "containers"
+          ]
+        }
+      }
+    },
+    {
+      "name": "container_logs",
+      "summary": "Read a container's logs",
+      "x-readOnly": true,
+      "description": "The end of what a container has written (its output and its errors together), by the container's name (`list_containers` gives the names).",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The name of the container",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "lines",
+          "required": false,
+          "description": "How many lines from the end; 200 when left out",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          }
+        }
+      ],
+      "result": {
+        "name": "logs",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "container": {
+              "type": "string"
+            },
+            "logs": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "container",
+            "logs",
+            "truncated"
+          ]
+        }
+      }
+    },
+    {
+      "name": "start_container",
+      "summary": "Start a container",
+      "description": "Start a stopped container, by its name.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The name of the container",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "started",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "container": {
+              "type": "string"
+            },
+            "started": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "container",
+            "started"
+          ]
+        }
+      }
+    },
+    {
+      "name": "stop_container",
+      "summary": "Stop a container",
+      "description": "Stop a running container, by its name: Docker asks it to end and kills it after ten seconds.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The name of the container",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "stopped",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "container": {
+              "type": "string"
+            },
+            "stopped": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "container",
+            "stopped"
+          ]
+        }
+      }
+    },
+    {
+      "name": "restart_container",
+      "summary": "Restart a container",
+      "description": "Stop a container and start it again, by its name.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The name of the container",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "restarted",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "container": {
+              "type": "string"
+            },
+            "restarted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "container",
+            "restarted"
+          ]
+        }
+      }
+    },
+    {
+      "name": "start_stack",
+      "summary": "Start a stack",
+      "description": "Start every container of a Compose stack, by the stack's name (`list_containers` gives each container's stack). The services others wait for start first.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of the stack",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "started",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "stack": {
+              "type": "string"
+            },
+            "started": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "stack",
+            "started"
+          ]
+        }
+      }
+    },
+    {
+      "name": "stop_stack",
+      "summary": "Stop a stack",
+      "description": "Stop every container of a Compose stack, by the stack's name. Nothing is removed.",
+      "params": [
+        {
+          "name": "stack",
+          "required": true,
+          "description": "The name of the stack",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "result": {
+        "name": "stopped",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "stack": {
+              "type": "string"
+            },
+            "stopped": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "stack",
+            "stopped"
+          ]
+        }
+      }
+    },
+    {
+      "name": "changed",
+      "summary": "Docker changed, or a tool changed something: the open windows read the overview again.",
+      "params": []
     }
   ],
   "components": {
@@ -545,6 +793,41 @@
           "container",
           "text",
           "truncated"
+        ]
+      },
+      "Listed": {
+        "type": "object",
+        "description": "A container as an agent reads it in a list.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/State"
+          },
+          "status": {
+            "type": "string"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stack": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "image",
+          "state",
+          "status",
+          "ports",
+          "stack"
         ]
       }
     }

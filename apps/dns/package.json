@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "DNS: a DNS server for the local network, run as a dnsmasq container this app owns. A Svelte client on the kit, the names and settings kept in Luau and turned into the container through vnd:bollard, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "A DNS server for your network: give the machines at home a name, and choose who answers for the rest. It runs as a container in Docker, which this app makes and keeps.",
+  "vos": {
+    "title": "DNS",
+    "icon": "network",
+    "tint": "indigo",
+    "window": {
+      "w": 760,
+      "h": 620,
+      "minW": 420,
+      "minH": 440
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6013 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
@@ -25,7 +33,7 @@
     "@types/bun": "1.4.4",
     "@vos/docker": "workspace:*",
     "@vos/storybook": "workspace:*",
-    "@vos/vite-plugin": "workspace:*",
+    "@vos/vite-plugin-v2": "workspace:*",
     "storybook": "10.6.7",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",

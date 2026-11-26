@@ -287,7 +287,7 @@ the same tools under the same names, and the person sees the same app.
 - `x-app` leaves `openrpc.json` for package.json: its `description` becomes the package `description`, and `vos`
   gets `{ title: info.title, icon, tint, window }`. The package name without its scope must be the old `x-app.id`.
 - `openrpc` becomes `"1.4.0"`. Drop `info.description` if it only repeated `x-app.description`.
-- Each v1 page method (a key of the `Handlers` table the entry returned) becomes **private**: `foo` → `_foo`. A public
+- Each v1 page method (a key of the `Handlers` table the entry returned) becomes **private**, in snake case: `foo` → `_foo`, `addFolder` → `_add_folder` (the house style; one that would be the twin of a tool, `_add_record` beside `add_record`, takes another name). A public
   method is an agent tool, so a page method left public would hand agents what only the person had (Keychain's
   `reveal`).
 - Each `app.tool { name, title, description, input, readOnly, run }` becomes a **public** request of the same `name`:

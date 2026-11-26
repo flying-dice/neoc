@@ -1,6 +1,6 @@
 <!-- @molecule RecordRow — one record in the list: the name, the address it answers with, whether every name under it does too, and the button that takes it away -->
 <script lang="ts">
-  import type { Record as DnsRecord } from '@dns/rpc'
+  type DnsRecord = VosApp.Dns.Record
 
   interface Props {
     record: DnsRecord

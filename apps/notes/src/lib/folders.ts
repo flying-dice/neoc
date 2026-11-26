@@ -1,5 +1,5 @@
 /** What is wrong with the name typed for a new folder. The backend checks the same (server/store.luau), and has the last word. */
-import type { Folder } from '@notes/rpc'
+type Folder = VosApp.Notes.Folder
 
 /** Why a folder cannot be called `name`, or nothing when it can. A blank name is not a problem to report: there is nothing to add yet. */
 export function folderProblem(name: string, folders: readonly Folder[]): string | null {

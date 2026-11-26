@@ -1,6 +1,7 @@
 <!-- @organism SettingsForm — how the server answers, as a form of iPadOS is: a row each for its port, who it asks for the names it does not know and whether it logs each question, what is wrong with them in the footer under the rows, and a Save that cannot be pressed until there is something right to save; under it which Docker the server runs in, with the field that chooses another -->
 <script lang="ts">
-  import type { Engine, Server } from '@dns/rpc'
+  type Engine = VosApp.Dns.Engine
+  type Server = VosApp.Dns.Server
   import { ConnectionForm } from '@vos/docker'
   import type { Problems, SettingsDraft } from '../lib/dns.svelte'
 
