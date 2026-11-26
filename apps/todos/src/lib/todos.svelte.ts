@@ -1,12 +1,27 @@
-import type { Api, Board, List, Todo } from '@todos/rpc'
-import type { Host } from '@vos/host'
 import { dayOf } from './dates'
 import { COLORS, SMART, listView, sameView, shown, smart, type SmartId, type View } from './views'
 
-/** What the window needs of the backend: the board, and each way of changing it. */
-export type TodosRpc = Pick<Api, 'board' | 'addList' | 'removeList' | 'add' | 'update' | 'toggle' | 'remove'>
-/** Where the backend's events are heard (`host.on`). */
-export type TodosEvents = Pick<Host, 'on'>
+type Board = VosApp.Todos.Board
+type List = VosApp.Todos.List
+type Todo = VosApp.Todos.Todo
+
+/**
+ * What the window needs of the backend: the board, and each way of changing it (the app's private methods on the bus,
+ * `_board`, `_add_list` ...: `App.svelte` sends them).
+ */
+export interface TodosRpc {
+  board(): Promise<Board>
+  addList(params: VosApp.Todos.AddListParams): Promise<Board>
+  removeList(params: VosApp.Todos.RemoveListParams): Promise<Board>
+  add(params: VosApp.Todos.AddParams): Promise<Board>
+  update(params: VosApp.Todos.UpdateParams): Promise<Board>
+  toggle(params: VosApp.Todos.ToggleParams): Promise<Board>
+  remove(params: VosApp.Todos.RemoveParams): Promise<Board>
+}
+/** Where the window hears that the todos changed: the backend's `todos_changed`, and the host's `host:reconnected`. */
+export interface TodosEvents {
+  on(name: 'todos_changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -123,7 +138,7 @@ export class Todos {
    */
   listen(): () => void {
     const stops = [
-      this.#events.on('todos.changed', () => void this.load()),
+      this.#events.on('todos_changed', () => void this.load()),
       this.#events.on('host:reconnected', () => void this.load())
     ]
     return () => stops.forEach((stop) => stop())

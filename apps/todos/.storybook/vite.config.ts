@@ -4,9 +4,8 @@ import { defineConfig } from 'vite'
 
 const ui = resolve(import.meta.dirname, '../../../packages/ui/src')
 
-// Stories only need Svelte. The app's build (../vite.config.ts) is not used: its `vos()` plugin generates the backend's
-// router, checks the Luau and writes the app ref into dist/, none of which a Storybook should do, and it resolves
-// `@todos/rpc` to the client of a host that is not there.
+// Stories only need Svelte. The app's build (../vite.config.ts) is not used: its `vos()` plugin writes the app's types,
+// compiles the backend and writes the app ref into dist/, none of which a Storybook should do.
 export default defineConfig({
   plugins: [svelte({ configFile: false })],
   resolve: {

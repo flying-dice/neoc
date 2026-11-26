@@ -1,14 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! Todos (`apps/todos`, a Vite project whose backend is written in TypeScript) under the real runtime: its handlers
-//! through the generated router, and its agent tools. The backend is compiled as the app's own build compiles it.
+//! Todos (`apps/todos`, a Vite project on the v2 plugin whose backend is written in TypeScript) under the real runtime:
+//! the page's private methods (`_board`, `_add_list`, ...) and the agent's public ones (`list_todos`, `add_todo`,
+//! `complete_todo`) on the bus, held to the app's contract (`openrpc.json`). The backend is compiled as the app's own
+//! build compiles it.
 
 use crate::common;
 
-use common::{agent_ctx, built_project, db, id, user_ctx};
+use common::{db, Served};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use vos_application::{
-    ports::{AppRuntime, LoadedApp, Notifier, PortResult},
+    ports::{AppData, Notifier, PortResult},
     testing::RecordingShell,
     PortError,
 };
@@ -27,9 +29,8 @@ impl Notifier for Quiet {
 }
 
 struct Todos {
-    rt: LuaRuntime,
+    app: Served,
     shell: Arc<RecordingShell>,
-    loaded: LoadedApp,
 }
 
 impl Todos {
@@ -40,17 +41,22 @@ impl Todos {
     /// The app loaded on a database that may already hold its data.
     async fn open_on(db: Arc<AppDb>) -> Self {
         let shell = Arc::new(RecordingShell::default());
+        Self::load_on(db, shell).await
+    }
+
+    async fn load_on(data: Arc<dyn AppData>, shell: Arc<RecordingShell>) -> Self {
         let rt = LuaRuntime::new(Arc::new(Quiet), shell.clone());
-        let loaded = rt.load(&id(APP), built_project("apps/todos"), db).await.unwrap();
-        Self { rt, shell, loaded }
+        Self { app: Served::load(rt, APP, "apps/todos", data).await.unwrap(), shell }
     }
 
+    /// The page's call of one of its private methods (`board` is `_board`, `addList` is `_add_list`).
     async fn call(&self, method: &str, args: Value) -> PortResult<Value> {
-        self.rt.call_handler(&id(APP), method, args, user_ctx(0)).await
+        self.app.page(&format!("_{method}"), args).await
     }
 
+    /// An agent's call of a public method.
     async fn tool(&self, name: &str, args: Value) -> PortResult<Value> {
-        self.rt.call_tool(&id(APP), name, args, agent_ctx(0), false).await
+        self.app.agent(name, args).await
     }
 
     fn events(&self) -> Vec<String> {
@@ -114,9 +120,9 @@ async fn a_person_keeps_todos_in_lists() {
     assert_eq!(titles(&board), ["Water the plants"]);
 
     // a list goes with its todos, and the last list stays
-    let board = todos.call("addList", json!({ "name": "Shopping", "color": "green" })).await.unwrap();
+    let board = todos.call("add_list", json!({ "name": "Shopping", "color": "green" })).await.unwrap();
     assert_eq!(board["lists"][1], json!({ "id": 2, "name": "Shopping", "color": "green" }));
-    let board = todos.call("removeList", json!({ "list": 1 })).await.unwrap();
+    let board = todos.call("remove_list", json!({ "list": 1 })).await.unwrap();
     assert_eq!(board, json!({ "lists": [{ "id": 2, "name": "Shopping", "color": "green" }], "todos": [] }));
 }
 
@@ -141,9 +147,9 @@ async fn what_cannot_be_done_is_refused_in_words() {
         ("update", json!({ "todo": 9, "title": "Milk" }), "There is no such todo."),
         ("toggle", json!({ "todo": 9 }), "There is no such todo."),
         ("remove", json!({ "todo": 9 }), "There is no such todo."),
-        ("addList", json!({ "name": " ", "color": "red" }), "A list needs a name."),
-        ("removeList", json!({ "list": 1 }), "The last list cannot be deleted."),
-        ("removeList", json!({ "list": 7 }), "There is no such list."),
+        ("add_list", json!({ "name": " ", "color": "red" }), "A list needs a name."),
+        ("remove_list", json!({ "list": 1 }), "The last list cannot be deleted."),
+        ("remove_list", json!({ "list": 7 }), "There is no such list."),
     ] {
         assert_eq!(
             todos.call(method, args.clone()).await.unwrap_err(),
@@ -151,8 +157,8 @@ async fn what_cannot_be_done_is_refused_in_words() {
             "{method} {args}"
         );
     }
-    // the router holds the call to the definition before the handler sees it
-    let refused = todos.call("addList", json!({ "name": "Work", "color": "pink" })).await.unwrap_err();
+    // the contract holds the call to its definition before the handler sees it
+    let refused = todos.call("add_list", json!({ "name": "Work", "color": "pink" })).await.unwrap_err();
     assert!(matches!(refused, PortError::Rpc { code: -32602, .. }), "{refused:?}");
     assert_eq!(todos.call("board", Value::Null).await.unwrap()["todos"], json!([]), "nothing was added");
 }
@@ -160,10 +166,21 @@ async fn what_cannot_be_done_is_refused_in_words() {
 #[tokio::test]
 async fn an_agent_reads_adds_and_completes_todos() {
     let todos = Todos::open().await;
-    let names: Vec<&str> = todos.loaded.tools.iter().map(|tool| tool.name.as_str()).collect();
-    assert_eq!(names, ["list_todos", "add_todo", "complete_todo"]);
+    // the agent's tools are the backend's public handlers (a `_name` is the page's); each is in the contract
+    let handlers = todos.app.handlers();
+    let mut public: Vec<&str> =
+        handlers.iter().map(|h| h.method.as_str()).filter(|m| !m.starts_with('_')).collect();
+    public.sort_unstable();
+    assert_eq!(public, ["add_todo", "complete_todo", "list_todos"]);
+    for method in &public {
+        assert!(todos.app.contract.request(method).is_some(), "{method} is declared by the contract");
+    }
+    // reading is declared read-only (an agent runs it with every write refused), changing is not
+    let read_only: Vec<&str> =
+        public.iter().copied().filter(|m| todos.app.contract.request(m).unwrap().read_only).collect();
+    assert_eq!(read_only, ["list_todos"]);
 
-    todos.call("addList", json!({ "name": "Shopping", "color": "green" })).await.unwrap();
+    todos.call("add_list", json!({ "name": "Shopping", "color": "green" })).await.unwrap();
     let added = todos
         .tool("add_todo", json!({ "title": "Milk", "list": "shopping", "due": "2026-06-09" }))
         .await
@@ -185,8 +202,8 @@ async fn an_agent_reads_adds_and_completes_todos() {
     let completed = todos.tool("list_todos", json!({ "completed": true })).await.unwrap();
     assert_eq!(completed["todos"][0]["title"], "Milk");
 
-    // each change an agent made told the open windows; reading told them nothing
-    assert_eq!(todos.events(), ["todos.changed", "todos.changed", "todos.changed"]);
+    // each change an agent made told the open windows (`todos_changed`); reading told them nothing
+    assert_eq!(todos.events(), ["todos_changed", "todos_changed", "todos_changed"]);
 
     assert_eq!(
         todos.tool("add_todo", json!({ "title": "Eggs", "list": "Nowhere" })).await.unwrap_err(),
@@ -211,10 +228,7 @@ async fn a_database_of_the_luau_backend_opens_with_its_todos() {
     let before = include_str!("../fixtures/todos-luau/store.luau");
     drop(common::try_load_with(APP, before, open()).await.unwrap());
 
-    let shell = Arc::new(RecordingShell::default());
-    let rt = LuaRuntime::new(Arc::new(Quiet), shell.clone());
-    let loaded = rt.load(&id(APP), built_project("apps/todos"), open()).await.unwrap();
-    let todos = Todos { rt, shell, loaded };
+    let todos = Todos::load_on(open(), Arc::new(RecordingShell::default())).await;
 
     let board = todos.call("board", Value::Null).await.unwrap();
     assert_eq!(board["lists"], json!([{ "id": 1, "name": "Reminders", "color": "blue" }]));

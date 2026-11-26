@@ -9,8 +9,8 @@
 //! VOS_BASELINE_VMS=200 cargo test --release -p vos-lua --test it -- baseline:: --ignored --nocapture
 //! ```
 //!
-//! It loads the built Calculator's backend (the shipped bundle: darklua, then `AppVm::load`: the engine, the host
-//! API, the generated router, the handlers and the tool declarations) into `N` VMs (default 50) and prints, per VM, how long the load
+//! It loads the built Calculator's backend (the shipped `dist/app.luau` of its own `vite build`, then `AppVm::load`: the engine, the host
+//! API, the handlers it registers on the bus) into `N` VMs (default 50) and prints, per VM, how long the load
 //! took and what the Lua heap holds (`AppVm::used_memory`), plus the process's resident set before and after, which
 //! also counts what Rust allocated for each VM (the database handle, the tables of the host API). Rerun this to see whether a change
 //! made the VM slower or larger. It asserts nothing about the numbers (they depend on the machine), only that

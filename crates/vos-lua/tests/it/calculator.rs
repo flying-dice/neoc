@@ -1,14 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! The Calculator (`apps/calculator`, a Vite project) under the real runtime: its keypad through the generated router
-//! (`press`: each call carries the keypad's state and answers with the next one), and its agent tool (`calculate`).
+//! The Calculator (`apps/calculator`, a Vite project on the v2 plugin) under the real runtime: its keypad on the bus
+//! (`_press`, private to the page: each call carries the keypad's state and answers with the next one), and its agent
+//! tool (`calculate`, a public read-only method), both held to the app's contract (`openrpc.json`).
 
 use crate::common;
 
-use common::{agent_ctx, built_project, db, id, user_ctx};
+use common::{db, Served};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use vos_application::{
-    ports::{AppData, AppPackage, AppRuntime, LoadedApp, Notifier, PortResult},
+    ports::{Notifier, PortResult},
     testing::RecordingShell,
     PortError,
 };
@@ -25,32 +26,25 @@ impl Notifier for Quiet {
     }
 }
 
-fn package() -> AppPackage {
-    built_project("apps/calculator")
+/// The Calculator, built by its own `vite build` and served as the bus serves it (its contract holds every call).
+async fn calculator() -> Served {
+    let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()));
+    Served::load(runtime, APP, "apps/calculator", db()).await.unwrap()
 }
 
-async fn calculator() -> LuaRuntime {
-    calculator_on(db(), Arc::new(RecordingShell::default())).await.0
+/// An agent's call of a public method.
+async fn tool(rt: &Served, name: &str, args: Value) -> PortResult<Value> {
+    rt.agent(name, args).await
 }
 
-/// The Calculator on a given database and shell, with what the load said about it (its tools).
-async fn calculator_on(data: Arc<dyn AppData>, shell: Arc<RecordingShell>) -> (LuaRuntime, LoadedApp) {
-    let runtime = LuaRuntime::new(Arc::new(Quiet), shell);
-    let loaded = runtime.load(&id(APP), package(), data).await.unwrap();
-    (runtime, loaded)
-}
-
-async fn tool(rt: &LuaRuntime, name: &str, args: Value) -> PortResult<Value> {
-    rt.call_tool(&id(APP), name, args, agent_ctx(0), false).await
-}
-
-async fn call(rt: &LuaRuntime, args: Value) -> PortResult<Value> {
-    rt.call_handler(&id(APP), "press", args, user_ctx(0)).await
+/// The page's call of `_press` (private: only the page uses it).
+async fn call(rt: &Served, args: Value) -> PortResult<Value> {
+    rt.page("_press", args).await
 }
 
 /// Press `keys` (names as for `Keypad::press`) on `rt`, starting from `screen` (`Null` for a calculator that has just
 /// opened), each with the state the one before answered with, as the client does; returns the last screen.
-async fn press_keys(rt: &LuaRuntime, mut screen: Value, keys: &str) -> Value {
+async fn press_keys(rt: &Served, mut screen: Value, keys: &str) -> Value {
     for name in keys.split_whitespace() {
         let key = match name {
             "dot" => ".",
@@ -73,7 +67,7 @@ async fn press_keys(rt: &LuaRuntime, mut screen: Value, keys: &str) -> Value {
 
 /// A keypad as the client drives it: it keeps the last screen and sends its state with the next key.
 struct Keypad {
-    rt: LuaRuntime,
+    rt: Served,
     screen: Value,
 }
 
@@ -529,6 +523,17 @@ async fn a_state_that_makes_no_sense_is_an_error_on_the_display_never_a_failed_c
 }
 
 // ---- the agent tools -------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_keypad_is_the_pages_and_calculate_is_the_one_tool_an_agent_gets() {
+    let rt = calculator().await;
+    let handlers = rt.handlers();
+    let mut methods: Vec<&str> = handlers.iter().map(|h| h.method.as_str()).collect();
+    methods.sort_unstable();
+    assert_eq!(methods, ["_press", "calculate"], "a `_name` is the page's, the rest are the agent's tools");
+    assert!(rt.contract.request("calculate").unwrap().read_only, "reading changes nothing");
+    assert!(!rt.contract.request("_press").unwrap().read_only);
+}
 
 #[tokio::test]
 async fn calculate_follows_precedence_and_rejects_what_is_not_arithmetic() {

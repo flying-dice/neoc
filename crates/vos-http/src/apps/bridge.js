@@ -90,7 +90,7 @@
   // an app that never reads `ready` must not report an unhandled rejection for it
   vos.ready.catch(function () {})
   // the RPC bus
-  var rpc = {}
+  var RPC = {}
 
   function post(message) {
     parent.postMessage(Object.assign({ jsonrpc: '2.0' }, message), '*')
@@ -680,7 +680,7 @@
   }
 
   Object.defineProperty(window, 'vos', { value: vos, configurable: false, writable: false })
-  Object.defineProperty(window, 'RPC', { value: rpc, configurable: false, writable: false })
+  Object.defineProperty(window, 'RPC', { value: RPC, configurable: false, writable: false })
 
   // The first thing the page says is `ui/initialize`, now, before any of the app's own scripts run: the host page takes it as the
   // page's hello (a document that never says it is a page the frame navigated itself to), however busy the app is after.

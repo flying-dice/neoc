@@ -35,7 +35,8 @@ export const namespaceOf = (id: string): string =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join('')
 
-export function tsType(schema: Schema, components: Record<string, Schema>): string {
+/** The TypeScript type of a schema; `prefix` names the types of an app that has them global (`app1_Item`). */
+export function tsType(schema: Schema, components: Record<string, Schema>, prefix = ''): string {
   switch (schema.kind) {
     case 'string':
       return schema.enum ? schema.enum.map(jsString).join(' | ') : 'string'
@@ -46,38 +47,41 @@ export function tsType(schema: Schema, components: Record<string, Schema>): stri
     case 'null':
       return 'null'
     case 'array': {
-      const item = tsType(schema.items, components)
+      const item = tsType(schema.items, components, prefix)
       return /[ |&{]/.test(item) ? `(${item})[]` : `${item}[]`
     }
     case 'object': {
       const fields = Object.entries(schema.properties).map(([name, property]) => {
         const optional = !schema.required.includes(name) || allowsNull(property, components)
-        return `${key(name)}${optional ? '?' : ''}: ${tsType(property, components)}`
+        return `${key(name)}${optional ? '?' : ''}: ${tsType(property, components, prefix)}`
       })
       return fields.length === 0 ? '{ [key: string]: never }' : `{ ${fields.join('; ')} }`
     }
     case 'ref':
-      return schema.name
+      return `${prefix}${schema.name}`
     case 'nullable':
-      return `${tsType(schema.inner, components)} | null`
+      return `${tsType(schema.inner, components, prefix)} | null`
   }
 }
 
-const docOf = (m: Method): string | undefined => [m.summary, m.description].filter((t) => t !== undefined).join('\n\n') || undefined
+export const docOf = (m: Method): string | undefined => [m.summary, m.description].filter((t) => t !== undefined).join('\n\n') || undefined
 
-/** The types of a contract: one per component, and `<Method>Params` / `<Request>Result` for the methods given. */
-function contractTypes(contract: Contract, methods: Method[]): string[] {
+/**
+ * The types of a contract: one per component, and `<Method>Params` / `<Request>Result` for the methods given. With a
+ * `prefix` they are global types under it (`app1_Item`, `app1_AddParams`), as the backend's declarations have them.
+ */
+export function contractTypes(contract: Contract, methods: Method[], prefix = ''): string[] {
   const out: string[] = []
-  for (const [name, schema] of Object.entries(contract.components)) out.push(`${jsDoc(schema.description, '')}type ${name} = ${tsType(schema, contract.components)}`)
+  for (const [name, schema] of Object.entries(contract.components)) out.push(`${jsDoc(schema.description, '')}type ${prefix}${name} = ${tsType(schema, contract.components, prefix)}`)
   for (const m of methods) {
     if (m.params.length > 0) {
       const fields = m.params.map((p) => {
         const optional = !p.required || allowsNull(p.schema, contract.components)
-        return `${jsDoc(p.description, '  ')}  ${key(p.name)}${optional ? '?' : ''}: ${tsType(p.schema, contract.components)}`
+        return `${jsDoc(p.description, '  ')}  ${key(p.name)}${optional ? '?' : ''}: ${tsType(p.schema, contract.components, prefix)}`
       })
-      out.push(`interface ${pascal(m.name)}Params {\n${fields.join('\n')}\n}`)
+      out.push(`interface ${prefix}${pascal(m.name)}Params {\n${fields.join('\n')}\n}`)
     }
-    if (m.kind === 'request') out.push(`type ${pascal(m.name)}Result = ${tsType(m.result, contract.components)}`)
+    if (m.kind === 'request') out.push(`type ${prefix}${pascal(m.name)}Result = ${tsType(m.result, contract.components, prefix)}`)
   }
   return out
 }

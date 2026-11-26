@@ -311,6 +311,12 @@ the same tools under the same names, and the person sees the same app.
 - Types: `rpc.Foo` → `<id>_Foo` (the id with `-` as `_`): every component and every `<Method>Params`/`<Method>Result`.
 - `ctx:fail(message)`, `app.db`, `app.kv`, `app.files`, `app.notify`, `app.log`, `app.tools` stay as they are.
 - `bun run lint:luau` checks it (strict, both passes) against the app's own `types/vos.d.luau`.
+- A backend that is TypeScript stays TypeScript (`server/main.ts`, not both): the same globals, the same handlers
+  (`RPC.on_request('_foo', (params, ctx) => ...)`), types as the globals `<id>_Foo`, `vos_app_Context` for `ctx`. The plugin
+  writes `types/vos.backend.d.ts` (the host's `vos.d.ts` with `RPC` typed per app and method) and
+  `types/tsconfig.backend.json`; `server/tsconfig.json` is `{ "extends": "../types/tsconfig.backend.json" }`, the page's
+  `tsconfig.json` excludes `types/vos.backend.d.ts`, and `vite build` compiles the backend with TypeScriptToLua, so a
+  wrong method, params or result is a failed build. Todos (`apps/todos`) is the example.
 
 **Page (`src/`)**
 

@@ -3,10 +3,12 @@
 
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc, time::Duration};
+use vos_application::contract::AppContract;
 use vos_application::data::{ExecOutcome, Params, PortResult, SqlMigration};
-use vos_application::ports::{AppData, AppPackage, CallContext};
-use vos_domain::{Actor, AppId};
-use vos_lua::{AppVm, VmConfig};
+use vos_application::ports::{AppData, AppPackage, AppRuntime, CallContext, HandlerInfo};
+use vos_application::PortError;
+use vos_domain::{Actor, ActorKind, AppId};
+use vos_lua::{AppVm, LuaRuntime, VmConfig};
 use vos_sqlite::AppDb;
 
 pub fn db() -> Arc<AppDb> {
@@ -120,14 +122,49 @@ pub fn built_package(entry: &Path) -> AppPackage {
     AppPackage { entry: "app.luau".into(), files }
 }
 
+/// Whether the project in `project` is on `@vos/vite-plugin-v2` (its `devDependencies` say so).
+fn is_v2(project: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(project.join("package.json")) else { return false };
+    let package: Value = serde_json::from_str(&text).unwrap();
+    package["devDependencies"].get("@vos/vite-plugin-v2").is_some()
+}
+
 /// The backend of the app project in `dir` (relative to the repository root: `apps/calculator`,
-/// `e2e/apps/tasks-svelte`), built. Its generated files are not committed: they are generated first, once per
-/// project, as the project's own scripts do. A backend written in TypeScript (`server/main.ts`) is compiled by the
-/// plugin, as the app's own build compiles it.
+/// `e2e/apps/tasks-svelte`), built, as an app package of the one file the host ships.
+///
+/// A project on `@vos/vite-plugin-v2` is built by its own `bun run build` (`vite build`), once per process, and its
+/// `dist/app.luau` is the package: Luau or TypeScript, bundled by the plugin. A project still on the deprecated v1
+/// plugin has its generated files (not committed) generated first, once per project, as its own scripts do. The v1
+/// path goes when the last v1 app has moved.
 pub fn built_project(dir: &str) -> AppPackage {
     use std::sync::Mutex;
-    static GENERATED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
+    // the lock is held while building: a second test of the same project waits for the first one's build
+    let mut built = BUILT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if is_v2(&project) {
+        if !built.iter().any(|done| done == dir) {
+            let run = Command::new("bun")
+                .args(["run", "build"])
+                .current_dir(&project)
+                .output()
+                .expect("bun is needed to build the app (https://bun.sh)");
+            assert!(
+                run.status.success(),
+                "bun run build failed in {dir}:\n{}{}",
+                String::from_utf8_lossy(&run.stdout),
+                String::from_utf8_lossy(&run.stderr)
+            );
+            built.push(dir.to_owned());
+        }
+        let bundle = std::fs::read(project.join("dist/app.luau"))
+            .unwrap_or_else(|e| panic!("{dir} built no dist/app.luau: {e}"));
+        return AppPackage {
+            entry: "app.luau".into(),
+            files: BTreeMap::from([("app.luau".to_owned(), bundle)]),
+        };
+    }
+    drop(built);
     if project.join("server/main.ts").exists() {
         return built_typescript(&project);
     }
@@ -150,9 +187,85 @@ pub fn built_project(dir: &str) -> AppPackage {
     built_package(&project.join(".app/entry.luau"))
 }
 
-/// The backend of an app project written in TypeScript, as its build bundles it: `vos bundle` of the plugin
-/// (`packages/vite-plugin/bin/vos.ts`) generates the project's `.app/` and compiles the backend to one Luau chunk.
-/// Needs bun; no darklua.
+/// Generated v1 projects (see [`built_project`]).
+static GENERATED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The contract (`openrpc.json`) of the app project in `dir`, as the RPC bus holds it.
+pub fn contract(dir: &str) -> AppContract {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir).join("openrpc.json");
+    AppContract::parse(&std::fs::read(&path).unwrap()).unwrap()
+}
+
+/// An app's backend served the way the app service serves it on the bus (`AppService::request_with`): a request the
+/// contract does not declare reaches no handler (-32601), params it refuses reach none either (-32602), an agent's
+/// call of a method the contract marks `x-readOnly` runs with every write refused, and the answer is held to the
+/// contract (-32603). The backend and its contract are the app's own.
+pub struct Served {
+    pub rt: LuaRuntime,
+    pub app: AppId,
+    pub contract: AppContract,
+}
+
+impl Served {
+    /// `dir`'s app, loaded as `app` on `data`.
+    pub async fn load(rt: LuaRuntime, app: &str, dir: &str, data: Arc<dyn AppData>) -> PortResult<Self> {
+        rt.load(&id(app), built_project(dir), data).await?;
+        Ok(Self { rt, app: id(app), contract: contract(dir) })
+    }
+
+    /// The page's call: the person's own, so it may write.
+    pub async fn page(&self, method: &str, params: Value) -> PortResult<Value> {
+        self.request(user_ctx(0), method, params).await
+    }
+
+    /// An agent's call of a public method.
+    pub async fn agent(&self, method: &str, params: Value) -> PortResult<Value> {
+        self.request(agent_ctx(0), method, params).await
+    }
+
+    pub async fn request(&self, ctx: CallContext, method: &str, params: Value) -> PortResult<Value> {
+        let Some(declared) = self.contract.request(method) else {
+            return Err(PortError::Rpc {
+                code: -32601,
+                message: format!("Method not found: {method}"),
+                data: None,
+            });
+        };
+        if let Err(problem) = self.contract.check_params(method, &params) {
+            return Err(PortError::Rpc {
+                code: -32602,
+                message: format!("Invalid params: {problem}"),
+                data: None,
+            });
+        }
+        // as `AppService::call_tool` has it: an agent's call of a read-only method is a read-only call
+        let answer = if declared.read_only && ctx.actor.kind == ActorKind::Agent {
+            self.rt.call_handler_read_only(&self.app, method, params, ctx).await?
+        } else {
+            self.rt.call_handler(&self.app, method, params, ctx).await?
+        };
+        if let Err(problem) = self.contract.check_result(method, &answer) {
+            return Err(PortError::Rpc {
+                code: -32603,
+                message: format!(
+                    "Internal error: the answer to {method} does not match the contract ({problem})"
+                ),
+                data: None,
+            });
+        }
+        Ok(answer)
+    }
+
+    /// The methods the backend has on the bus, in the order it registered them.
+    pub fn handlers(&self) -> Vec<HandlerInfo> {
+        self.rt.handlers(&self.app)
+    }
+}
+
+/// The backend of a v1 project written in TypeScript, as the deprecated plugin bundles it: `vos bundle`
+/// (`packages/vite-plugin/bin/vos.ts`) generates the project's `.app/` and compiles the backend to one Luau chunk. Only
+/// the v1 `typescript` fixture is built this way; it goes with the v1 path when the last v1 app has moved. Needs bun;
+/// no darklua.
 fn built_typescript(project: &Path) -> AppPackage {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = tempfile::Builder::new().prefix("vos-lua-test-").suffix(".luau").tempfile().unwrap();

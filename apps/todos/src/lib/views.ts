@@ -2,7 +2,8 @@
  * What the window can show: one of the person's own lists, or one of the five smart lists, which gather todos from
  * every list (Today, Scheduled, All, Flagged, Completed). Which todos a view shows is decided here, from the board.
  */
-import type { Color, Todo } from '@todos/rpc'
+type Color = VosApp.Todos.Color
+type Todo = VosApp.Todos.Todo
 
 /** The smart lists, in the order the sidebar shows them. `icon` is a glyph of the icon set, `color` a palette role. */
 export const SMART = [
