@@ -477,6 +477,9 @@ test.describe('Agents journeys', () => {
     // in a chat: beside its name over the chat, and in the list of chats
     await newChat(page, name)
     await expect(part(page, 'avatar-thread').getByRole('img', { name })).toHaveAttribute('src', picture!)
+    // the first message makes the chat, and lists it
+    await say(page, 'hello')
+    await turnOver(page)
     // a chat's row is an option, whose content is its name: the picture is found by what it is
     const chatAvatar = frame(page).getByTestId(/^agents-chat-/).filter({ hasText: name }).getByTestId(/^agents-avatar-chat-/)
     await expect(chatAvatar.locator('img')).toHaveAttribute('src', picture!)
