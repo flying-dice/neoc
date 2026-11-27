@@ -8,14 +8,15 @@ type Overview = VosApp.Containers.Overview
 type Pulling = VosApp.Containers.PullingParams
 type Stack = VosApp.Containers.Stack
 type Volume = VosApp.Containers.Volume
+import { Resources, type Kind, type ResourcesRpc } from './resources.svelte'
 import { blankDraft, copyName, draftOf, specOf, type Draft } from './spec'
 
 /**
- * What the window needs of the backend: the overview, each way of changing it, a container's details and logs, and the
- * networks and volumes a new container can use (the app's private methods on the bus, `_overview` ...: `App.svelte`
- * sends them).
+ * What the window needs of the backend: the overview, each way of changing it, a container's details and logs, and
+ * Docker's images, volumes and networks (the networks and volumes are also what a new container can use): the app's
+ * private methods on the bus, `_overview` ...: `App.svelte` sends them.
  */
-export interface ContainersRpc {
+export interface ContainersRpc extends ResourcesRpc {
   overview(): Promise<Overview>
   connect(params: VosApp.Containers.ConnectParams): Promise<Overview>
   start(params: VosApp.Containers.StartParams): Promise<Overview>
@@ -24,8 +25,6 @@ export interface ContainersRpc {
   remove(params: VosApp.Containers.RemoveParams): Promise<Overview>
   create(params: VosApp.Containers.CreateParams): Promise<Made>
   recreate(params: VosApp.Containers.RecreateParams): Promise<Made>
-  networks(): Promise<Network[]>
-  volumes(): Promise<Volume[]>
   startStack(params: VosApp.Containers.StackStartParams): Promise<Overview>
   stopStack(params: VosApp.Containers.StackStopParams): Promise<Overview>
   restartStack(params: VosApp.Containers.StackRestartParams): Promise<Overview>
@@ -72,17 +71,21 @@ export interface Removal {
   failure: string | null
   busy: boolean
 }
-/** Which containers the list shows: all of them, or those of one stack. */
-export type Scope = { kind: 'all' } | { kind: 'stack'; name: string }
+/** What is shown: every container, those of one stack, or Docker's images, volumes or networks. */
+export type Scope = { kind: 'all' } | { kind: 'stack'; name: string } | { kind: Kind }
 /** What of a container is looked at. */
 export type Tab = 'logs' | 'details'
 
 export const ALL: Scope = { kind: 'all' }
+export const IMAGES: Scope = { kind: 'images' }
+export const VOLUMES: Scope = { kind: 'volumes' }
+export const NETWORKS: Scope = { kind: 'networks' }
 export const stackScope = (name: string): Scope => ({ kind: 'stack', name })
 export const sameScope = (a: Scope, b: Scope): boolean =>
-  a.kind === 'all' ? b.kind === 'all' : b.kind === 'stack' && a.name === b.name
+  a.kind === 'stack' ? b.kind === 'stack' && a.name === b.name : a.kind === b.kind
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const TITLES: Readonly<Record<Exclude<Scope['kind'], 'stack'>, string>> = { all: 'All Containers', images: 'Images', volumes: 'Volumes', networks: 'Networks' }
 
 const NOTHING: Overview = {
   engine: { reachable: false, version: '', host: '', problem: '' },
@@ -118,8 +121,8 @@ export class Containers {
   form = $state<ContainerForm | null>(null)
   /** The question before a container is removed, while it is asked. */
   removal = $state<Removal | null>(null)
-  #networks = $state.raw<readonly Network[]>([])
-  #volumes = $state.raw<readonly Volume[]>([])
+  /** Docker's images, volumes and networks, and what is changed of them. */
+  readonly resources: Resources
 
   readonly #rpc: ContainersRpc
   readonly #events: ContainersEvents
@@ -127,6 +130,7 @@ export class Containers {
   constructor(rpc: ContainersRpc, events: ContainersEvents) {
     this.#rpc = rpc
     this.#events = events
+    this.resources = new Resources(rpc, (message) => (this.#failure = message))
   }
 
   get engine(): Engine {
@@ -164,13 +168,13 @@ export class Containers {
   get details(): Details | null {
     return this.#details
   }
-  /** Docker's networks, for the form; read when it opens. */
+  /** Docker's networks, for the form; read again when it opens. */
   get networks(): readonly Network[] {
-    return this.#networks
+    return this.resources.networks
   }
-  /** Docker's volumes, for the form; read when it opens. */
+  /** Docker's volumes, for the form; read again when it opens. */
   get volumes(): readonly Volume[] {
-    return this.#volumes
+    return this.resources.volumes
   }
   /** The form can be saved: it names an image, and is not being saved. What else is wrong is the backend's to say. */
   get savable(): boolean {
@@ -185,10 +189,13 @@ export class Containers {
   /** The containers of what is shown. */
   readonly containers: readonly Container[] = $derived.by(() => {
     const scope = this.#scope
-    return scope.kind === 'all' ? this.#overview.containers : this.#overview.containers.filter((c) => c.stack === scope.name)
+    return scope.kind === 'stack' ? this.#overview.containers.filter((c) => c.stack === scope.name) : this.#overview.containers
   })
   /** The name of what is shown. */
-  readonly title: string = $derived(this.#scope.kind === 'all' ? 'All Containers' : this.#scope.name)
+  readonly title: string = $derived.by(() => {
+    const scope = this.#scope
+    return scope.kind === 'stack' ? scope.name : TITLES[scope.kind]
+  })
   /** The container that is looked at. */
   readonly inspected: Container | undefined = $derived(this.#overview.containers.find((c) => c.id === this.#inspected))
   /** New output may arrive for what is shown: the logs of a container that is going. */
@@ -236,9 +243,9 @@ export class Containers {
     }
   }
 
-  /** Read what Docker has. */
+  /** Read what Docker has: its containers, and, when it can be reached, its images, volumes and networks. */
   async load(): Promise<void> {
-    await this.#show(() => this.#rpc.overview())
+    if ((await this.#show(() => this.#rpc.overview())) && this.engine.reachable) await this.resources.load()
   }
 
   /**
@@ -250,16 +257,18 @@ export class Containers {
       void this.load()
       void this.refresh()
     }
-    // the pull is the form's while it saves a container of that image; any other window's pull is not
+    // the pull is the form's while it saves a container of that image, or the list of images' while it pulls that
+    // image; any other window's pull is not
     const pulling = (progress: Pulling): void => {
       const form = this.form
       if (form?.saving && progress.image === form.draft.image.trim()) form.pulling = progress
+      this.resources.hear(progress)
     }
     const stops = [this.#events.on('changed', again), this.#events.on('host:reconnected', again), this.#events.on('pulling', pulling)]
     return () => stops.forEach((stop) => stop())
   }
 
-  /** Show every container, or those of one stack. */
+  /** Show every container, those of one stack, or Docker's images, volumes or networks. */
   select(scope: Scope): void {
     this.#scope = scope
     this.#browsing = false
@@ -315,23 +324,19 @@ export class Containers {
     this.#leave()
     this.form = null
     this.removal = null
+    this.resources.close()
   }
 
   /** Read the networks and volumes the form offers. A failure is kept, to be shown; the form opens anyway. */
-  async #choices(): Promise<void> {
-    try {
-      const [networks, volumes] = await Promise.all([this.#rpc.networks(), this.#rpc.volumes()])
-      this.#networks = networks
-      this.#volumes = volumes
-    } catch (e) {
-      this.#failure = messageOf(e)
-    }
+  #choices(): Promise<void> {
+    return this.resources.load(['networks', 'volumes'])
   }
 
-  /** Open the form for a new container. */
-  async compose(): Promise<void> {
+  /** Open the form for a new container; of an image, when one is given (`New container from this image`). */
+  async compose(image = ''): Promise<void> {
     this.removal = null
-    this.form = { mode: 'new', of: null, draft: blankDraft(), failure: null, saving: false, pulling: null }
+    this.resources.close()
+    this.form = { mode: 'new', of: null, draft: { ...blankDraft(), image }, failure: null, saving: false, pulling: null }
     this.#browsing = false
     await this.#choices()
   }
@@ -341,7 +346,7 @@ export class Containers {
     this.removal = null
     try {
       const [details] = await Promise.all([this.#rpc.details({ container: container.id }), this.#choices()])
-      const draft = draftOf(details.spec, this.#volumes.map((v) => v.name))
+      const draft = draftOf(details.spec, this.volumes.map((v) => v.name))
       if (mode === 'duplicate') {
         draft.name = copyName(container.name, this.all.map((c) => c.name))
         draft.start = true

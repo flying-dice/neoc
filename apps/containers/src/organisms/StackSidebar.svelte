@@ -1,15 +1,17 @@
-<!-- @organism StackSidebar — what there is to show: every container, or one Compose stack with how much of it runs; and under them which Docker this is, with the field that chooses another -->
+<!-- @organism StackSidebar — what there is to show: every container, Docker's images, volumes and networks with how many there are, or one Compose stack with how much of it runs; and under them which Docker this is, with the field that chooses another -->
 <script lang="ts">
   type Engine = VosApp.Containers.Engine
   type Stack = VosApp.Containers.Stack
   import { ConnectionForm, type Tone } from '@vos/docker'
-  import { ALL, sameScope, stackScope, type Scope } from '../lib/containers.svelte'
+  import { ALL, IMAGES, NETWORKS, VOLUMES, sameScope, stackScope, type Scope } from '../lib/containers.svelte'
   import { stackSummary, stackTone } from '../lib/format'
 
   interface Props {
     engine: Engine
     /** How many containers there are in all. */
     total: number
+    /** How many images, volumes and networks Docker has. */
+    counts: { images: number; volumes: number; networks: number }
     stacks: readonly Stack[]
     /** What is shown; nothing is marked when left out (a narrow window showing only this). */
     selected?: Scope
@@ -20,7 +22,14 @@
     onconnect: () => void
   }
 
-  let { engine, total, stacks, selected, draft, onselect, ondraft, onconnect }: Props = $props()
+  let { engine, total, counts, stacks, selected, draft, onselect, ondraft, onconnect }: Props = $props()
+
+  // what Docker has beside its containers, each a list of its own
+  const OBJECTS = [
+    { scope: IMAGES, kind: 'images', heading: 'Images', icon: 'doc', color: 'indigo' },
+    { scope: VOLUMES, kind: 'volumes', heading: 'Volumes', icon: 'folder', color: 'orange' },
+    { scope: NETWORKS, kind: 'networks', heading: 'Networks', icon: 'network', color: 'blue' }
+  ] as const
 
   const isSelected = (scope: Scope): boolean => selected !== undefined && sameScope(selected, scope)
   const COLORS: Readonly<Record<Tone, string>> = { on: 'green', busy: 'orange', off: 'gray', bad: 'red' }
@@ -30,10 +39,10 @@
   const where = $derived(engine.host === '' ? 'This machine' : engine.host)
 </script>
 
-<nav class="sidebar" aria-label="Stacks">
+<nav class="sidebar" aria-label="Docker">
   <div class="lists">
     <!-- a row's own name leaves its value out: it is named with its count, as it reads -->
-    <ui-list variant="sidebar" selection="single" label="Containers" data-testid="containers-scopes">
+    <ui-list variant="sidebar" selection="single" label="Docker" data-testid="containers-scopes">
       <ui-section>
         <ui-row
           heading="All Containers"
@@ -45,6 +54,18 @@
           onpress={() => onselect(ALL)}
           data-testid="containers-scope-all"
         ></ui-row>
+        {#each OBJECTS as object (object.kind)}
+          <ui-row
+            heading={object.heading}
+            value={String(counts[object.kind])}
+            label="{object.heading}, {counts[object.kind]}"
+            icon={object.icon}
+            icon-color={object.color}
+            selected={isSelected(object.scope)}
+            onpress={() => onselect(object.scope)}
+            data-testid="containers-scope-{object.kind}"
+          ></ui-row>
+        {/each}
       </ui-section>
     </ui-list>
     <!-- an empty selectable list is not valid ARIA: the list is there once there is a stack -->

@@ -82,3 +82,30 @@ export function bytes(count: number): string {
   }
   return `${unit === 0 || n >= 100 ? Math.round(n) : n.toFixed(1)} ${units[unit]}`
 }
+
+/** A day as a person reads it, the same wherever the window is: `27 Nov 2026`. */
+export function day(when: Date): string {
+  if (Number.isNaN(when.getTime())) return ''
+  return when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** Names as a sentence says them: `a`, `a and b`, `a, b and c`. */
+export function listed(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
+
+/** How many containers use something, in words: `Unused`, `In use by 1 container`, `In use by 3 containers`. */
+export function usage(containers: readonly string[]): string {
+  if (containers.length === 0) return 'Unused'
+  return `In use by ${containers.length} ${containers.length === 1 ? 'container' : 'containers'}`
+}
+
+/** An image's id as Docker shortens it: its first twelve hex digits. */
+export const shortId = (id: string): string => id.replace(/^sha256:/, '').slice(0, 12)
+
+/** An image as a person names it: its first name, or Docker's `<none>:<none>` for a dangling one. */
+export const imageName = (image: Pick<VosApp.Containers.Image, 'tags'>): string => image.tags[0] ?? '<none>:<none>'
+
+/** How many of something there are, in words: `1 image`, `3 images`. */
+export const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`

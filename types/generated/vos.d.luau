@@ -4751,6 +4751,18 @@ declare extern type vnd_bollard_Client with
 	---
 	--- Yields the calling coroutine while it waits.
 	remove_image: (self: vnd_bollard_Client, image: vnd_bollard_ImageRef, opts: vnd_bollard_RemoveImage?) -> ({ vnd_bollard_ImageDeleteResponseItem }?, vnd_bollard_DockerError?)
+	--- Remove the images no container uses: only the dangling ones (untagged, `<none>`) unless
+	--- `filters = { dangling = { "false" } }`, which takes every unused one. Returns Docker's
+	--- `{ ImagesDeleted, SpaceReclaimed }`.
+	---
+	--- ```luau
+	--- local docker = assert(bollard.connect())
+	--- local pruned = assert(docker:prune_images())
+	--- print(pruned.SpaceReclaimed, #(pruned.ImagesDeleted or {}))
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	prune_images: (self: vnd_bollard_Client, opts: vnd_bollard_Filtered?) -> (vnd_bollard_ImagePruneResponse?, vnd_bollard_DockerError?)
 	--- The volumes: `{ Volumes, Warnings }`, each volume with Docker's field names (`Name`, `Driver`,
 	--- `Mountpoint`, `Labels`, ...).
 	---
@@ -4772,6 +4784,12 @@ declare extern type vnd_bollard_Client with
 	---
 	--- Yields the calling coroutine while it waits.
 	remove_volume: (self: vnd_bollard_Client, name: vnd_bollard_VolumeName, opts: vnd_bollard_RemoveVolume?) -> (boolean?, vnd_bollard_DockerError?)
+	--- Remove the volumes no container uses, and their data with them: since Docker 23 only the anonymous ones
+	--- unless `filters = { all = { "true" } }`, which takes the named ones too. Returns Docker's
+	--- `{ VolumesDeleted, SpaceReclaimed }`.
+	---
+	--- Yields the calling coroutine while it waits.
+	prune_volumes: (self: vnd_bollard_Client, opts: vnd_bollard_Filtered?) -> (vnd_bollard_VolumePruneResponse?, vnd_bollard_DockerError?)
 	--- The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).
 	---
 	--- Yields the calling coroutine while it waits.
@@ -5425,6 +5443,11 @@ export type vnd_bollard_ImageManifestSummarySize = {
 	Content: number,
 }
 
+export type vnd_bollard_ImagePruneResponse = {
+	ImagesDeleted: { vnd_bollard_ImageDeleteResponseItem }?,
+	SpaceReclaimed: number?,
+}
+
 --- An image reference: `nginx`, `nginx:1.27`, `registry:5000/team/app@sha256:...`.
 export type vnd_bollard_ImageRef = string
 
@@ -6005,6 +6028,11 @@ export type vnd_bollard_VolumeList = {
 
 --- The name of a volume: letters, digits, `_`, `.` and `-`, starting with a letter or digit.
 export type vnd_bollard_VolumeName = string
+
+export type vnd_bollard_VolumePruneResponse = {
+	VolumesDeleted: { string }?,
+	SpaceReclaimed: number?,
+}
 
 --- Where a volume is known: on its host only, or across a swarm.
 --- - `local`: On the host it was made on.

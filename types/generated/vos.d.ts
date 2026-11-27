@@ -5681,6 +5681,20 @@ interface vnd_bollard_Client {
    */
   remove_image(image: vnd_bollard_ImageRef, opts?: vnd_bollard_RemoveImage): LuaMultiReturn<[vnd_bollard_ImageDeleteResponseItem[], undefined] | [undefined, vnd_bollard_DockerError]>
   /**
+   * Remove the images no container uses: only the dangling ones (untagged, `<none>`) unless
+   * `filters = { dangling = { "false" } }`, which takes every unused one. Returns Docker's
+   * `{ ImagesDeleted, SpaceReclaimed }`.
+   *
+   * ```luau
+   * local docker = assert(bollard.connect())
+   * local pruned = assert(docker:prune_images())
+   * print(pruned.SpaceReclaimed, #(pruned.ImagesDeleted or {}))
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  prune_images(opts?: vnd_bollard_Filtered): LuaMultiReturn<[vnd_bollard_ImagePruneResponse, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
    * The volumes: `{ Volumes, Warnings }`, each volume with Docker's field names (`Name`, `Driver`,
    * `Mountpoint`, `Labels`, ...).
    *
@@ -5707,6 +5721,14 @@ interface vnd_bollard_Client {
    * Yields the calling coroutine while it waits.
    */
   remove_volume(name: vnd_bollard_VolumeName, opts?: vnd_bollard_RemoveVolume): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
+   * Remove the volumes no container uses, and their data with them: since Docker 23 only the anonymous ones
+   * unless `filters = { all = { "true" } }`, which takes the named ones too. Returns Docker's
+   * `{ VolumesDeleted, SpaceReclaimed }`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  prune_volumes(opts?: vnd_bollard_Filtered): LuaMultiReturn<[vnd_bollard_VolumePruneResponse, undefined] | [undefined, vnd_bollard_DockerError]>
   /**
    * The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).
    *
@@ -6374,6 +6396,11 @@ interface vnd_bollard_ImageManifestSummarySize {
   Content: number
 }
 
+interface vnd_bollard_ImagePruneResponse {
+  ImagesDeleted?: vnd_bollard_ImageDeleteResponseItem[]
+  SpaceReclaimed?: number
+}
+
 /** An image reference: `nginx`, `nginx:1.27`, `registry:5000/team/app@sha256:...`. */
 type vnd_bollard_ImageRef = string
 
@@ -6959,6 +6986,11 @@ interface vnd_bollard_VolumeList {
 /** The name of a volume: letters, digits, `_`, `.` and `-`, starting with a letter or digit. */
 type vnd_bollard_VolumeName = string
 
+interface vnd_bollard_VolumePruneResponse {
+  VolumesDeleted?: string[]
+  SpaceReclaimed?: number
+}
+
 /**
  * Where a volume is known: on its host only, or across a swarm.
  * - `local`: On the host it was made on.
@@ -7062,6 +7094,7 @@ declare module "vnd:bollard" {
   export type ImageManifestSummaryImageData = vnd_bollard_ImageManifestSummaryImageData
   export type ImageManifestSummaryImageDataSize = vnd_bollard_ImageManifestSummaryImageDataSize
   export type ImageManifestSummarySize = vnd_bollard_ImageManifestSummarySize
+  export type ImagePruneResponse = vnd_bollard_ImagePruneResponse
   export type ImageRef = vnd_bollard_ImageRef
   export type ImageSummary = vnd_bollard_ImageSummary
   export type IndexInfo = vnd_bollard_IndexInfo
@@ -7140,6 +7173,7 @@ declare module "vnd:bollard" {
   export type VolumeCreateRequest = vnd_bollard_VolumeCreateRequest
   export type VolumeList = vnd_bollard_VolumeList
   export type VolumeName = vnd_bollard_VolumeName
+  export type VolumePruneResponse = vnd_bollard_VolumePruneResponse
   export type VolumeScope = vnd_bollard_VolumeScope
   export type VolumeUsage = vnd_bollard_VolumeUsage
 }

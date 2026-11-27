@@ -6,8 +6,8 @@
   import EntryRow from '../molecules/EntryRow.svelte'
   import MountRow from '../molecules/MountRow.svelte'
   import PortRow from '../molecules/PortRow.svelte'
+  import PullMeter from '../molecules/PullMeter.svelte'
   import type { ContainerForm } from '../lib/containers.svelte'
-  import { bytes } from '../lib/format'
   import { blankEntry, blankMount, blankPort } from '../lib/spec'
 
   interface Props {
@@ -40,7 +40,6 @@
   })
   const volumeNames = $derived(volumes.map((v) => v.name))
   const pulled = $derived(form.pulling)
-  const pullShare = $derived(pulled && pulled.total > 0 ? Math.min(1, pulled.current / pulled.total) : undefined)
 
   // a refusal is said at the top of the form: it is scrolled to, wherever the person was
   let fields = $state<HTMLElement>()
@@ -77,13 +76,7 @@
       <ui-banner tone="error" data-testid="containers-form-failure">{form.failure}</ui-banner>
     {/if}
     {#if saving && pulled}
-      <div class="pull" data-testid="containers-form-pulling">
-        <p class="pulling">
-          <span>Pulling <span class="mono">{pulled.image}</span></span>
-          <span class="amount">{pulled.total > 0 ? `${bytes(pulled.current)} of ${bytes(pulled.total)}` : pulled.status}</span>
-        </p>
-        <ui-meter value={pullShare} label="Pulling {pulled.image}"></ui-meter>
-      </div>
+      <PullMeter pulling={pulled} testid="containers-form-pulling" />
     {/if}
     {#if form.mode === 'edit'}
       <ui-banner tone="warning" data-testid="containers-form-recreate">
@@ -410,25 +403,6 @@
   .fields:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: -2px;
-  }
-  .pull {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px 16px;
-    border-radius: var(--radius-lg);
-    background: var(--bg);
-  }
-  .pulling {
-    margin: 0;
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    font: var(--type-subheadline);
-  }
-  .amount {
-    color: var(--label-secondary);
-    white-space: nowrap;
   }
   .mono {
     font-family: var(--font-mono);

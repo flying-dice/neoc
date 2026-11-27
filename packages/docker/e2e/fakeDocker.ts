@@ -4,12 +4,14 @@
  * need no Docker and no image, nothing listens on a port of the machine they run on, no folder has to be there, and
  * what they find is the same on every machine.
  *
- * It starts with the containers and networks it is given (none, for an app that makes its own) beside Docker's own
- * networks (`bridge`, `host`, `none`), keeps the images that were pulled, the volumes that were made and the containers
- * that were made exactly as they were asked for (which is what the journeys look at), changes them as Docker would
- * (refusing what Docker refuses, in its words), and reports each change on `/events`, which is how an app's backend
- * hears of it.
+ * It starts with the containers, networks and images it is given (none, for an app that makes its own) beside Docker's
+ * own networks (`bridge`, `host`, `none`), keeps the images that were pulled, the volumes and networks that were made
+ * and the containers that were made exactly as they were asked for (which is what the journeys look at), changes them
+ * as Docker would (refusing what Docker refuses, in its words: an image a container was made from, a volume a
+ * container uses, a network a running container is on), and reports each change on `/events`, which is how an app's
+ * backend hears of it.
  */
+import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -47,6 +49,38 @@ export interface Network {
   labels?: Record<string, string>
 }
 
+/** An image the machine starts with, beside those of its containers: one without tags is a dangling one. */
+export interface ImageSeed {
+  tags: string[]
+  /** In bytes. */
+  size?: number
+}
+
+/** An image, as the journeys read it. */
+export interface Image {
+  id: string
+  tags: string[]
+  size: number
+}
+
+/** A volume, as the journeys read it. */
+export interface Volume {
+  name: string
+  driver: string
+  labels: Record<string, string>
+}
+
+/** A network, as the journeys read it: what it was made with. */
+export interface NetworkMade {
+  name: string
+  driver: string
+  subnet: string
+  gateway: string
+  internal: boolean
+  attachable: boolean
+  labels: Record<string, string>
+}
+
 /** A container, as the journeys read it: what it was made from, and whether it runs. */
 export interface Container {
   name: string
@@ -76,6 +110,8 @@ export interface Container {
 
 interface Kept extends Container {
   id: string
+  /** The id of the image it was made from. */
+  imageId: string
   /** The ports Docker chose for the bindings that left it to Docker, by the binding's key and place. */
   chosen: Record<string, string>
   /** It was there when the machine started: it has been up, or down, for a while. */
@@ -90,6 +126,8 @@ export interface Options {
   containers?: Seed[]
   /** The networks it starts with. */
   networks?: Network[]
+  /** The images it starts with, beside those of its containers. */
+  images?: ImageSeed[]
   /** What a container writes when it starts. */
   startLog?: string[]
   /** Where a container writes: its output (the default) or its errors. An app shows both together. */
@@ -111,8 +149,14 @@ export interface FakeDocker {
   pulled(): string[]
   /** The names of the networks that are left, Docker's own first. */
   networks(): string[]
+  /** A network by name, as it was made; `undefined` when there is none. */
+  network(name: string): NetworkMade | undefined
   /** The names of the volumes there are, in the order they were made. */
   volumes(): string[]
+  /** A volume by name; `undefined` when there is none. */
+  volume(name: string): Volume | undefined
+  /** The images there are, in the order they came. */
+  images(): Image[]
   /** The order the containers were started in since the last reset, by name. */
   started(): string[]
   /** Something else has a container's ports (or lets go of them): Docker refuses to start a container that publishes one. */
@@ -133,14 +177,66 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   return text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
 }
 
+
+/** Docker's hex digest of a text: an id that is the same on every machine for the same thing. */
+const digest = (text: string): string => createHash('sha256').update(text).digest('hex')
+/** An id as Docker shortens it in a message: its first twelve hex digits. */
+const short = (id: string): string => id.replace(/^sha256:/, '').slice(0, 12)
+
+/** Docker's networks as a 32-bit number, and back: `172.18.0.0` is 2886860800. */
+const ipNumber = (ip: string): number => ip.split('.').reduce((n, part) => n * 256 + Number(part), 0)
+/** The first and last address of an IPv4 subnet (`172.18.0.0/16`); `undefined` for one that is not IPv4. */
+function range(subnet: string): [number, number] | undefined {
+  const m = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(subnet)
+  if (!m) return undefined
+  const size = 2 ** (32 - Number(m[2]))
+  const first = Math.floor(ipNumber(m[1]!) / size) * size
+  return [first, first + size - 1]
+}
+
 export async function startFakeDocker(options: Options = {}): Promise<FakeDocker> {
   const stream = options.logStream === 'stderr' ? 2 : 1
   const startLog = options.startLog ?? ['started']
   const missing = new Set(options.missingImages ?? [])
+
+  interface KeptImage extends Image {
+    /** When it was built, in seconds since 1970. */
+    created: number
+  }
+  /** An image by its tags: its id and size follow from them, the same on every machine. */
+  const imageOf = (tags: string[], size?: number, salt = ''): KeptImage => {
+    const hash = digest(`${tags.join(',')}${salt}`)
+    return {
+      id: `sha256:${hash}`,
+      tags,
+      size: size ?? 20_000_000 + (parseInt(hash.slice(0, 6), 16) % 400) * 1_000_000,
+      created: 1_700_000_000 + (parseInt(hash.slice(6, 12), 16) % 10_000_000)
+    }
+  }
+  // the images of the containers it starts with are there, then those it is given
+  const firstImages = (): KeptImage[] => {
+    const kept: KeptImage[] = []
+    for (const seed of options.containers ?? []) if (!kept.some((i) => i.tags.includes(seed.image))) kept.push(imageOf([seed.image]))
+    ;(options.images ?? []).forEach((seed, i) => kept.push(imageOf([...seed.tags], seed.size, seed.tags.length === 0 ? `#${i}` : '')))
+    return kept
+  }
+  let images = firstImages()
+  /** An image by a name (`nginx` is `nginx:latest`) or by its id, whole or the start of it. */
+  const imageBy = (key: string): { image: KeptImage; tag?: string } | undefined => {
+    const tag = /:[^/]*$/.test(key) || key.includes('@') ? key : `${key}:latest`
+    const tagged = images.find((i) => i.tags.includes(tag))
+    if (tagged) return { image: tagged, tag }
+    const hex = key.replace(/^sha256:/, '')
+    if (!/^[0-9a-f]+$/.test(hex)) return undefined
+    const byId = images.find((i) => i.id.replace(/^sha256:/, '').startsWith(hex))
+    return byId && { image: byId }
+  }
+
   let made = 0
   const keep = (c: Container, seeded: boolean, log: string[], chosen: Record<string, string> = {}): Kept => {
     made += 1
-    return { ...c, id: made.toString(16).padStart(64, '0'), chosen, seeded, exited: false, log }
+    const image = imageBy(c.image)?.image.id ?? `sha256:${digest(c.image)}`
+    return { ...c, id: made.toString(16).padStart(64, '0'), imageId: image, chosen, seeded, exited: false, log }
   }
   /** A whole container from what is known of it: the rest as Docker has it for a container made with nothing more. */
   const container = (c: Partial<Container> & Pick<Container, 'name' | 'image'>): Container => ({
@@ -183,38 +279,75 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         [...(seed.log ?? [])]
       )
     })
+
+  interface KeptNetwork extends NetworkMade {
+    id: string
+  }
+  // the subnets Docker gives the networks that are made without one: 172.18.0.0/16, then 172.19.0.0/16, ...
+  let nextSubnet = 18
+  const network = (n: Network & Partial<NetworkMade>): KeptNetwork => {
+    const driver = n.driver ?? 'bridge'
+    // Docker gives a bridge network addresses of its own when it is given none; `host` and `none` have none
+    let subnet = n.subnet ?? ''
+    let gateway = n.gateway ?? ''
+    if (subnet === '' && driver !== 'host' && driver !== 'null') {
+      const second = nextSubnet++
+      subnet = `172.${second}.0.0/16`
+      gateway = `172.${second}.0.1`
+    } else if (subnet !== '' && gateway === '') {
+      const first = range(subnet)
+      if (first) gateway = [24, 16, 8, 0].map((shift) => ((first[0] + 1) >>> shift) & 255).join('.')
+    }
+    return { id: digest(`network:${n.name}`), name: n.name, driver, subnet, gateway, internal: n.internal ?? false, attachable: n.attachable ?? false, labels: { ...n.labels } }
+  }
   /** Docker's own networks, which every Docker has and none can remove. */
-  const OWN: readonly Network[] = [
-    { name: 'bridge', driver: 'bridge' },
-    { name: 'host', driver: 'host' },
-    { name: 'none', driver: 'null' }
-  ]
-  const firstNetworks = (): Network[] => [...OWN, ...(options.networks ?? [])].map((network) => ({ ...network }))
-  interface Volume {
-    name: string
+  const OWN = ['bridge', 'host', 'none']
+  const firstNetworks = (): KeptNetwork[] => {
+    nextSubnet = 18
+    return [
+      network({ name: 'bridge', subnet: '172.17.0.0/16', gateway: '172.17.0.1' }),
+      network({ name: 'host', driver: 'host' }),
+      network({ name: 'none', driver: 'null' }),
+      ...(options.networks ?? []).map(network)
+    ]
+  }
+  const networkBy = (key: string): KeptNetwork | undefined => networks.find((n) => n.name === key || n.id === key || (key.length >= 12 && n.id.startsWith(key)))
+
+  interface KeptVolume extends Volume {
     /** Docker named it: it is a container's own, made with it (`docker rm -v` removes it). */
     anonymous: boolean
+    /** How much it holds, in bytes. */
+    size: number
   }
-  const firstVolumes = (kept: Kept[]): Volume[] =>
-    kept.flatMap((c) => c.mounts.filter((m) => m.type === 'volume').map((m) => ({ name: m.source, anonymous: false })))
+  const volume = (name: string, anonymous: boolean, size = 0, driver = 'local', labels: Record<string, string> = {}): KeptVolume => ({ name, driver, labels, anonymous, size })
+  const firstVolumes = (kept: Kept[]): KeptVolume[] =>
+    kept.flatMap((c) => c.mounts.filter((m) => m.type === 'volume').map((m) => volume(m.source, false, 24_000_000)))
 
   let containers = seeds()
   let networks = firstNetworks()
   let volumes = firstVolumes(containers)
-  // the image of a container that is there is on the machine
-  const firstImages = (kept: Kept[]): string[] => [...new Set(kept.map((c) => c.image))]
-  let images = firstImages(containers)
   let pulled: string[] = []
   let started: string[] = []
   let portTaken = false
-  // the app's backend, reading `/events`
-  const listeners = new Set<ServerResponse>()
+  // the app's backend, reading `/events`, with what it asked for (Docker's `type`, `event` and `label` filters)
+  const listeners = new Map<ServerResponse, { type?: string[]; event?: string[]; label?: string[] }>()
 
-  const tell = (action: string, c: Kept): void => {
-    const event = JSON.stringify({ Type: 'container', Action: action, Actor: { ID: c.id, Attributes: { name: c.name, ...c.labels } }, time: 1 })
-    for (const listener of listeners) listener.write(`${event}\n`)
+  /** Report a change on `/events`, to each listener that asked for its type, its action and its labels. */
+  const report = (type: string, action: string, id: string, attributes: Record<string, string>): void => {
+    const event = JSON.stringify({ Type: type, Action: action, Actor: { ID: id, Attributes: attributes }, time: 1 })
+    for (const [listener, wanted] of listeners) {
+      if (wanted.type && !wanted.type.includes(type)) continue
+      if (wanted.event && !wanted.event.includes(action)) continue
+      if (wanted.label && !labelled(attributes, wanted.label)) continue
+      listener.write(`${event}\n`)
+    }
   }
+  const tell = (action: string, c: Kept): void => report('container', action, c.id, { name: c.name, ...c.labels })
   const find = (key: string): Kept | undefined => containers.find((c) => c.id === key || c.name === key)
+  /** The containers made from an image, running or not. */
+  const madeFrom = (image: KeptImage): Kept[] => containers.filter((c) => c.imageId === image.id)
+  /** The containers that mount a volume, running or not. */
+  const mounting = (name: string): Kept[] => containers.filter((c) => c.mounts.some((m) => m.type === 'volume' && m.source === name))
   // the ports Docker chooses, when a binding leaves it to Docker
   let nextPort = 49153
   /** The machine's port of each binding: the one asked for, or the one Docker chose. */
@@ -222,8 +355,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     Object.entries(c.bindings).flatMap(([key, bindings]) =>
       bindings.map((binding, i) => ({ key, ip: binding.HostIp, port: binding.HostPort === '' ? (c.chosen[`${key}#${i}`] ?? '') : binding.HostPort }))
     )
-  const filtersOf = (query: URLSearchParams): { label?: string[]; reference?: string[] } =>
-    JSON.parse(query.get('filters') ?? '{}') as { label?: string[]; reference?: string[] }
+  type Filters = Record<string, string[] | undefined>
+  const filtersOf = (query: URLSearchParams): Filters => JSON.parse(query.get('filters') ?? '{}') as Filters
   /** Docker's `label` filter: `key`, or `key=value`, every one of them. */
   const labelled = (labels: Record<string, string>, wanted: string[]): boolean =>
     wanted.every((label) => {
@@ -231,6 +364,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       const key = at === -1 ? label : label.slice(0, at)
       return key in labels && (at === -1 || labels[key] === label.slice(at + 1))
     })
+  /** A boolean filter (`dangling`, `all`) as Docker reads it: `true` or `1`. */
+  const yes = (values: string[] | undefined): boolean | undefined => (values === undefined ? undefined : values.some((v) => v === 'true' || v === '1'))
 
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
@@ -245,18 +380,63 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     return Buffer.concat([head, data])
   }
 
-  /** An image as Docker lists it: the client reads every one of these fields. */
-  const imageOf = (image: string): object => ({
-    Id: `sha256:${'f'.repeat(64)}`,
+  /** An image as Docker lists it: the client reads every one of these fields. Docker counts its containers only for `/system/df`. */
+  const listedImage = (image: KeptImage): object => ({
+    Id: image.id,
     ParentId: '',
-    RepoTags: [image],
+    RepoTags: image.tags,
     RepoDigests: [],
-    Created: 1_700_000_000,
-    Size: 9_000_000,
+    Created: image.created,
+    Size: image.size,
     SharedSize: -1,
     Labels: {},
     Containers: -1
   })
+
+  /** Remove an image as Docker does, by a name or an id: Docker's records of what it untagged and deleted, or its refusal. */
+  function removeImage(key: string, force: boolean): { status: number; body: unknown } {
+    const found = imageBy(key)
+    if (!found) return { status: 404, body: { message: `No such image: ${key}` } }
+    const { image, tag } = found
+    const users = madeFrom(image)
+    const running = users.find((c) => c.running)
+    const stopped = users.find((c) => !c.running)
+    const records: object[] = []
+    const untag = (name: string): void => {
+      image.tags = image.tags.filter((t) => t !== name)
+      records.push({ Untagged: name })
+      report('image', 'untag', image.id, { name })
+    }
+    const remove = (): void => {
+      images = images.filter((i) => i !== image)
+      records.push({ Deleted: image.id })
+      report('image', 'delete', image.id, { name: image.id })
+    }
+    if (tag !== undefined) {
+      // a name the image has others beside goes alone; its last name goes only when no container needs it, or forced
+      const user = users[0]
+      if (!force && image.tags.length === 1 && user) {
+        return {
+          status: 409,
+          body: { message: `conflict: unable to remove repository reference "${tag}" (must force) - container ${short(user.id)} is using its referenced image ${short(image.id)}` }
+        }
+      }
+      untag(tag)
+      // a running container keeps the image it runs: it is left without a name
+      if (image.tags.length === 0 && !running) remove()
+      return { status: 200, body: records }
+    }
+    // by its id: every name goes with it, though names of several repositories only when forced
+    const repositories = new Set(image.tags.map((t) => t.slice(0, t.lastIndexOf(':'))))
+    if (!force && repositories.size > 1) {
+      return { status: 409, body: { message: `conflict: unable to delete ${short(image.id)} (must be forced) - image is referenced in multiple repositories` } }
+    }
+    if (running) return { status: 409, body: { message: `conflict: unable to delete ${short(image.id)} (cannot be forced) - image is being used by running container ${short(running.id)}` } }
+    if (stopped && !force) return { status: 409, body: { message: `conflict: unable to delete ${short(image.id)} (must be forced) - image is being used by stopped container ${short(stopped.id)}` } }
+    for (const name of [...image.tags]) untag(name)
+    remove()
+    return { status: 200, body: records }
+  }
 
   const stateOf = (c: Kept): string => (c.running ? 'running' : c.exited || c.seeded ? 'exited' : 'created')
   const statusOf = (c: Kept): string => {
@@ -265,23 +445,44 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     return c.exited ? 'Exited (137) 1 second ago' : 'Created'
   }
 
-  const summaryOf = (c: Kept): object => ({
-    Id: c.id,
-    Names: [`/${c.name}`],
-    Image: c.image,
-    State: stateOf(c),
-    Status: statusOf(c),
-    Labels: c.labels,
-    // a container that does not run has no port of the machine
-    Ports: c.running
-      ? published(c).map(({ key, ip, port }) => ({
-          IP: ip === '' ? '0.0.0.0' : ip,
-          PrivatePort: Number(key.split('/')[0]),
-          PublicPort: Number(port),
-          Type: key.split('/')[1] ?? 'tcp'
-        }))
-      : []
-  })
+  /** A container's mounts as Docker reports them, in its list and its inspection. */
+  const mountsOf = (c: Kept): object[] =>
+    c.mounts.map((m) =>
+      m.type === 'volume'
+        ? { Type: 'volume', Name: m.source, Source: `/var/lib/docker/volumes/${m.source}/_data`, Destination: m.target, Driver: 'local', Mode: 'z', RW: !m.readOnly, Propagation: '' }
+        : { Type: 'bind', Source: m.source, Destination: m.target, Mode: '', RW: !m.readOnly, Propagation: 'rprivate' }
+    )
+  /** The networks a container is on, as Docker reports them: a stopped one keeps its network, without an address. */
+  const endpointsOf = (c: Kept): object => {
+    const on = networkBy(c.network)
+    return { [c.network]: { NetworkID: on?.id ?? '', EndpointID: c.running ? c.id : '', IPAddress: c.running ? '172.17.0.2' : '' } }
+  }
+
+  const summaryOf = (c: Kept): object => {
+    const image = images.find((i) => i.id === c.imageId)
+    return {
+      Id: c.id,
+      Names: [`/${c.name}`],
+      // the name it was made from while that name is still its image's; else the image's id
+      Image: image?.tags.includes(c.image) ? c.image : c.imageId,
+      ImageID: c.imageId,
+      State: stateOf(c),
+      Status: statusOf(c),
+      Labels: c.labels,
+      // a container that does not run has no port of the machine
+      Ports: c.running
+        ? published(c).map(({ key, ip, port }) => ({
+            IP: ip === '' ? '0.0.0.0' : ip,
+            PrivatePort: Number(key.split('/')[0]),
+            PublicPort: Number(port),
+            Type: key.split('/')[1] ?? 'tcp'
+          }))
+        : [],
+      HostConfig: { NetworkMode: c.network },
+      NetworkSettings: { Networks: endpointsOf(c) },
+      Mounts: mountsOf(c)
+    }
+  }
 
   /** Docker's inspection of a container: what it was made with (`Config`, `HostConfig`), and what it has now. */
   const inspectOf = (c: Kept): object => ({
@@ -291,7 +492,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     Path: c.entrypoint[0] ?? c.cmd[0] ?? '',
     Args: c.entrypoint.length > 0 ? [...c.entrypoint.slice(1), ...c.cmd] : c.cmd.slice(1),
     State: { Status: stateOf(c), Running: c.running, Paused: false, Restarting: false, ExitCode: c.exited ? 137 : 0 },
-    Image: `sha256:${'f'.repeat(64)}`,
+    Image: c.imageId,
     Config: {
       // Docker names a container's host after the start of its id
       Hostname: c.hostname === '' ? c.id.slice(0, 12) : c.hostname,
@@ -311,51 +512,80 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       PublishAllPorts: c.publishAll,
       Mounts: c.mounts.map((m) => ({ Type: m.type, Source: m.source, Target: m.target, ReadOnly: m.readOnly }))
     },
-    Mounts: c.mounts.map((m) =>
-      m.type === 'volume'
-        ? { Type: 'volume', Name: m.source, Source: `/var/lib/docker/volumes/${m.source}/_data`, Destination: m.target, Driver: 'local', Mode: 'z', RW: !m.readOnly, Propagation: '' }
-        : { Type: 'bind', Source: m.source, Destination: m.target, Mode: '', RW: !m.readOnly, Propagation: 'rprivate' }
-    ),
+    Mounts: mountsOf(c),
     NetworkSettings: {
       Ports: c.running
         ? Object.fromEntries(Object.keys(c.bindings).map((key) => [key, published(c).filter((p) => p.key === key).map((p) => ({ HostIp: p.ip === '' ? '0.0.0.0' : p.ip, HostPort: p.port }))]))
         : {},
-      Networks: { [c.network]: { NetworkID: c.network, EndpointID: c.running ? c.id : '', IPAddress: c.running ? '172.17.0.2' : '' } }
+      Networks: endpointsOf(c)
     }
   })
 
   /** A volume as Docker lists it: the client reads every one of these fields. */
-  const volumeOf = (v: Volume): object => ({
+  const volumeOf = (v: KeptVolume): object => ({
     Name: v.name,
-    Driver: 'local',
+    Driver: v.driver,
     Mountpoint: `/var/lib/docker/volumes/${v.name}/_data`,
     CreatedAt: '2026-11-27T09:00:00Z',
-    Labels: {},
+    Labels: v.labels,
     Scope: 'local',
     Options: {}
   })
 
+  /** A network as Docker lists it. Its `Containers` are only filled in by an inspection of it. */
+  const networkOf = (n: KeptNetwork): object => ({
+    Name: n.name,
+    Id: n.id,
+    Created: '2026-11-27T09:00:00.000000000Z',
+    Scope: n.driver === 'overlay' ? 'swarm' : 'local',
+    Driver: n.driver,
+    EnableIPv4: true,
+    EnableIPv6: false,
+    IPAM: { Driver: 'default', Options: {}, Config: n.subnet === '' ? [] : [{ Subnet: n.subnet, Gateway: n.gateway }] },
+    Internal: n.internal,
+    Attachable: n.attachable,
+    Ingress: false,
+    ConfigFrom: { Network: '' },
+    ConfigOnly: false,
+    Containers: {},
+    Options: {},
+    Labels: n.labels
+  })
+
   /** A whole path, as Docker takes one for a mount. */
   const absolute = (path: string): boolean => path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+  // Docker's own rule for the names of containers, volumes and networks
+  const NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/
 
   async function answer(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://docker')
     // a client may name the API version first (`/v1.47/containers/json`)
     const path = url.pathname.replace(/^\/v\d+\.\d+/, '')
     const method = req.method ?? 'GET'
+    const flag = (name: string): boolean => ['1', 'true'].includes(url.searchParams.get(name) ?? '')
 
     if (path === '/version') return json(res, 200, { Version: '27.3.1', ApiVersion: '1.47', Os: 'linux', Arch: 'arm64' })
     if (path === '/_ping') return void res.writeHead(200, { 'content-type': 'text/plain' }).end('OK')
     if (path === '/events') {
+      const { type, event, label } = filtersOf(url.searchParams)
       res.writeHead(200, { 'content-type': 'application/json' })
       res.flushHeaders()
-      listeners.add(res)
+      listeners.set(res, { type, event, label })
       req.on('close', () => listeners.delete(res))
       return
     }
     if (method === 'GET' && path === '/images/json') {
-      const wanted = filtersOf(url.searchParams).reference ?? []
-      return json(res, 200, images.filter((image) => wanted.length === 0 || wanted.includes(image)).map(imageOf))
+      const filters = filtersOf(url.searchParams)
+      const wanted = filters.reference ?? []
+      const dangling = yes(filters.dangling)
+      return json(
+        res,
+        200,
+        images
+          .filter((image) => wanted.length === 0 || image.tags.some((tag) => wanted.includes(tag)))
+          .filter((image) => dangling === undefined || dangling === (image.tags.length === 0))
+          .map(listedImage)
+      )
     }
     if (method === 'POST' && path === '/images/create') {
       const from = url.searchParams.get('fromImage') ?? ''
@@ -367,13 +597,18 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           message: `pull access denied for ${from}, repository does not exist or may require 'docker login': denied: requested access to the resource is denied`
         })
       }
-      images.push(image)
       pulled.push(image)
       res.writeHead(200, { 'content-type': 'application/json' })
       const step = (status: string, id?: string, progressDetail?: { current: number; total: number }): void =>
         void res.write(`${JSON.stringify({ status, ...(id === undefined ? {} : { id }), ...(progressDetail ? { progressDetail } : {}) })}\n`)
-      // two layers, each downloaded in two steps and extracted, as Docker reports a pull
       step(`Pulling from ${from}`, tag ?? 'latest')
+      // the registry has nothing newer than what is there
+      if (images.some((i) => i.tags.includes(image))) {
+        step(`Digest: sha256:${'e'.repeat(64)}`)
+        report('image', 'pull', image, { name: image })
+        return void res.end(`${JSON.stringify({ status: `Status: Image is up to date for ${image}` })}\n`)
+      }
+      // two layers, each downloaded in two steps and extracted, as Docker reports a pull
       const layers = [
         ['a1b2c3d4e5f6', 3_000_000],
         ['0f9e8d7c6b5a', 1_000_000]
@@ -389,26 +624,157 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         step('Pull complete', id)
       }
       step(`Digest: sha256:${'e'.repeat(64)}`)
+      images.push(imageOf([image]))
+      report('image', 'pull', image, { name: image })
       return void res.end(`${JSON.stringify({ status: `Status: Downloaded newer image for ${image}` })}\n`)
     }
+    if (method === 'POST' && path === '/images/prune') {
+      // the dangling images by default, every unused one with `dangling=false`; never one a container was made from
+      const onlyDangling = yes(filtersOf(url.searchParams).dangling) ?? true
+      const doomed = images.filter((i) => (!onlyDangling || i.tags.length === 0) && madeFrom(i).length === 0)
+      const deleted: object[] = []
+      for (const image of doomed) {
+        for (const name of image.tags) deleted.push({ Untagged: name })
+        // Docker lists the layers it deleted beside the image
+        deleted.push({ Deleted: image.id }, { Deleted: `sha256:${digest(`layer:${image.id}`)}` })
+        report('image', 'delete', image.id, { name: image.id })
+      }
+      images = images.filter((i) => !doomed.includes(i))
+      const space = doomed.reduce((sum, i) => sum + i.size, 0)
+      report('image', 'prune', '', { reclaimed: String(space) })
+      return json(res, 200, { ImagesDeleted: deleted.length === 0 ? null : deleted, SpaceReclaimed: space })
+    }
+    const imagePath = /^\/images\/(.+)$/.exec(path)
+    if (method === 'DELETE' && imagePath) {
+      const removed = removeImage(decodeURIComponent(imagePath[1]!), flag('force'))
+      return json(res, removed.status, removed.body)
+    }
     if (method === 'GET' && path === '/networks') {
-      const wanted = filtersOf(url.searchParams).label ?? []
+      const filters = filtersOf(url.searchParams)
+      const named = filters.name ?? []
       return json(
         res,
         200,
         networks
-          .filter((n) => labelled(n.labels ?? {}, wanted))
-          .map((n) => ({ Id: n.name, Name: n.name, Driver: n.driver ?? 'bridge', Scope: 'local', Internal: false, Attachable: false, Labels: n.labels ?? {} }))
+          .filter((n) => labelled(n.labels, filters.label ?? []))
+          .filter((n) => named.length === 0 || named.some((name) => n.name.includes(name)))
+          .map(networkOf)
       )
     }
-    const network = /^\/networks\/([^/]+)$/.exec(path)
-    if (method === 'DELETE' && network) {
-      if (OWN.some((n) => n.name === network[1])) return json(res, 403, { message: `${network[1]} is a pre-defined network and cannot be removed` })
-      networks = networks.filter((n) => n.name !== network[1])
+    if (method === 'POST' && path === '/networks/create') {
+      const body = (await bodyOf(req)) as {
+        Name?: string
+        Driver?: string
+        Internal?: boolean
+        Attachable?: boolean
+        Labels?: Record<string, string>
+        IPAM?: { Config?: { Subnet?: string; Gateway?: string }[] }
+      }
+      const name = body.Name ?? ''
+      if (!NAME.test(name)) return json(res, 400, { message: `invalid name: "${name}" includes invalid characters, only "[a-zA-Z0-9][a-zA-Z0-9_.-]" are allowed` })
+      if (networks.some((n) => n.name === name)) return json(res, 409, { message: `network with name ${name} already exists` })
+      const driver = body.Driver || 'bridge'
+      if (driver === 'host' || driver === 'null') return json(res, 403, { message: `only one instance of "${driver}" network is allowed` })
+      if (driver === 'overlay') {
+        return json(res, 503, { message: 'This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.' })
+      }
+      if (!['bridge', 'macvlan', 'ipvlan'].includes(driver)) return json(res, 404, { message: `plugin "${driver}" not found` })
+      const config = body.IPAM?.Config?.[0]
+      let subnet = config?.Subnet ?? ''
+      /** Another network has an address of `asked`. */
+      const overlaps = (asked: [number, number]): boolean =>
+        networks.some((n) => {
+          const theirs = range(n.subnet)
+          return theirs !== undefined && asked[0] <= theirs[1] && theirs[0] <= asked[1]
+        })
+      if (subnet !== '') {
+        const asked = range(subnet)
+        if (!asked) return json(res, 400, { message: `invalid CIDR address: ${subnet}` })
+        if (overlaps(asked)) return json(res, 403, { message: 'Pool overlaps with other one on this address space' })
+      } else {
+        // Docker gives it the next of its own subnets that no network has
+        while (overlaps(range(`172.${nextSubnet}.0.0/16`)!)) nextSubnet++
+        subnet = `172.${nextSubnet++}.0.0/16`
+      }
+      const kept = network({
+        name,
+        driver,
+        subnet,
+        gateway: config?.Gateway ?? '',
+        internal: body.Internal === true,
+        attachable: body.Attachable === true,
+        labels: body.Labels ?? {}
+      })
+      networks.push(kept)
+      report('network', 'create', kept.id, { name, type: driver })
+      return json(res, 201, { Id: kept.id, Warning: '' })
+    }
+    const networkPath = /^\/networks\/([^/]+)$/.exec(path)
+    if (method === 'DELETE' && networkPath) {
+      const key = decodeURIComponent(networkPath[1]!)
+      const found = networkBy(key)
+      if (!found) return json(res, 404, { message: `network ${key} not found` })
+      if (OWN.includes(found.name)) return json(res, 403, { message: `${found.name} is a pre-defined network and cannot be removed` })
+      // a stopped container keeps its place on the network, and does not hold it
+      if (containers.some((c) => c.running && c.network === found.name)) {
+        return json(res, 403, { message: `error while removing network: network ${found.name} id ${found.id} has active endpoints` })
+      }
+      networks = networks.filter((n) => n !== found)
+      report('network', 'destroy', found.id, { name: found.name, type: found.driver })
       return void res.writeHead(204).end()
     }
     if (method === 'GET' && path === '/volumes') {
-      return json(res, 200, { Volumes: volumes.map(volumeOf), Warnings: [] })
+      const filters = filtersOf(url.searchParams)
+      const named = filters.name ?? []
+      const dangling = yes(filters.dangling)
+      return json(res, 200, {
+        Volumes: volumes
+          .filter((v) => named.length === 0 || named.some((name) => v.name.includes(name)))
+          .filter((v) => labelled(v.labels, filters.label ?? []))
+          .filter((v) => dangling === undefined || dangling === (mounting(v.name).length === 0))
+          .map(volumeOf),
+        Warnings: []
+      })
+    }
+    if (method === 'POST' && path === '/volumes/create') {
+      const body = (await bodyOf(req)) as { Name?: string; Driver?: string; Labels?: Record<string, string> }
+      const name = body.Name || digest(`volume:${made}:${volumes.length}`)
+      if (!NAME.test(name)) {
+        return json(res, 400, {
+          message: `create ${name}: "${name}" includes invalid characters for a local volume name, only "[a-zA-Z0-9][a-zA-Z0-9_.-]" are allowed. If you intended to pass a host directory, use absolute path`
+        })
+      }
+      const driver = body.Driver || 'local'
+      if (driver !== 'local') return json(res, 404, { message: `create ${name}: error looking up volume plugin ${driver}: plugin "${driver}" not found` })
+      // a volume that is there is the answer: Docker makes nothing
+      const there = volumes.find((v) => v.name === name)
+      if (there) return json(res, 201, volumeOf(there))
+      const kept = volume(name, !body.Name, 0, driver, body.Labels ?? {})
+      volumes.push(kept)
+      report('volume', 'create', name, { driver })
+      return json(res, 201, volumeOf(kept))
+    }
+    if (method === 'POST' && path === '/volumes/prune') {
+      // since API 1.42 only the anonymous volumes, unless `all`; never one a container mounts, running or not
+      const all = yes(filtersOf(url.searchParams).all) ?? false
+      const doomed = volumes.filter((v) => (all || v.anonymous) && mounting(v.name).length === 0)
+      volumes = volumes.filter((v) => !doomed.includes(v))
+      for (const v of doomed) report('volume', 'destroy', v.name, { driver: v.driver })
+      const space = doomed.reduce((sum, v) => sum + v.size, 0)
+      report('volume', 'prune', '', { reclaimed: String(space) })
+      return json(res, 200, { VolumesDeleted: doomed.length === 0 ? null : doomed.map((v) => v.name), SpaceReclaimed: space })
+    }
+    const volumePath = /^\/volumes\/([^/]+)$/.exec(path)
+    if (method === 'DELETE' && volumePath) {
+      const name = decodeURIComponent(volumePath[1]!)
+      const found = volumes.find((v) => v.name === name)
+      if (!found) return json(res, 404, { message: `get ${name}: no such volume` })
+      // a volume a container mounts stays, running or not, forced or not
+      const users = mounting(name)
+      if (users.length > 0) return json(res, 409, { message: `remove ${name}: volume is in use - [${users.map((c) => c.id).join(', ')}]` })
+      volumes = volumes.filter((v) => v !== found)
+      report('volume', 'destroy', name, { driver: found.driver })
+      return void res.writeHead(204).end()
     }
     if (method === 'GET' && path === '/containers/json') {
       const wanted = filtersOf(url.searchParams).label ?? []
@@ -428,7 +794,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       }
       const body = await bodyOf(req)
       const image = String(body.Image ?? '')
-      if (!images.includes(image)) return json(res, 404, { message: `No such image: ${image}` })
+      if (!imageBy(image)) return json(res, 404, { message: `No such image: ${image}` })
       const hostConfig = (body.HostConfig ?? {}) as {
         PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[]>
         PublishAllPorts?: boolean
@@ -443,8 +809,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         return json(res, 400, { message: "invalid restart policy: maximum retry count can only be used with 'on-failure'" })
       }
       const mode = hostConfig.NetworkMode ?? ''
-      const network = mode === '' || mode === 'default' ? 'bridge' : mode
-      if (!networks.some((n) => n.name === network)) return json(res, 404, { message: `network ${network} not found` })
+      const on = networkBy(mode === '' || mode === 'default' ? 'bridge' : mode)
+      if (!on) return json(res, 404, { message: `network ${mode} not found` })
       const mounts: Mount[] = []
       for (const m of hostConfig.Mounts ?? []) {
         const type = m.Type === 'bind' || m.Type === 'volume' ? m.Type : undefined
@@ -469,9 +835,11 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         if (m.type !== 'volume') continue
         if (m.source === '') {
           m.source = (made + volumes.length + 1).toString(16).padStart(64, 'a')
-          volumes.push({ name: m.source, anonymous: true })
+          volumes.push(volume(m.source, true))
+          report('volume', 'create', m.source, { driver: 'local' })
         } else if (!volumes.some((v) => v.name === m.source)) {
-          volumes.push({ name: m.source, anonymous: false })
+          volumes.push(volume(m.source, false))
+          report('volume', 'create', m.source, { driver: 'local' })
         }
       }
       const created = keep(
@@ -486,7 +854,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           bindings,
           publishAll: hostConfig.PublishAllPorts === true,
           mounts,
-          network,
+          network: on.name,
           restart,
           retries,
           workingDir: String(body.WorkingDir ?? ''),
@@ -514,15 +882,14 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return void res.writeHead(200, { 'content-type': 'application/vnd.docker.multiplexed-stream' }).end(Buffer.concat(lines.map(frame)))
     }
     if (method === 'DELETE' && verb === undefined) {
-      const yes = (flag: string): boolean => ['1', 'true'].includes(url.searchParams.get(flag) ?? '')
-      if (found.running && !yes('force')) {
+      if (found.running && !flag('force')) {
         return json(res, 409, {
           message: `cannot remove container "/${found.name}": container is running: stop the container before removing or force remove`
         })
       }
       containers = containers.filter((c) => c !== found)
       // its anonymous volumes go with it when asked; a named volume is never a container's own
-      if (yes('v')) {
+      if (flag('v')) {
         const own = new Set(found.mounts.filter((m) => m.type === 'volume').map((m) => m.source))
         volumes = volumes.filter((v) => !(v.anonymous && own.has(v.name)))
       }
@@ -546,6 +913,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           message: `driver failed programming external connectivity on endpoint ${found.name}: Bind for ${clash.ip === '' ? '0.0.0.0' : clash.ip}:${clash.port} failed: port is already allocated`
         })
       }
+      // the network it was put on went while it was stopped
+      if (!networkBy(found.network)) return json(res, 404, { message: `network ${found.network} not found` })
       found.running = true
       found.exited = false
       started.push(found.name)
@@ -585,10 +954,10 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
   return {
     host: `tcp://127.0.0.1:${port}`,
     reset() {
+      images = firstImages()
       containers = seeds()
       networks = firstNetworks()
       volumes = firstVolumes(containers)
-      images = firstImages(containers)
       nextPort = 49153
       pulled = []
       started = []
@@ -621,12 +990,22 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     count: () => containers.length,
     pulled: () => [...pulled],
     networks: () => networks.map((n) => n.name),
+    network(name) {
+      const n = networks.find((it) => it.name === name)
+      return n && { name: n.name, driver: n.driver, subnet: n.subnet, gateway: n.gateway, internal: n.internal, attachable: n.attachable, labels: { ...n.labels } }
+    },
     volumes: () => volumes.map((v) => v.name),
+    volume(name) {
+      const v = volumes.find((it) => it.name === name)
+      return v && { name: v.name, driver: v.driver, labels: { ...v.labels } }
+    },
+    images: () => images.map((i) => ({ id: i.id, tags: [...i.tags], size: i.size })),
     started: () => [...started],
     takePort(taken) {
       portTaken = taken
     },
     run(name, image) {
+      if (!imageBy(image)) images.push(imageOf([image]))
       const ran = keep(container({ name, image, running: true }), false, ['hello'])
       containers.push(ran)
       tell('start', ran)
@@ -643,7 +1022,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     },
     close: () =>
       new Promise((resolve) => {
-        for (const listener of listeners) listener.end()
+        for (const listener of listeners.keys()) listener.end()
         server.closeAllConnections()
         server.close(() => resolve())
       })

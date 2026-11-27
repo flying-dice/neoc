@@ -3,10 +3,13 @@
  * no daemon. It has containers that start, stop and go away as the real ones do, stacks worked out from them as the
  * backend works them out, and a line of log for everything that happens to a container. Containers are made from a
  * spec as the backend makes them: the image pulled first when it is not there (with its progress told), the spec
- * checked for some of what the backend checks, in its words.
+ * checked for some of what the backend checks, in its words. Its images, volumes and networks know the containers that
+ * use them, and are refused what Docker refuses: an image a container was made from, unless forced (never one a running
+ * container was made from), a volume a container uses, a network a running container is on, Docker's own networks.
  */
 type Container = VosApp.Containers.Container
 type Details = VosApp.Containers.Details
+type Image = VosApp.Containers.Image
 type Network = VosApp.Containers.Network
 type Overview = VosApp.Containers.Overview
 type Port = VosApp.Containers.Port
@@ -41,15 +44,55 @@ export interface FakeOptions {
   pace?: number
   /** The names of containers Docker refuses to act on, as it does when a port is taken. */
   refusing?: readonly string[]
-  /** The images Docker has (default: those of the containers); any other is pulled first. */
-  images?: readonly string[]
+  /** The images Docker has (default: `IMAGES`, those of the containers and two more); any other is pulled first. */
+  images?: readonly Kept<Image>[]
   /** Images the registry does not have: pulling one fails as Docker's does. */
   missingImages?: readonly string[]
   /** Docker's networks (default: its own, and one for each stack). */
-  networks?: readonly Network[]
+  networks?: readonly Kept<Network>[]
   /** Docker's volumes (default: one for each container). */
-  volumes?: readonly Volume[]
+  volumes?: readonly Kept<Volume>[]
 }
+
+/** An image, a volume or a network as the fake keeps it: the containers that use it are worked out when it is listed. */
+export type Kept<T> = Omit<T, 'containers'>
+
+/** An image of the fake: its id and size follow from its names. */
+export function image(tags: string[], more: Partial<Kept<Image>> = {}): Kept<Image> {
+  let hash = 0
+  for (const c of tags.join(',') || 'dangling') hash = (hash * 31 + c.charCodeAt(0)) >>> 0
+  const hex = hash.toString(16).padStart(8, '0')
+  return { id: `sha256:${hex.repeat(8)}`, tags, size: 20_000_000 + (hash % 400) * 1_000_000, created: 1_700_000_000 + (hash % 10_000_000), ...more }
+}
+
+/** A volume of the fake, kept by Docker's own driver. */
+export const volume = (name: string, more: Partial<Kept<Volume>> = {}): Kept<Volume> => ({
+  name,
+  driver: 'local',
+  mountpoint: `/var/lib/docker/volumes/${name}/_data`,
+  created: '2026-11-27T09:00:00Z',
+  ...more
+})
+
+/** A network of the fake: a bridge network on this machine, with addresses Docker chose, unless it says otherwise. */
+export const network = (name: string, more: Partial<Kept<Network>> = {}): Kept<Network> => ({
+  name,
+  driver: 'bridge',
+  scope: 'local',
+  subnet: '',
+  gateway: '',
+  internal: false,
+  attachable: false,
+  predefined: false,
+  ...more
+})
+
+/** Docker's own networks, which every Docker has and none can remove. */
+export const OWN_NETWORKS: readonly Kept<Network>[] = [
+  network('bridge', { subnet: '172.17.0.0/16', gateway: '172.17.0.1', predefined: true }),
+  network('host', { driver: 'host', predefined: true }),
+  network('none', { driver: 'null', predefined: true })
+]
 
 /** A failure the backend answers a call with (`ctx:fail`). */
 class Refused extends Error {}
@@ -158,21 +201,30 @@ export function stacksOf(containers: readonly Container[]): Stack[] {
 
 const ADDRESS = /^(unix:\/\/\/|tcp:\/\/[^/]|https?:\/\/[^/])/
 
+/** The images of a machine with these containers: one for each image they run, an unused one and a dangling one. */
+export function imagesOf(containers: readonly Container[]): Kept<Image>[] {
+  return [
+    ...[...new Set(containers.map((c) => c.image))].map((name) => image([name])),
+    image(['redis:7', 'redis:latest']),
+    image([], { size: 140_000_000 })
+  ]
+}
+/** The images of the machine of `CONTAINERS`. */
+export const IMAGES: readonly Kept<Image>[] = imagesOf(CONTAINERS)
+
 /** A backend in the page: every call is answered on a later turn of the event loop, as a real answer would be. */
 export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   let containers: Container[] = (options.containers ?? CONTAINERS).map((c) => ({ ...c, ports: [...c.ports] }))
   const specs = new Map<string, Spec>(containers.map((c) => [c.id, specOf(c)]))
-  const images = new Set(options.images ?? containers.map((c) => c.image))
+  let images: Kept<Image>[] = (options.images ?? imagesOf(containers)).map((i) => ({ ...i, tags: [...i.tags] }))
   const missing = new Set(options.missingImages ?? [])
-  const networks: Network[] = [
+  let networks: Kept<Network>[] = [
     ...(options.networks ?? [
-      { name: 'bridge', driver: 'bridge' },
-      { name: 'host', driver: 'host' },
-      { name: 'none', driver: 'null' },
-      ...stacksOf(containers).map((s) => ({ name: `${s.name}_default`, driver: 'bridge' }))
+      ...OWN_NETWORKS,
+      ...stacksOf(containers).map((s, i) => network(`${s.name}_default`, { subnet: `172.${18 + i}.0.0/16`, gateway: `172.${18 + i}.0.1` }))
     ])
   ]
-  let volumes: Volume[] = [...(options.volumes ?? containers.map((c) => ({ name: `${c.name}-data`, driver: 'local' })))]
+  let volumes: Kept<Volume>[] = [...(options.volumes ?? containers.map((c) => volume(`${c.name}-data`)))]
   let made = 0
   let problem = options.problem ?? ''
   let host = options.host ?? ''
@@ -222,6 +274,40 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   }
 
   /**
+   * Pull an image, as the backend does: the pull told as it goes (by the name it was asked by), or refused as Docker
+   * refuses it. `nginx` pulls `nginx:latest`.
+   */
+  function pull(name: string): void {
+    const tagged = /:[^/]*$/.test(name) ? name : `${name}:latest`
+    if (missing.has(tagged)) {
+      throw new Refused(`The image ${name} could not be pulled: pull access denied for ${tagged.split(':')[0]}, repository does not exist or may require 'docker login'`)
+    }
+    for (const current of [0, 24_000_000, 48_000_000]) emit('pulling', { image: name, status: current === 0 ? 'Pulling fs layer' : 'Downloading', current, total: 48_000_000 } satisfies Pulling)
+    if (!images.some((i) => i.tags.includes(tagged))) images = [...images, image([tagged], { size: 48_000_000 })]
+  }
+
+  // the containers that use an image, a volume or a network, by name: worked out from what each was made with
+  const madeFrom = (i: Kept<Image>): Container[] => containers.filter((c) => i.tags.includes(c.image) || c.image === i.id)
+  const mounting = (name: string): Container[] => containers.filter((c) => (specs.get(c.id) ?? specOf(c)).mounts.some((m) => m.kind === 'volume' && m.source === name))
+  const on = (name: string): Container[] => containers.filter((c) => (specs.get(c.id) ?? specOf(c)).network === name)
+  const namesOf = (list: Container[]): string[] => list.map((c) => c.name).sort()
+  const listedImages = (): Image[] =>
+    [...images]
+      .sort((a, b) => (a.tags[0] && b.tags[0] ? a.tags[0].localeCompare(b.tags[0]) : a.tags[0] ? -1 : b.tags[0] ? 1 : b.created - a.created))
+      .map((i) => ({ ...i, tags: [...i.tags], containers: namesOf(madeFrom(i)) }))
+  const listedVolumes = (): Volume[] =>
+    [...volumes].sort((a, b) => a.name.localeCompare(b.name)).map((v) => ({ ...v, containers: namesOf(mounting(v.name)) }))
+  const listedNetworks = (): Network[] =>
+    [...networks].sort((a, b) => a.name.localeCompare(b.name)).map((n) => ({ ...n, containers: namesOf(on(n.name)) }))
+  const reachable = (): void => {
+    if (problem !== '') throw new Refused(problem)
+  }
+  /** A name Docker takes for a volume or a network. */
+  const NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/
+  const short = (id: string): string => id.replace(/^sha256:/, '').slice(0, 12)
+  const pretty = (names: string[]): string => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`)
+
+  /**
    * Make a container from a spec, as the backend does: checked, its image pulled (and the pull told) when Docker does
    * not have it, made by the name given or one Docker chooses, and started when the spec says so.
    */
@@ -230,13 +316,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     const wrong = refusal(spec)
     if (wrong) throw new Refused(wrong)
     const image = spec.image.trim()
-    if (!images.has(image)) {
-      if (missing.has(image)) {
-        throw new Refused(`The image ${image} could not be pulled: pull access denied for ${image.split(':')[0]}, repository does not exist or may require 'docker login'`)
-      }
-      for (const current of [0, 24_000_000, 48_000_000]) emit('pulling', { image, status: current === 0 ? 'Pulling fs layer' : 'Downloading', current, total: 48_000_000 } satisfies Pulling)
-      images.add(image)
-    }
+    if (!images.some((i) => i.tags.includes(image))) pull(image)
     made += 1
     const name = spec.name.trim() || `quirky_${made}`
     if (containers.some((c) => c.name === name && c !== replacing)) {
@@ -255,7 +335,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     }
     for (const m of spec.mounts) {
       if (m.kind === 'volume' && m.source.trim() !== '' && !volumes.some((v) => v.name === m.source.trim())) {
-        volumes = [...volumes, { name: m.source.trim(), driver: 'local' }]
+        volumes = [...volumes, volume(m.source.trim())]
       }
     }
     specs.set(fresh.id, { ...spec, name, image })
@@ -323,15 +403,114 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         containers = containers.map((c) => (c === old ? fresh : c))
         return { container: fresh.id, overview: overview() }
       }),
-    networks: () =>
+    images: () =>
       answered(() => {
-        if (problem !== '') throw new Refused(problem)
-        return [...networks]
+        reachable()
+        return listedImages()
+      }),
+    pullImage: ({ image: name }) =>
+      answered(() => {
+        reachable()
+        const wanted = name.trim()
+        if (wanted === '') throw new Refused('Say which image to pull, like nginx:1.27.')
+        // what the backend says of a name that is no image's is what it says of a container's
+        const wrong = refusal({ ...specOf(container(wanted, wanted)), image: wanted })
+        if (wrong) throw new Refused(wrong)
+        pull(wanted)
+        return listedImages()
+      }),
+    removeImage: ({ image: id, force }) =>
+      answered(() => {
+        reachable()
+        const found = images.find((i) => i.id === id)
+        if (!found) throw new Refused(`No such image: ${id}`)
+        const users = madeFrom(found)
+        const running = users.find((c) => c.state === 'running')
+        if (running) throw new Refused(`conflict: unable to delete ${short(found.id)} (cannot be forced) - image is being used by running container ${short(running.id)}`)
+        if (users[0] && !force) throw new Refused(`conflict: unable to delete ${short(found.id)} (must be forced) - image is being used by stopped container ${short(users[0].id)}`)
+        images = images.filter((i) => i !== found)
+        return listedImages()
+      }),
+    pruneImages: () =>
+      answered(() => {
+        reachable()
+        const doomed = images.filter((i) => i.tags.length === 0 && madeFrom(i).length === 0)
+        images = images.filter((i) => !doomed.includes(i))
+        return { images: listedImages(), removed: doomed.length, space: doomed.reduce((sum, i) => sum + i.size, 0) }
       }),
     volumes: () =>
       answered(() => {
-        if (problem !== '') throw new Refused(problem)
-        return [...volumes].sort((a, b) => a.name.localeCompare(b.name))
+        reachable()
+        return listedVolumes()
+      }),
+    createVolume: ({ name, driver, labels }) =>
+      answered(() => {
+        reachable()
+        if (name !== '' && !NAME.test(name)) throw new Refused("A volume's name starts with a letter or a digit, and has only letters, digits, _, . and -.")
+        if (volumes.some((v) => v.name === name)) throw new Refused(`There is a volume named ${name} already.`)
+        if (labels.some((l) => l.name.trim() === '')) throw new Refused(`${labels.length === 1 ? 'Label' : 'A label'} has no name.`)
+        volumes = [...volumes, volume(name || `${'a'.repeat(56)}${String(volumes.length).padStart(8, '0')}`, { driver: driver || 'local' })]
+        return listedVolumes()
+      }),
+    removeVolume: ({ volume: name }) =>
+      answered(() => {
+        reachable()
+        const users = namesOf(mounting(name))
+        if (users.length > 0) throw new Refused(`The volume ${name} is used by ${pretty(users)}: Docker removes a volume only once no container uses it, running or not.`)
+        if (!volumes.some((v) => v.name === name)) throw new Refused(`get ${name}: no such volume`)
+        volumes = volumes.filter((v) => v.name !== name)
+        return listedVolumes()
+      }),
+    pruneVolumes: () =>
+      answered(() => {
+        reachable()
+        const doomed = volumes.filter((v) => mounting(v.name).length === 0)
+        volumes = volumes.filter((v) => !doomed.includes(v))
+        return { volumes: listedVolumes(), removed: doomed.map((v) => v.name).sort(), space: doomed.length * 24_000_000 }
+      }),
+    networks: () =>
+      answered(() => {
+        reachable()
+        return listedNetworks()
+      }),
+    createNetwork: ({ name, driver, subnet, gateway, internal, attachable }) =>
+      answered(() => {
+        reachable()
+        if (name.trim() === '') throw new Refused('Say what the network is called.')
+        if (!NAME.test(name.trim())) throw new Refused("A network's name starts with a letter or a digit, and has only letters, digits, _, . and -.")
+        if (subnet.trim() !== '' && !/^\d+\.\d+\.\d+\.\d+\/\d+$/.test(subnet.trim())) {
+          throw new Refused(`${subnet.trim()} is not a subnet. A subnet is an address and the size of its prefix, like 172.30.0.0/16.`)
+        }
+        if (gateway.trim() !== '' && subnet.trim() === '') throw new Refused("A gateway is an address in the network's subnet: say the subnet too.")
+        if (networks.some((n) => n.name === name.trim())) throw new Refused(`network with name ${name.trim()} already exists`)
+        if (driver === 'overlay') {
+          throw new Refused('This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.')
+        }
+        const next = 18 + networks.length
+        networks = [
+          ...networks,
+          network(name.trim(), {
+            driver: driver || 'bridge',
+            subnet: subnet.trim() || `172.${next}.0.0/16`,
+            gateway: gateway.trim() || (subnet.trim() ? subnet.trim().replace(/\.\d+\/\d+$/, '.1') : `172.${next}.0.1`),
+            internal,
+            attachable
+          })
+        ]
+        return listedNetworks()
+      }),
+    removeNetwork: ({ network: name }) =>
+      answered(() => {
+        reachable()
+        const found = networks.find((n) => n.name === name)
+        if (!found) throw new Refused(`network ${name} not found`)
+        if (found.predefined) throw new Refused(`${name} is Docker's own network: it cannot be removed.`)
+        const running = namesOf(on(name).filter((c) => c.state === 'running'))
+        if (running.length > 0) {
+          throw new Refused(`${pretty(running)} ${running.length === 1 ? 'runs' : 'run'} on the network ${name}: Docker removes a network only once no running container is on it.`)
+        }
+        networks = networks.filter((n) => n !== found)
+        return listedNetworks()
       }),
     startStack: onStack('start'),
     stopStack: onStack('stop'),
@@ -400,8 +579,17 @@ export function createFailingBackend(message: string): FakeBackend {
       remove: refuse,
       create: refuse,
       recreate: refuse,
-      networks: refuse,
+      images: refuse,
+      pullImage: refuse,
+      removeImage: refuse,
+      pruneImages: refuse,
       volumes: refuse,
+      createVolume: refuse,
+      removeVolume: refuse,
+      pruneVolumes: refuse,
+      networks: refuse,
+      createNetwork: refuse,
+      removeNetwork: refuse,
       startStack: refuse,
       stopStack: refuse,
       restartStack: refuse,

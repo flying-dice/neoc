@@ -5,7 +5,7 @@
   type Volume = VosApp.Containers.Volume
   import ContainerForm from './ContainerForm.svelte'
   import type { ContainerForm as Form } from '../lib/containers.svelte'
-  import { container } from '../lib/fakeApi'
+  import { OWN_NETWORKS, container, network, volume } from '../lib/fakeApi'
   import { blankDraft, blankEntry, blankMount, blankPort, type Draft } from '../lib/spec'
 
   interface Args {
@@ -20,16 +20,8 @@
   const onsave = fn<() => void>()
   const oncancel = fn<() => void>()
 
-  const NETWORKS: Network[] = [
-    { name: 'bridge', driver: 'bridge' },
-    { name: 'host', driver: 'host' },
-    { name: 'none', driver: 'null' },
-    { name: 'blog_default', driver: 'bridge' }
-  ]
-  const VOLUMES: Volume[] = [
-    { name: 'blog_db-data', driver: 'local' },
-    { name: 'site-data', driver: 'local' }
-  ]
+  const NETWORKS: Network[] = [...OWN_NETWORKS, network('blog_default')].map((n) => ({ ...n, containers: [] }))
+  const VOLUMES: Volume[] = [volume('blog_db-data'), volume('site-data')].map((v) => ({ ...v, containers: [] }))
   const SITE = container('site', 'nginx:1.27', 'running', { ports: ['8088:80'] })
 
   /** A form with everything a container can be made with filled in. */

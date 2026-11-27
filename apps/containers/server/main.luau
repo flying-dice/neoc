@@ -9,16 +9,19 @@
 -- they read the overview again.
 --
 -- A person makes containers here too (`_create`, from a spec the form fills in), changes one (`_recreate`: Docker
--- cannot change most of what a container was made with, so it is made again) and removes one. While an image is
--- pulled for them, the windows hear how it goes (`_pulling`).
+-- cannot change most of what a container was made with, so it is made again) and removes one. They pull, remove and
+-- prune Docker's images, and make, remove and prune its volumes and networks (`_images`, `_volume_create`, ...): each
+-- of those calls answers with its list as it now stands. While an image is pulled for them, the windows hear how it
+-- goes (`_pulling`).
 --
--- An agent can do what a person does most: see what runs (`list_containers`), read a container's logs
--- (`container_logs`), and start, stop and restart a container or a whole stack. Making, changing and removing are left
--- to the person. A tool
+-- An agent can do what a person does most: see what runs (`list_containers`) and what images, volumes and networks
+-- there are (`list_images`, `list_volumes`, `list_networks`), read a container's logs (`container_logs`), and start,
+-- stop and restart a container or a whole stack. Making, changing and removing are left to the person. A tool
 -- that changed something tells the windows itself, so they follow even while the watcher is between two Dockers. It
 -- serves on the RPC bus through the global `RPC`, typed by the generated `types/vos.d.luau`; the page's methods are
 -- private (`_overview`, `_start`, ...).
 local engine = require("./engine")
+local objects = require("./objects")
 local task = require("std:task")
 
 -- how long the windows are left alone after being told of a change, in seconds: Docker reports a restart as several
@@ -90,14 +93,96 @@ RPC.on_request("_recreate", function(params: containers_RecreateParams, ctx: vos
   return { container = made, overview = engine.overview() }
 end)
 
+-- the images, volumes and networks: each change answers with its list as it now stands
+local function images(ctx: vos_app_Context): { containers_Image }
+  local list, problem = objects.images()
+  return list or ctx:fail(problem or "Docker did not list its images.")
+end
+
+local function volumes(ctx: vos_app_Context): { containers_Volume }
+  local list, problem = objects.volumes()
+  return list or ctx:fail(problem or "Docker did not list its volumes.")
+end
+
+local function networks(ctx: vos_app_Context): { containers_Network }
+  local list, problem = objects.networks()
+  return list or ctx:fail(problem or "Docker did not list its networks.")
+end
+
 RPC.on_request("_networks", function(_params: {}, ctx: vos_app_Context): containers_NetworksResult
-  local networks, problem = engine.networks()
-  return networks or ctx:fail(problem or "Docker did not list its networks.")
+  return networks(ctx)
 end)
 
 RPC.on_request("_volumes", function(_params: {}, ctx: vos_app_Context): containers_VolumesResult
-  local volumes, problem = engine.volumes()
-  return volumes or ctx:fail(problem or "Docker did not list its volumes.")
+  return volumes(ctx)
+end)
+
+RPC.on_request(
+  "_volume_create",
+  function(params: containers_VolumeCreateParams, ctx: vos_app_Context): containers_VolumeCreateResult
+    local problem = objects.create_volume(params.name, params.driver, params.labels)
+    return if problem then ctx:fail(problem) else volumes(ctx)
+  end
+)
+
+RPC.on_request(
+  "_volume_remove",
+  function(params: containers_VolumeRemoveParams, ctx: vos_app_Context): containers_VolumeRemoveResult
+    local problem = objects.remove_volume(params.volume)
+    return if problem then ctx:fail(problem) else volumes(ctx)
+  end
+)
+
+RPC.on_request("_volumes_prune", function(_params: {}, ctx: vos_app_Context): containers_VolumesPruneResult
+  local removed, space, problem = objects.prune_volumes()
+  if not removed then
+    return ctx:fail(problem or "Docker did not prune its volumes.")
+  end
+  return { volumes = volumes(ctx), removed = removed, space = space or 0 }
+end)
+
+RPC.on_request(
+  "_network_create",
+  function(params: containers_NetworkCreateParams, ctx: vos_app_Context): containers_NetworkCreateResult
+    local problem = objects.create_network(params)
+    return if problem then ctx:fail(problem) else networks(ctx)
+  end
+)
+
+RPC.on_request(
+  "_network_remove",
+  function(params: containers_NetworkRemoveParams, ctx: vos_app_Context): containers_NetworkRemoveResult
+    local problem = objects.remove_network(params.network)
+    return if problem then ctx:fail(problem) else networks(ctx)
+  end
+)
+
+RPC.on_request("_images", function(_params: {}, ctx: vos_app_Context): containers_ImagesResult
+  return images(ctx)
+end)
+
+RPC.on_request(
+  "_image_pull",
+  function(params: containers_ImagePullParams, ctx: vos_app_Context): containers_ImagePullResult
+    local problem = engine.pull(params.image, pulling)
+    return if problem then ctx:fail(problem) else images(ctx)
+  end
+)
+
+RPC.on_request(
+  "_image_remove",
+  function(params: containers_ImageRemoveParams, ctx: vos_app_Context): containers_ImageRemoveResult
+    local problem = objects.remove_image(params.image, params.force == true)
+    return if problem then ctx:fail(problem) else images(ctx)
+  end
+)
+
+RPC.on_request("_images_prune", function(_params: {}, ctx: vos_app_Context): containers_ImagesPruneResult
+  local removed, space, problem = objects.prune_images()
+  if not removed then
+    return ctx:fail(problem or "Docker did not prune its images.")
+  end
+  return { images = images(ctx), removed = removed, space = space or 0 }
 end)
 
 RPC.on_request(
@@ -176,6 +261,18 @@ RPC.on_request(
     return { container = params.container, logs = logs.text, truncated = logs.truncated }
   end
 )
+
+RPC.on_request("list_images", function(_params: {}, ctx: vos_app_Context): containers_ListImagesResult
+  return { images = images(ctx) }
+end)
+
+RPC.on_request("list_volumes", function(_params: {}, ctx: vos_app_Context): containers_ListVolumesResult
+  return { volumes = volumes(ctx) }
+end)
+
+RPC.on_request("list_networks", function(_params: {}, ctx: vos_app_Context): containers_ListNetworksResult
+  return { networks = networks(ctx) }
+end)
 
 -- the tools that act on one container, and on one stack: each answers with what it did
 RPC.on_request(

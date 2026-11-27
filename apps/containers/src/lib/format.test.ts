@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { container } from './fakeApi'
-import { bytes, imageLabel, isUp, portLabel, restartLabel, runningSummary, stackSummary, stackTone, stateLabel, toneOf } from './format'
+import { bytes, count, day, imageLabel, imageName, isUp, listed, portLabel, restartLabel, runningSummary, shortId, stackSummary, stackTone, stateLabel, toneOf, usage } from './format'
 
 describe('a state', () => {
   test('reads as going, not going, in between or broken', () => {
@@ -75,5 +75,30 @@ describe('a number of bytes', () => {
     expect(bytes(512)).toBe('512 B')
     expect(bytes(12_345_678)).toBe('12.3 MB')
     expect(bytes(480_000_000)).toBe('480 MB')
+  })
+})
+
+describe('the images, volumes and networks', () => {
+  test('a day reads the same wherever the window is, and a date that is none is empty', () => {
+    expect(day(new Date(1_700_000_000 * 1000))).toBe('14 Nov 2023')
+    expect(day(new Date('2026-11-27T09:00:00Z'))).toBe('27 Nov 2026')
+    expect(day(new Date(''))).toBe('')
+  })
+
+  test('names, and how many containers use something, read as a sentence', () => {
+    expect(listed([])).toBe('')
+    expect(listed(['web'])).toBe('web')
+    expect(listed(['web', 'db', 'cache'])).toBe('web, db and cache')
+    expect(usage([])).toBe('Unused')
+    expect(usage(['web'])).toBe('In use by 1 container')
+    expect(usage(['web', 'db'])).toBe('In use by 2 containers')
+  })
+
+  test('an image is named by its first name, or as Docker names a dangling one, and its id is shortened as Docker does', () => {
+    expect(imageName({ tags: ['nginx:1.27', 'nginx:latest'] })).toBe('nginx:1.27')
+    expect(imageName({ tags: [] })).toBe('<none>:<none>')
+    expect(shortId(`sha256:${'ab'.repeat(32)}`)).toBe('abababababab')
+    expect(count(1, 'image')).toBe('1 image')
+    expect(count(0, 'volume')).toBe('0 volumes')
   })
 })

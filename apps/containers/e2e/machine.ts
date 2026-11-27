@@ -1,8 +1,8 @@
 /**
  * The machine the Containers journeys find in the fake Docker (`@vos/docker/fake-docker`): a Compose stack that is up,
- * one that is down, and a container on its own.
+ * one that is down, and a container on its own; beside their images, one no container was made from and a dangling one.
  */
-import type { Network, Seed } from '@vos/docker/fake-docker'
+import type { ImageSeed, Network, Seed } from '@vos/docker/fake-docker'
 
 /** Compose's labels of a service of a stack; `needs` is the service it waits for. */
 const compose = (stack: string, service: string, needs?: string): Record<string, string> => ({
@@ -30,3 +30,5 @@ export const NETWORKS: Network[] = [
   { name: 'blog_default', labels: { 'com.docker.compose.project': 'blog' } },
   { name: 'media_default', labels: { 'com.docker.compose.project': 'media' } }
 ]
+
+export const IMAGES: ImageSeed[] = [{ tags: ['redis:7'] }, { tags: [], size: 140_000_000 }]

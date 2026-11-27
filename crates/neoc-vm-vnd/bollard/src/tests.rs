@@ -172,9 +172,16 @@ impl Daemon {
                 "{\"status\":\"Pulling from library/nginx\",\"id\":\"1.27\"}\n{\"status\":\"Downloading\",\"id\":\"abc\",\"progressDetail\":{\"current\":5,\"total\":10}}\n{\"status\":\"Status: Downloaded newer image for nginx:1.27\"}\n",
             ),
             ("DELETE", "/images/nginx:1.27") => answer(200, &json!([{ "Untagged": "nginx:1.27" }])),
+            ("POST", "/images/prune") => answer(
+                200,
+                &json!({ "ImagesDeleted": [{ "Deleted": "sha256:222" }], "SpaceReclaimed": 2000 }),
+            ),
             ("GET", "/volumes") => answer(200, &json!({ "Volumes": [volume()], "Warnings": [] })),
             ("POST", "/volumes/create") => answer(201, &volume()),
             ("DELETE", "/volumes/data") => refusal(409, "volume is in use"),
+            ("POST", "/volumes/prune") => {
+                answer(200, &json!({ "VolumesDeleted": ["old"], "SpaceReclaimed": 4096 }))
+            }
             ("GET", "/networks") => {
                 answer(200, &json!([{ "Id": "n1", "Name": "bridge", "Driver": "bridge" }]))
             }
@@ -471,6 +478,32 @@ async fn the_daemon_a_containers_use_the_volumes_and_the_networks_are_read() {
     assert_eq!(filters_of(&daemon.request_to("/networks").target), Some(json!({ "driver": ["bridge"] })));
     let created: Json = serde_json::from_str(&daemon.request_to("/volumes/create").body).expect("JSON");
     assert_eq!(created, json!({ "Name": "data", "Driver": "local", "Labels": { "app": "web" } }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prune_sends_its_filters_and_answers_what_went_and_the_space_freed() {
+    let (daemon, host) = daemon().await;
+    let (): () = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        local images = assert(docker:prune_images())
+        assert(images.SpaceReclaimed == 2000 and images.ImagesDeleted[1].Deleted == "sha256:222")
+        local volumes = assert(docker:prune_volumes({ filters = { all = { "true" } } }))
+        assert(volumes.SpaceReclaimed == 4096 and volumes.VolumesDeleted[1] == "old")
+        "#,
+    )
+    .await;
+    let images = daemon.request_to("/images/prune");
+    assert_eq!(images.method, "POST");
+    assert!(!images.target.contains("filters"), "{}", images.target);
+    let volumes = daemon.request_to("/volumes/prune");
+    assert_eq!(volumes.method, "POST");
+    let (_, filters) =
+        url::form_urlencoded::parse(volumes.target.split_once('?').expect("query").1.as_bytes())
+            .find(|(key, _)| key == "filters")
+            .expect("filters");
+    assert_eq!(serde_json::from_str::<Json>(&filters).expect("JSON"), json!({ "all": ["true"] }));
 }
 
 // ---------------------------------------------------------------------------
@@ -889,7 +922,8 @@ async fn no_call_panics_on_hostile_input() {
                 "ping", "version", "info", "list_containers", "inspect_container", "create_container",
                 "start_container", "stop_container", "restart_container", "kill_container", "pause_container",
                 "unpause_container", "rename_container", "remove_container", "logs", "stats", "exec", "list_images", "pull_image",
-                "remove_image", "list_volumes", "create_volume", "remove_volume", "list_networks",
+                "remove_image", "prune_images", "list_volumes", "create_volume", "remove_volume", "prune_volumes",
+                "list_networks",
                 "create_network", "remove_network", "events",
             }
             for _, name in methods do

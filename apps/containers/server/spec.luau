@@ -16,6 +16,11 @@ local function hasNul(text: string): boolean
   return string.find(text, "\0", 1, true) ~= nil
 end
 
+-- Whether a name is one Docker takes for a container or a volume: two characters at least, by its own rule.
+function spec.isName(name: string): boolean
+  return string.match(name, NAME) ~= nil and #name >= 2
+end
+
 -- what is typed, without the spaces around it
 function spec.trim(text: string): string
   return string.match(text, "^%s*(.-)%s*$") :: string
@@ -210,6 +215,7 @@ local function isAddress(text: string): boolean
   end
   return string.find(text, ":", 1, true) ~= nil and not string.find(text, "[^%x:.]")
 end
+spec.isAddress = isAddress
 
 -- the n-th row of a list, as a sentence names it
 local function nth(kind: string, i: number, count: number): string
@@ -237,6 +243,8 @@ local function entries(list: { containers_Entry }, kind: string, what: string): 
   end
   return nil
 end
+-- What is wrong with a list of names and values (the environment, the labels), as a sentence that names the row.
+spec.entries = entries
 
 -- What is wrong with a spec, as a sentence; nothing when Docker can be asked for it.
 function spec.refused(asked: Spec): string?

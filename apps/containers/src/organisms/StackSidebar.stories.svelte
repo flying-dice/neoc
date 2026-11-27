@@ -4,12 +4,13 @@
   type Engine = VosApp.Containers.Engine
   type Stack = VosApp.Containers.Stack
   import StackSidebar from './StackSidebar.svelte'
-  import { ALL, stackScope, type Scope } from '../lib/containers.svelte'
-  import { CONTAINERS, stacksOf } from '../lib/fakeApi'
+  import { ALL, IMAGES, stackScope, type Scope } from '../lib/containers.svelte'
+  import { CONTAINERS, IMAGES as SOME_IMAGES, stacksOf } from '../lib/fakeApi'
 
   interface Args {
     engine: Engine
     total: number
+    counts: { images: number; volumes: number; networks: number }
     stacks: readonly Stack[]
     selected?: Scope
     draft: string
@@ -30,7 +31,7 @@
     title: 'Organisms/StackSidebar',
     component: StackSidebar,
     tags: ['autodocs'],
-    args: { engine: HERE, total: CONTAINERS.length, stacks: STACKS, selected: ALL, draft: '', onselect, ondraft, onconnect },
+    args: { engine: HERE, total: CONTAINERS.length, counts: { images: SOME_IMAGES.length, volumes: 6, networks: 5 }, stacks: STACKS, selected: ALL, draft: '', onselect, ondraft, onconnect },
     beforeEach: () => {
       onselect.mockClear()
       ondraft.mockClear()
@@ -56,6 +57,18 @@
     await expect(canvas.getByTestId('containers-stack-media')).toHaveProperty('subheading', '1 of 2 running')
     await expect(canvas.getByTestId('containers-engine')).toHaveTextContent('Docker 27.3.1')
     await expect(canvas.getByTestId('containers-engine')).toHaveTextContent('This machine')
+    await expect(canvas.getByTestId('containers-scope-images')).toHaveProperty('value', String(SOME_IMAGES.length))
+    await expect(canvas.getByTestId('containers-scope-networks')).toHaveAttribute('aria-label', 'Networks, 5')
+  }}
+/>
+
+<!-- Docker's images are shown: their row is marked. -->
+<Story
+  name="Images shown"
+  args={{ selected: IMAGES }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('containers-scope-images')).toHaveAttribute('selected', '')
+    await expect(canvas.getByTestId('containers-scope-all')).not.toHaveAttribute('selected')
   }}
 />
 
@@ -106,6 +119,8 @@
     await expect(onselect).toHaveBeenLastCalledWith(stackScope('blog'))
     await userEvent.click(canvas.getByTestId('containers-scope-all'))
     await expect(onselect).toHaveBeenLastCalledWith(ALL)
+    await userEvent.click(canvas.getByTestId('containers-scope-volumes'))
+    await expect(onselect).toHaveBeenLastCalledWith({ kind: 'volumes' })
     await userEvent.click(canvas.getByTestId('containers-choose'))
     await userEvent.click(canvas.getByTestId('containers-host-connect'))
     await expect(onconnect).toHaveBeenCalledTimes(1)

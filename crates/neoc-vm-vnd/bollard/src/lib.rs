@@ -93,8 +93,9 @@ pub mod bollard {
     use bollard::exec::StartExecResults;
     use bollard::models::{
         self, ContainerCreateBody, ContainerCreateResponse, ContainerInspectResponse, ContainerStatsResponse,
-        ContainerSummary, CreateImageInfo, EventMessage, ExecConfig, ImageDeleteResponseItem, ImageSummary,
-        Network, NetworkCreateRequest, NetworkCreateResponse, SystemInfo, SystemVersion, VolumeCreateRequest,
+        ContainerSummary, CreateImageInfo, EventMessage, ExecConfig, ImageDeleteResponseItem,
+        ImagePruneResponse, ImageSummary, Network, NetworkCreateRequest, NetworkCreateResponse, SystemInfo,
+        SystemVersion, VolumeCreateRequest, VolumePruneResponse,
     };
     use bollard::query_parameters as query;
     use bollard::{API_DEFAULT_VERSION, Docker};
@@ -694,6 +695,20 @@ pub mod bollard {
             Ok(Foreign(self.api().await?.remove_image(&image.0, Some(options), None).await?))
         }
 
+        /// Remove the images no container uses: only the dangling ones (untagged, `<none>`) unless
+        /// `filters = { dangling = { "false" } }`, which takes every unused one. Returns Docker's
+        /// `{ ImagesDeleted, SpaceReclaimed }`.
+        ///
+        /// ```luau
+        /// local docker = assert(bollard.connect())
+        /// local pruned = assert(docker:prune_images())
+        /// print(pruned.SpaceReclaimed, #(pruned.ImagesDeleted or {}))
+        /// ```
+        pub async fn prune_images(&self, opts: Filtered) -> Result<Foreign<ImagePruneResponse>, DockerError> {
+            let options = query::PruneImagesOptions { filters: opts.filters };
+            Ok(Foreign(self.api().await?.prune_images(Some(options)).await?))
+        }
+
         /// The volumes: `{ Volumes, Warnings }`, each volume with Docker's field names (`Name`, `Driver`,
         /// `Mountpoint`, `Labels`, ...).
         ///
@@ -724,6 +739,17 @@ pub mod bollard {
             let options = query::RemoveVolumeOptions { force: opts.force };
             self.api().await?.remove_volume(&name.0, Some(options)).await?;
             Ok(())
+        }
+
+        /// Remove the volumes no container uses, and their data with them: since Docker 23 only the anonymous ones
+        /// unless `filters = { all = { "true" } }`, which takes the named ones too. Returns Docker's
+        /// `{ VolumesDeleted, SpaceReclaimed }`.
+        pub async fn prune_volumes(
+            &self,
+            opts: Filtered,
+        ) -> Result<Foreign<VolumePruneResponse>, DockerError> {
+            let options = query::PruneVolumesOptions { filters: opts.filters };
+            Ok(Foreign(self.api().await?.prune_volumes(Some(options)).await?))
         }
 
         /// The networks, as Docker's list (`Id`, `Name`, `Driver`, `Scope`, `Labels`, ...).

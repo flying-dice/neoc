@@ -11,8 +11,29 @@ local time = require("std:time")
 
 local engine = {}
 
--- what changes the list of containers; the rest of what Docker reports (every health probe, every `exec`) does not
-local EVENTS = { "create", "start", "die", "destroy", "pause", "unpause", "rename", "health_status" }
+-- what changes the lists the windows show: a container's, an image's, a volume's and a network's comings and goings.
+-- The rest of what Docker reports (every health probe, every `exec`, a volume mounted as its container starts) does not
+local TYPES = { "container", "image", "volume", "network" }
+local EVENTS = {
+  "create",
+  "start",
+  "die",
+  "destroy",
+  "pause",
+  "unpause",
+  "rename",
+  "health_status",
+  "pull",
+  "tag",
+  "untag",
+  "delete",
+  "import",
+  "load",
+  "prune",
+  "connect",
+  "disconnect",
+  "remove",
+}
 
 local STATES: { [string]: containers_State } = {
   created = "created",
@@ -242,21 +263,13 @@ function engine.details(container: string): (containers_Details?, string?)
     nil
 end
 
--- Have the image, pulling it when Docker does not have it; `progress` hears how the pull goes.
-local function pulled(api: vnd_bollard_Client, image: string, progress: Progress): string?
-  local tagged = spec.tagged(image)
-  local images, err = api:list_images { filters = { reference = { tagged } } }
-  if not images then
-    return sentence(err)
-  end
-  if #images > 0 then
-    return nil
-  end
+-- Pull an image from its registry, newer or not; `progress` hears how the pull goes.
+local function pull(image: string, progress: Progress): string?
   local puller, unreachable = docker.puller()
   if not puller then
     return unreachable
   end
-  local pull = puller:pull_image(tagged)
+  local steps = puller:pull_image(spec.tagged(image))
   -- what is downloaded of each layer, by its id
   local layers: { [string]: Layer } = {}
   local told: typeof(time.now())? = nil
@@ -274,7 +287,7 @@ local function pulled(api: vnd_bollard_Client, image: string, progress: Progress
   end
   -- the pull runs as its progress is read: an image that cannot be pulled is the error of a step
   while true do
-    local step, step_err = pull:next()
+    local step, step_err = steps:next()
     local refused = step and step.errorDetail and step.errorDetail.message
     if step_err or refused then
       return `The image {image} could not be pulled: {if refused then refused else sentence(step_err)}`
@@ -297,6 +310,31 @@ local function pulled(api: vnd_bollard_Client, image: string, progress: Progress
     end
     tell(status)
   end
+end
+
+-- Have the image, pulling it when Docker does not have it; `progress` hears how the pull goes.
+local function pulled(api: vnd_bollard_Client, image: string, progress: Progress): string?
+  local images, err = api:list_images { filters = { reference = { spec.tagged(image) } } }
+  if not images then
+    return sentence(err)
+  end
+  if #images > 0 then
+    return nil
+  end
+  return pull(image, progress)
+end
+
+-- Pull an image by its name, as `docker pull` does: whether Docker has it or not, for a newer one of that name.
+-- Answers with why it could not be pulled, or with nothing.
+function engine.pull(image: string, progress: Progress): string?
+  local name = spec.trim(image)
+  if name == "" then
+    return "Say which image to pull, like nginx:1.27."
+  end
+  if not spec.isImage(name) then
+    return `{name} is not the name of an image. An image is named like nginx, nginx:1.27 or ghcr.io/owner/app:1.0.`
+  end
+  return pull(name, progress)
 end
 
 -- Make a container from a spec Docker can be asked for, named `name` (nil: Docker chooses), and start it when the
@@ -408,48 +446,6 @@ function engine.remove(container: string, force: boolean, volumes: boolean): str
   return if err then sentence(err) else nil
 end
 
--- Docker's networks, by name.
-function engine.networks(): ({ containers_Network }?, string?)
-  local api, problem = docker.reader()
-  if not api then
-    return nil, problem
-  end
-  local list, err = api:list_networks()
-  if not list then
-    return nil, sentence(err)
-  end
-  local networks: { containers_Network } = {}
-  for _, network in list do
-    if network.Name then
-      table.insert(networks, { name = network.Name, driver = network.Driver or "" })
-    end
-  end
-  table.sort(networks, function(a, b)
-    return a.name < b.name
-  end)
-  return networks, nil
-end
-
--- Docker's volumes, by name.
-function engine.volumes(): ({ containers_Volume }?, string?)
-  local api, problem = docker.reader()
-  if not api then
-    return nil, problem
-  end
-  local list, err = api:list_volumes()
-  if not list then
-    return nil, sentence(err)
-  end
-  local volumes: { containers_Volume } = {}
-  for _, volume in list.Volumes do
-    table.insert(volumes, { name = volume.Name, driver = volume.Driver })
-  end
-  table.sort(volumes, function(a, b)
-    return a.name < b.name
-  end)
-  return volumes, nil
-end
-
 -- The end of what a container wrote, its output and its errors together in the order Docker has them.
 function engine.logs(container: string, tail: number?): (containers_Logs?, string?)
   local logs, problem = docker.logs(container, tail)
@@ -462,7 +458,7 @@ end
 -- Watch Docker for as long as the app is loaded, and call `changed` whenever what `overview` answers may be
 -- different. It never returns: run it in a task.
 function engine.watch(changed: () -> ())
-  docker.watch({ type = { "container" }, event = EVENTS }, changed)
+  docker.watch({ type = TYPES, event = EVENTS }, changed)
 end
 
 return engine

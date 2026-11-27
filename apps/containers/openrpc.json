@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Containers",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "methods": [
     {
@@ -228,7 +228,7 @@
     },
     {
       "name": "_networks",
-      "summary": "Docker's networks, by name: what a container can be put on.",
+      "summary": "Docker's networks, by name, each with the containers on it: what a container can be put on.",
       "params": [],
       "result": {
         "name": "networks",
@@ -242,13 +242,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+          "message": "Docker cannot be reached, or refused: the message says which."
         }
       ]
     },
     {
       "name": "_volumes",
-      "summary": "Docker's volumes, by name: what a container can mount.",
+      "summary": "Docker's volumes, by name, each with the containers that use it: what a container can mount.",
       "params": [],
       "result": {
         "name": "volumes",
@@ -262,7 +262,320 @@
       "errors": [
         {
           "code": -32010,
-          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_volume_create",
+      "summary": "Make a volume, and answer with the volumes there are now. A name another volume has is refused.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "Its name; empty for one Docker makes up.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "driver",
+          "required": true,
+          "description": "The driver that keeps it; empty for `local`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "labels",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "volumes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Volume"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "What was asked for is not a volume Docker can make (the message says what is wrong), or Docker cannot be reached or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_volume_remove",
+      "summary": "Remove a volume, and the data in it. One a container uses, running or not, is refused, naming the containers.",
+      "params": [
+        {
+          "name": "volume",
+          "required": true,
+          "description": "The name of one of the volumes of `_volumes`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      ],
+      "result": {
+        "name": "volumes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Volume"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_volumes_prune",
+      "summary": "Remove every volume no container uses, named or not, and the data in them.",
+      "params": [],
+      "result": {
+        "name": "pruned",
+        "schema": {
+          "$ref": "#/components/schemas/VolumesPruned"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_network_create",
+      "summary": "Make a network, and answer with the networks there are now.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "driver",
+          "required": true,
+          "description": "`bridge`, `overlay`, `macvlan`, `ipvlan`, or a plugin's; empty for `bridge`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "subnet",
+          "required": true,
+          "description": "The addresses it gives out (`172.30.0.0/16`); empty for Docker to choose.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "gateway",
+          "required": true,
+          "description": "Its gateway, an address in `subnet`; empty for Docker to choose.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "internal",
+          "required": true,
+          "description": "Its containers reach each other, not the world.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "attachable",
+          "required": true,
+          "description": "A container can join it by hand (a swarm network).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "labels",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "networks",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Network"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "What was asked for is not a network Docker can make (the message says what is wrong), or Docker cannot be reached or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_network_remove",
+      "summary": "Remove a network. Docker's own cannot be removed, nor one a running container is on.",
+      "params": [
+        {
+          "name": "network",
+          "required": true,
+          "description": "The name of one of the networks of `_networks`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      ],
+      "result": {
+        "name": "networks",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Network"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_images",
+      "summary": "The images Docker has, each with the containers made from it.",
+      "params": [],
+      "result": {
+        "name": "images",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Image"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_image_pull",
+      "summary": "Pull an image from its registry, newer or not (`_pulling` tells how that goes), and answer with the images there are now.",
+      "params": [
+        {
+          "name": "image",
+          "required": true,
+          "description": "Its name: `nginx`, `nginx:1.27`, `ghcr.io/owner/app:1.0`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      ],
+      "result": {
+        "name": "images",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Image"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "That is not the name of an image, the registry does not have it, or Docker cannot be reached or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_image_remove",
+      "summary": "Remove an image, with all its names. One a container was made from only when `force`, and never one a running container was made from.",
+      "params": [
+        {
+          "name": "image",
+          "required": true,
+          "description": "The id of one of the images of `_images`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "force",
+          "required": false,
+          "description": "Remove it though a stopped container was made from it.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "images",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Image"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_images_prune",
+      "summary": "Remove the dangling images: those with no name that no container was made from.",
+      "params": [],
+      "result": {
+        "name": "pruned",
+        "schema": {
+          "$ref": "#/components/schemas/ImagesPruned"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, or refused: the message says which."
         }
       ]
     },
@@ -525,6 +838,78 @@
       }
     },
     {
+      "name": "list_images",
+      "summary": "List the images",
+      "x-readOnly": true,
+      "description": "Every image Docker has: its id, its names (`nginx:1.27`; none for a dangling one), its size in bytes, when it was built (seconds since 1970) and the names of the containers made from it.",
+      "params": [],
+      "result": {
+        "name": "images",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "images": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Image"
+              }
+            }
+          },
+          "required": [
+            "images"
+          ]
+        }
+      }
+    },
+    {
+      "name": "list_volumes",
+      "summary": "List the volumes",
+      "x-readOnly": true,
+      "description": "Every volume Docker has: its name, driver, where its data is, when it was made and the names of the containers that mount it.",
+      "params": [],
+      "result": {
+        "name": "volumes",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "volumes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Volume"
+              }
+            }
+          },
+          "required": [
+            "volumes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "list_networks",
+      "summary": "List the networks",
+      "x-readOnly": true,
+      "description": "Every network Docker has: its name, driver, scope, subnet and gateway, whether it is internal or attachable, whether it is one of Docker's own, and the names of the containers on it.",
+      "params": [],
+      "result": {
+        "name": "networks",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "networks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Network"
+              }
+            }
+          },
+          "required": [
+            "networks"
+          ]
+        }
+      }
+    },
+    {
       "name": "start_container",
       "summary": "Start a container",
       "description": "Start a stopped container, by its name.",
@@ -733,7 +1118,7 @@
     },
     {
       "name": "changed",
-      "summary": "Docker changed, or a tool changed something: the open windows read the overview again.",
+      "summary": "Docker changed (a container, an image, a volume or a network), or a tool changed something: the open windows read again what they show.",
       "params": []
     }
   ],
@@ -1201,24 +1586,62 @@
       },
       "Network": {
         "type": "object",
-        "description": "A network of Docker's.",
+        "description": "A network of Docker's, and the containers on it.",
         "properties": {
           "name": {
             "type": "string"
           },
           "driver": {
             "type": "string",
-            "description": "`bridge`, `host`, `overlay`, ..."
+            "description": "`bridge`, `host`, `overlay`, `macvlan`, ..."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`local`: this machine only; `swarm`: every node of a swarm."
+          },
+          "subnet": {
+            "type": "string",
+            "description": "The addresses it gives out, as its IPAM has them (`172.18.0.0/16`); several are joined by `, `. Empty when Docker chose none."
+          },
+          "gateway": {
+            "type": "string",
+            "description": "Its gateway, as its IPAM has it; several are joined by `, `. Empty when Docker chose none."
+          },
+          "internal": {
+            "type": "boolean",
+            "description": "Its containers reach each other, not the world."
+          },
+          "attachable": {
+            "type": "boolean",
+            "description": "A container can join it by hand (a swarm network)."
+          },
+          "predefined": {
+            "type": "boolean",
+            "description": "One of Docker's own (`bridge`, `host`, `none`): every Docker has them, and none can be removed."
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the containers put on it, running or not."
           }
         },
         "required": [
           "name",
-          "driver"
+          "driver",
+          "scope",
+          "subnet",
+          "gateway",
+          "internal",
+          "attachable",
+          "predefined",
+          "containers"
         ]
       },
       "Volume": {
         "type": "object",
-        "description": "A volume of Docker's.",
+        "description": "A volume of Docker's, and the containers that use it.",
         "properties": {
           "name": {
             "type": "string"
@@ -1226,11 +1649,121 @@
           "driver": {
             "type": "string",
             "description": "`local`, or a plugin's."
+          },
+          "mountpoint": {
+            "type": "string",
+            "description": "Where its data is on the machine Docker runs on."
+          },
+          "created": {
+            "type": "string",
+            "description": "When it was made, as Docker says (RFC 3339); empty when Docker does not say."
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the containers that mount it, running or not."
           }
         },
         "required": [
           "name",
-          "driver"
+          "driver",
+          "mountpoint",
+          "created",
+          "containers"
+        ]
+      },
+      "Image": {
+        "type": "object",
+        "description": "An image Docker has, and the containers made from it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Docker's id: `sha256:` and 64 hex digits."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its names (`nginx:1.27`); none for a dangling image, which a newer image of its name took the name of."
+          },
+          "size": {
+            "type": "number",
+            "description": "How much of the disk it takes, in bytes."
+          },
+          "created": {
+            "type": "number",
+            "description": "When it was built, in seconds since 1970."
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the containers made from it, running or not."
+          }
+        },
+        "required": [
+          "id",
+          "tags",
+          "size",
+          "created",
+          "containers"
+        ]
+      },
+      "ImagesPruned": {
+        "type": "object",
+        "description": "What a prune of the dangling images removed, and the images there are now.",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Image"
+            }
+          },
+          "removed": {
+            "type": "number",
+            "description": "How many images went."
+          },
+          "space": {
+            "type": "number",
+            "description": "How much of the disk was freed, in bytes."
+          }
+        },
+        "required": [
+          "images",
+          "removed",
+          "space"
+        ]
+      },
+      "VolumesPruned": {
+        "type": "object",
+        "description": "What a prune of the unused volumes removed, and the volumes there are now.",
+        "properties": {
+          "volumes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Volume"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the volumes that went, with their data."
+          },
+          "space": {
+            "type": "number",
+            "description": "How much of the disk was freed, in bytes."
+          }
+        },
+        "required": [
+          "volumes",
+          "removed",
+          "space"
         ]
       }
     }

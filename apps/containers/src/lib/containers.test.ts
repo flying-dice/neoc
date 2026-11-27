@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { ALL, Containers, stackScope } from './containers.svelte'
-import { CONTAINERS, container, createFailingBackend, createFakeBackend, type FakeBackend } from './fakeApi'
+import { ALL, Containers, IMAGES, NETWORKS, VOLUMES, stackScope } from './containers.svelte'
+import { CONTAINERS, container, createFailingBackend, createFakeBackend, image, type FakeBackend } from './fakeApi'
 import { blankEntry, blankMount, blankPort } from './spec'
 
 /** A window on a fake backend, loaded and listening. */
@@ -244,7 +244,7 @@ describe('the form', () => {
     expect(plain(containers.form)).toMatchObject({ mode: 'new', of: null, failure: null, saving: false })
     expect(plain(containers.form?.draft)).toMatchObject({ image: '', network: 'bridge', restart: 'no', start: true, ports: [], mounts: [] })
     expect(containers.savable).toBe(false)
-    expect(containers.networks.map((n) => n.name)).toEqual(['bridge', 'host', 'none', 'blog_default', 'media_default'])
+    expect(containers.networks.map((n) => n.name)).toEqual(['blog_default', 'bridge', 'host', 'media_default', 'none'])
     expect(containers.volumes.map((v) => v.name)).toContain('pihole-data')
   })
 
@@ -399,5 +399,222 @@ describe('choosing another Docker', () => {
     expect(containers.failure).toContain('must start with unix:///')
     expect(containers.hostDraft).toBe('nas.lan')
     expect(containers.engine.host).toBe('')
+  })
+})
+
+describe('the images', () => {
+  const imageNamed = (containers: Containers, tag: string) => {
+    const found = containers.resources.images.find((i) => i.tags.includes(tag))
+    if (!found) throw new Error(`no image called ${tag}`)
+    return found
+  }
+
+  test('are read with the window, each with the containers made from it, the dangling one last', async () => {
+    const containers = await opened()
+    containers.select(IMAGES)
+    expect(containers.title).toBe('Images')
+    const images = containers.resources.images
+    expect(images.map((i) => i.tags[0] ?? '<none>')).toEqual([
+      'alpine:3.20',
+      'ghost:5',
+      'jellyfin/jellyfin:10.9',
+      'linuxserver/ffmpeg:7',
+      'pihole/pihole:2024.07.0',
+      'postgres:16',
+      'redis:7',
+      '<none>'
+    ])
+    expect(imageNamed(containers, 'postgres:16').containers).toEqual(['blog-db-1'])
+    expect(imageNamed(containers, 'redis:7').containers).toEqual([])
+  })
+
+  test('are pulled by name, with the pull told as it goes, and the name is left empty for the next', async () => {
+    const backend = createFakeBackend({ pace: 2 })
+    const containers = await opened(backend)
+    // what the list holds of the pull each time the backend tells how it goes (the window hears it first)
+    const told: (number | undefined)[] = []
+    backend.events.on('pulling', () => told.push(containers.resources.pull.progress?.current))
+    containers.resources.pull.reference = ' nginx:1.27 '
+    const pulling = containers.resources.pullImage()
+    expect(containers.resources.pull.busy).toBe(true)
+    await pulling
+    expect(told).toEqual([0, 24_000_000, 48_000_000])
+    expect(containers.resources.pull).toMatchObject({ reference: '', busy: false, progress: null, failure: null })
+    expect(imageNamed(containers, 'nginx:1.27').size).toBe(48_000_000)
+  })
+
+  test("that cannot be pulled keep the name typed, with the backend's reason", async () => {
+    const containers = await opened(createFakeBackend({ missingImages: ['nosuch/app:1'] }))
+    containers.resources.pull.reference = 'nosuch/app:1'
+    await containers.resources.pullImage()
+    expect(containers.resources.pull.failure).toContain('The image nosuch/app:1 could not be pulled')
+    expect(containers.resources.pull.reference).toBe('nosuch/app:1')
+    containers.resources.pull.reference = 'Not An Image'
+    await containers.resources.pullImage()
+    expect(containers.resources.pull.failure).toContain('is not the name of an image')
+  })
+
+  test('one no container was made from is removed after the question', async () => {
+    const containers = await opened()
+    containers.resources.askImage(imageNamed(containers, 'redis:7'))
+    expect(plain(containers.resources.removal)).toMatchObject({ kind: 'image', name: 'redis:7', users: [], force: false })
+    await containers.resources.remove()
+    expect(containers.resources.removal).toBeNull()
+    expect(containers.resources.images.some((i) => i.tags.includes('redis:7'))).toBe(false)
+  })
+
+  test("one a stopped container was made from goes only when forced; one a running container runs, not even then", async () => {
+    const containers = await opened()
+    containers.resources.askImage(imageNamed(containers, 'alpine:3.20'))
+    await containers.resources.remove()
+    expect(containers.resources.removal?.failure).toContain('(must be forced) - image is being used by stopped container')
+    containers.resources.removal!.force = true
+    await containers.resources.remove()
+    expect(containers.resources.removal).toBeNull()
+    containers.resources.askImage(imageNamed(containers, 'postgres:16'))
+    containers.resources.removal!.force = true
+    await containers.resources.remove()
+    expect(containers.resources.removal?.failure).toContain('(cannot be forced)')
+  })
+
+  test('the dangling ones are pruned, and the window says what that freed', async () => {
+    const containers = await opened()
+    await containers.resources.prune('images')
+    expect(containers.resources.report).toEqual({ kind: 'images', text: 'Removed 1 dangling image, and freed 140 MB.' })
+    expect(containers.resources.images.every((i) => i.tags.length > 0)).toBe(true)
+    await containers.resources.prune('images')
+    expect(containers.resources.report?.text).toBe('There were no dangling images.')
+    // what the prune said goes when the list is left
+    containers.select(ALL)
+    expect(containers.resources.report).toBeNull()
+  })
+
+  test('make a new container from one: the form, with its image filled in', async () => {
+    const containers = await opened()
+    containers.select(IMAGES)
+    await containers.compose(imageNamed(containers, 'redis:7').tags[0])
+    expect(containers.form?.draft.image).toBe('redis:7')
+    expect(containers.form?.mode).toBe('new')
+  })
+
+  test('are read again when Docker changes, as the containers are', async () => {
+    const backend = createFakeBackend({ images: [image(['alpine:3.20'])] })
+    let reads = 0
+    const images = backend.rpc.images
+    backend.rpc.images = () => {
+      reads += 1
+      return images()
+    }
+    const containers = await opened(backend)
+    expect(reads).toBe(1)
+    expect(containers.resources.images).toHaveLength(1)
+    backend.emit('changed')
+    await until(() => reads === 2)
+  })
+})
+
+describe('the volumes', () => {
+  test('are read with the containers that use them', async () => {
+    const containers = await opened()
+    containers.select(VOLUMES)
+    expect(containers.title).toBe('Volumes')
+    expect(containers.resources.volumes.find((v) => v.name === 'pihole-data')).toMatchObject({ driver: 'local', containers: ['pihole'] })
+  })
+
+  test('one is made with its name, driver and labels, an empty label row left out', async () => {
+    const containers = await opened()
+    containers.resources.composeVolume()
+    const form = containers.resources.volumeForm!
+    expect(plain(form.draft)).toEqual({ name: '', driver: 'local', labels: [] })
+    expect(containers.resources.savable).toBe(true)
+    form.draft.name = 'cache'
+    form.draft.labels.push({ ...blankEntry(), name: 'team', value: 'web' }, blankEntry())
+    await containers.resources.save()
+    expect(containers.resources.volumeForm).toBeNull()
+    expect(containers.resources.volumes.find((v) => v.name === 'cache')).toMatchObject({ containers: [] })
+  })
+
+  test("a name another volume has is refused, and the form stays with the backend's reason", async () => {
+    const containers = await opened()
+    containers.resources.composeVolume()
+    containers.resources.volumeForm!.draft.name = 'pihole-data'
+    await containers.resources.save()
+    expect(containers.resources.volumeForm?.failure).toBe('There is a volume named pihole-data already.')
+  })
+
+  test('one a container uses is refused in words that name it; an unused one goes', async () => {
+    const containers = await opened()
+    const used = containers.resources.volumes.find((v) => v.name === 'pihole-data')!
+    containers.resources.askVolume(used)
+    expect(containers.resources.removal?.users).toEqual(['pihole'])
+    await containers.resources.remove()
+    expect(containers.resources.removal?.failure).toBe('The volume pihole-data is used by pihole: Docker removes a volume only once no container uses it, running or not.')
+    containers.resources.removal = null
+    containers.resources.composeVolume()
+    containers.resources.volumeForm!.draft.name = 'spare'
+    await containers.resources.save()
+    containers.resources.askVolume(containers.resources.volumes.find((v) => v.name === 'spare')!)
+    await containers.resources.remove()
+    expect(containers.resources.volumes.some((v) => v.name === 'spare')).toBe(false)
+  })
+
+  test('the unused ones are pruned with their data, and the window says which', async () => {
+    const containers = await opened()
+    containers.resources.composeVolume()
+    containers.resources.volumeForm!.draft.name = 'spare'
+    await containers.resources.save()
+    await containers.resources.prune('volumes')
+    expect(containers.resources.report).toEqual({ kind: 'volumes', text: 'Deleted spare with its data, and freed 24.0 MB.' })
+    expect(containers.resources.volumes.every((v) => v.containers.length > 0)).toBe(true)
+  })
+})
+
+describe('the networks', () => {
+  test("are read with their addresses and the containers on them; Docker's own are said to be", async () => {
+    const containers = await opened()
+    containers.select(NETWORKS)
+    expect(containers.title).toBe('Networks')
+    expect(containers.resources.networks.find((n) => n.name === 'blog_default')).toMatchObject({
+      subnet: '172.18.0.0/16',
+      gateway: '172.18.0.1',
+      predefined: false,
+      containers: ['blog-db-1', 'blog-web-1']
+    })
+    expect(containers.resources.networks.filter((n) => n.predefined).map((n) => n.name)).toEqual(['bridge', 'host', 'none'])
+  })
+
+  test('one is made with a subnet, a gateway and its switches, and can be put a container on', async () => {
+    const containers = await opened()
+    containers.resources.composeNetwork()
+    expect(containers.resources.savable).toBe(false)
+    const form = containers.resources.networkForm!
+    Object.assign(form.draft, { name: 'backend', subnet: '172.30.0.0/16', gateway: '172.30.0.1', internal: true })
+    expect(containers.resources.savable).toBe(true)
+    await containers.resources.save()
+    expect(containers.resources.networkForm).toBeNull()
+    expect(containers.resources.networks.find((n) => n.name === 'backend')).toMatchObject({ subnet: '172.30.0.0/16', gateway: '172.30.0.1', internal: true })
+    await containers.compose()
+    expect(containers.networks.map((n) => n.name)).toContain('backend')
+  })
+
+  test("a subnet that is none is refused, in the backend's words", async () => {
+    const containers = await opened()
+    containers.resources.composeNetwork()
+    Object.assign(containers.resources.networkForm!.draft, { name: 'backend', subnet: 'everything' })
+    await containers.resources.save()
+    expect(containers.resources.networkForm?.failure).toContain('everything is not a subnet')
+  })
+
+  test("Docker's own are not asked about; one a running container is on is refused, naming it", async () => {
+    const containers = await opened()
+    containers.resources.askNetwork(containers.resources.networks.find((n) => n.name === 'bridge')!)
+    expect(containers.resources.removal).toBeNull()
+    containers.resources.askNetwork(containers.resources.networks.find((n) => n.name === 'blog_default')!)
+    await containers.resources.remove()
+    expect(containers.resources.removal?.failure).toBe('blog-db-1 and blog-web-1 run on the network blog_default: Docker removes a network only once no running container is on it.')
+    await containers.actOnStack(stackNamed(containers, 'blog'), 'stop')
+    await containers.resources.remove()
+    expect(containers.resources.removal).toBeNull()
+    expect(containers.resources.networks.some((n) => n.name === 'blog_default')).toBe(false)
   })
 })

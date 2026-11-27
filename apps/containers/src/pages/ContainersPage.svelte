@@ -1,11 +1,17 @@
-<!-- @page ContainersPage — the whole app: the stacks beside the containers of the one that is shown (or one of the two in a narrow window), a container looked at in their place, the form a container is made or changed in, the question before one is removed, and what to do when Docker cannot be reached; driven by one window's Containers state -->
+<!-- @page ContainersPage — the whole app: the sidebar beside what it shows (or one of the two in a narrow window): the containers of every stack or one, or Docker's images, volumes or networks; a container looked at in their place, the forms a container, a volume or a network is made in, the questions before one is removed, and what to do when Docker cannot be reached; driven by one window's Containers state -->
 <script lang="ts">
   import ContainerForm from '../organisms/ContainerForm.svelte'
   import ContainerInspector from '../organisms/ContainerInspector.svelte'
   import ContainerList from '../organisms/ContainerList.svelte'
   import { EngineDown } from '@vos/docker'
+  import ImageList from '../organisms/ImageList.svelte'
+  import NetworkForm from '../organisms/NetworkForm.svelte'
+  import NetworkList from '../organisms/NetworkList.svelte'
   import RemoveContainer from '../organisms/RemoveContainer.svelte'
+  import RemoveResource from '../organisms/RemoveResource.svelte'
   import StackSidebar from '../organisms/StackSidebar.svelte'
+  import VolumeForm from '../organisms/VolumeForm.svelte'
+  import VolumeList from '../organisms/VolumeList.svelte'
   import type { Containers } from '../lib/containers.svelte'
   import { isUp } from '../lib/format'
 
@@ -22,6 +28,9 @@
   let narrow = $state(false)
   const engine = $derived(containers.engine)
   const inspected = $derived(containers.inspected)
+  const resources = $derived(containers.resources)
+  const scope = $derived(containers.scope)
+  const reportOf = (kind: 'images' | 'volumes'): string | undefined => (resources.report?.kind === kind ? resources.report.text : undefined)
   // a Docker that cannot be reached is said in the middle of the window, whichever column was in front
   const browsing = $derived(containers.browsing && (engine.reachable || !containers.loaded))
 
@@ -44,6 +53,7 @@
       <StackSidebar
         {engine}
         total={containers.all.length}
+        counts={{ images: resources.images.length, volumes: resources.volumes.length, networks: resources.networks.length }}
         stacks={containers.stacks}
         selected={narrow ? undefined : containers.scope}
         draft={containers.hostDraft}
@@ -80,6 +90,26 @@
           onremove={() => void containers.remove()}
           oncancel={() => (containers.removal = null)}
         />
+      {:else if resources.volumeForm}
+        <VolumeForm
+          bind:form={resources.volumeForm}
+          savable={resources.savable}
+          onsave={() => void resources.save()}
+          oncancel={() => resources.cancel()}
+        />
+      {:else if resources.networkForm}
+        <NetworkForm
+          bind:form={resources.networkForm}
+          savable={resources.savable}
+          onsave={() => void resources.save()}
+          oncancel={() => resources.cancel()}
+        />
+      {:else if resources.removal}
+        <RemoveResource
+          bind:removal={resources.removal}
+          onremove={() => void resources.remove()}
+          oncancel={() => (resources.removal = null)}
+        />
       {:else if inspected}
         <ContainerInspector
           container={inspected}
@@ -93,6 +123,38 @@
           onedit={() => void containers.open(inspected, 'edit')}
           onduplicate={() => void containers.open(inspected, 'duplicate')}
           onremove={() => containers.ask(inspected)}
+        />
+      {:else if scope.kind === 'images'}
+        <ImageList
+          images={resources.images}
+          bind:pull={resources.pull}
+          pruning={resources.pruning('images')}
+          report={reportOf('images')}
+          back={narrow}
+          onback={() => containers.back()}
+          onpull={() => void resources.pullImage()}
+          onremove={(image) => resources.askImage(image)}
+          onnew={(image) => void containers.compose(image.tags[0] ?? '')}
+          onprune={() => void resources.prune('images')}
+        />
+      {:else if scope.kind === 'volumes'}
+        <VolumeList
+          volumes={resources.volumes}
+          pruning={resources.pruning('volumes')}
+          report={reportOf('volumes')}
+          back={narrow}
+          onback={() => containers.back()}
+          onremove={(volume) => resources.askVolume(volume)}
+          onnew={() => resources.composeVolume()}
+          onprune={() => void resources.prune('volumes')}
+        />
+      {:else if scope.kind === 'networks'}
+        <NetworkList
+          networks={resources.networks}
+          back={narrow}
+          onback={() => containers.back()}
+          onremove={(network) => resources.askNetwork(network)}
+          onnew={() => resources.composeNetwork()}
         />
       {:else}
         <ContainerList

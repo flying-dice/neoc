@@ -315,3 +315,124 @@
     await expect(canvas.queryByTestId('containers-down')).toBeNull()
   }}
 />
+
+<!-- Docker's images, a list of their own beside the containers: one is pulled by its name, with how the pull goes. -->
+<Story
+  name="Images"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-images')
+    await says(canvas, 'containers-title', 'Images')
+    await says(canvas, 'containers-image-postgres:16-note', 'In use by 1 container: blog-db-1')
+  }}
+/>
+
+<!-- An image is pulled by its name, and listed once it is there. -->
+<Story
+  name="Pulling an image"
+  tags={['play-only']}
+  args={{ backend: () => createFakeBackend({ pace: 20 }) }}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-images')
+    await appears(canvas, 'containers-pull-image')
+    await userEvent.type(input(canvas, 'containers-pull-image'), 'nginx:1.27')
+    await userEvent.click(canvas.getByTestId('containers-pull'))
+    await appears(canvas, 'containers-image-nginx:1.27')
+  }}
+/>
+
+<!-- A container is made from an image: the form, with the image filled in. -->
+<Story
+  name="A container from an image"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-images')
+    await appears(canvas, 'containers-image-redis:7-new')
+    await userEvent.click(canvas.getByTestId('containers-image-redis:7-new'))
+    await appears(canvas, 'containers-form')
+    await waitFor(() => expect(input(canvas, 'containers-form-image').value).toBe('redis:7'))
+  }}
+/>
+
+<!-- The dangling images are pruned after a second look, and the window says what that freed. -->
+<Story
+  name="Pruning images"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-images')
+    await appears(canvas, 'containers-images-prune')
+    await userEvent.click(canvas.getByTestId('containers-images-prune'))
+    await userEvent.click(alertButton(canvas.getByTestId('containers-images-prune-confirm'), 'action'))
+    await says(canvas, 'containers-images-report', 'Removed 1 dangling image, and freed 140 MB.')
+  }}
+/>
+
+<!-- Docker's volumes, each with the containers that use it. -->
+<Story
+  name="Volumes"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-volumes')
+    await says(canvas, 'containers-title', 'Volumes')
+    await says(canvas, 'containers-volume-pihole-data-note', 'Used by pihole')
+  }}
+/>
+
+<!-- The form a volume is made in, over the list. -->
+<Story
+  name="A new volume"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-volumes')
+    await appears(canvas, 'containers-volumes-new')
+    await userEvent.click(canvas.getByTestId('containers-volumes-new'))
+    await says(canvas, 'containers-volume-form-title', 'New Volume')
+  }}
+/>
+
+<!-- A volume a container uses: the question says who, and Docker will not remove it. -->
+<Story
+  name="Removing a volume in use"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-volumes')
+    await appears(canvas, 'containers-volume-pihole-data-remove')
+    await userEvent.click(canvas.getByTestId('containers-volume-pihole-data-remove'))
+    await appears(canvas, 'containers-remove-resource')
+    await expect(canvas.getByTestId('containers-remove-resource-confirm')).toHaveProperty('disabled', true)
+  }}
+/>
+
+<!-- Docker's networks, with their addresses and the containers on them. -->
+<Story
+  name="Networks"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-networks')
+    await says(canvas, 'containers-title', 'Networks')
+    await says(canvas, 'containers-network-blog_default', '172.18.0.0/16 · gateway 172.18.0.1')
+    await gone(canvas, 'containers-network-bridge-remove')
+  }}
+/>
+
+<!-- The form a network is made in, over the list. -->
+<Story
+  name="A new network"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-networks')
+    await appears(canvas, 'containers-networks-new')
+    await userEvent.click(canvas.getByTestId('containers-networks-new'))
+    await says(canvas, 'containers-network-form-title', 'New Network')
+  }}
+/>
+
+<!-- A network is made with its own subnet, and listed. -->
+<Story
+  name="Making a network"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-networks')
+    await appears(canvas, 'containers-networks-new')
+    await userEvent.click(canvas.getByTestId('containers-networks-new'))
+    await appears(canvas, 'containers-network-form')
+    await userEvent.type(input(canvas, 'containers-network-form-name'), 'backend')
+    await userEvent.type(input(canvas, 'containers-network-form-subnet'), '172.30.0.0/16')
+    await userEvent.click(canvas.getByTestId('containers-network-form-save'))
+    await says(canvas, 'containers-network-backend', '172.30.0.0/16 · gateway 172.30.0.1')
+  }}
+/>

@@ -12,7 +12,7 @@ import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callTool } from '../../../e2e/host/pair'
 import { startFakeDocker, type FakeDocker } from '@vos/docker/fake-docker'
-import { CONTAINERS, NETWORKS } from './machine'
+import { CONTAINERS, IMAGES, NETWORKS } from './machine'
 
 const ID = 'containers'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
@@ -22,6 +22,8 @@ const row = (page: Page, name: string, piece?: string): Locator => part(page, `i
 const address = (page: Page): Locator => part(page, 'host-input').locator('input')
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
 const picker = (page: Page, name: string): Locator => part(page, name).locator('select')
+/** The footer of a kit section: what it says under its rows (a reason, in red, for `footer-tone="error"`). */
+const footer = (page: Page, name: string): Promise<string> => part(page, name).evaluate((e) => (e as HTMLElement & { footer?: string }).footer ?? '')
 // an image the journeys' registry does not have
 const MISSING = 'nosuch/app:1'
 
@@ -30,7 +32,7 @@ test.describe.configure({ mode: 'serial' })
 let docker: FakeDocker
 
 test.beforeAll(async () => {
-  docker = await startFakeDocker({ containers: CONTAINERS, networks: NETWORKS, missingImages: [MISSING] })
+  docker = await startFakeDocker({ containers: CONTAINERS, networks: NETWORKS, images: IMAGES, missingImages: [MISSING] })
 })
 
 test.beforeEach(() => docker.reset())
@@ -216,6 +218,14 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'stack-media')).toHaveAttribute('aria-label', 'media, Running')
     // Docker's own reason comes back to the agent
     await expect(callTool(`${ID}__start_container`, { container: 'nowhere' })).rejects.toThrow('No such container: nowhere')
+
+    // what images, volumes and networks there are, and what uses each
+    const { images } = JSON.parse(await callTool(`${ID}__list_images`, {})) as { images: { tags: string[]; containers: string[] }[] }
+    expect(images.find((i) => i.tags.includes('postgres:16'))?.containers).toEqual(['blog-db-1'])
+    const { volumes } = JSON.parse(await callTool(`${ID}__list_volumes`, {})) as { volumes: { name: string; containers: string[] }[] }
+    expect(volumes.find((v) => v.name === 'pihole-data')?.containers).toEqual(['pihole'])
+    const { networks } = JSON.parse(await callTool(`${ID}__list_networks`, {})) as { networks: { name: string; subnet: string; predefined: boolean }[] }
+    expect(networks.find((n) => n.name === 'bridge')).toMatchObject({ subnet: '172.17.0.0/16', predefined: true })
   })
 
   test('CT10: make a container with a variable, a port, a folder, a volume and a restart policy, and see it run with them', async ({ page }) => {
@@ -372,5 +382,171 @@ test.describe('Containers journeys', () => {
     await part(page, 'inspector-back').click()
     await part(page, 'back').click()
     await expect(part(page, 'stack-blog')).toBeVisible()
+    // the images, the volumes and the networks are each a column of their own too, with the way back
+    for (const [scope, title] of [
+      ['images', 'Images'],
+      ['volumes', 'Volumes'],
+      ['networks', 'Networks']
+    ] as const) {
+      await part(page, `scope-${scope}`).click()
+      await expect(part(page, 'title')).toHaveText(title)
+      await expect(part(page, `scope-${scope}`)).toBeHidden()
+      await expectNoOverflow(page.getByTestId(`window-${ID}-content`))
+      await part(page, 'back').click()
+      await expect(part(page, `scope-${scope}`)).toBeVisible()
+    }
+  })
+
+  test('CT14: pull an image, then make a container from it with New container from this image', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-images').click()
+    await expect(part(page, 'title')).toHaveText('Images')
+    await expect(part(page, 'image-nginx:1.27')).toHaveCount(0)
+    await field(page, 'pull-image').fill('nginx:1.27')
+    await part(page, 'pull').click()
+    await expect(part(page, 'image-nginx:1.27-note')).toHaveText('Unused')
+    expect(docker.pulled()).toEqual(['nginx:1.27'])
+    // the field is empty for the next
+    await expect(field(page, 'pull-image')).toHaveValue('')
+
+    await part(page, 'image-nginx:1.27-new').click()
+    await expect(part(page, 'form-title')).toHaveText('New Container')
+    await expect(field(page, 'form-image')).toHaveValue('nginx:1.27')
+    await field(page, 'form-name').fill('site')
+    await part(page, 'form-save').click()
+    await expect(part(page, 'inspector-name')).toHaveText('site')
+    expect(docker.pulled(), 'Docker has the image: it is not pulled again').toEqual(['nginx:1.27'])
+    expect(docker.container('site')).toMatchObject({ image: 'nginx:1.27', running: true })
+    // back where it was made from, which now knows the container
+    await part(page, 'inspector-back').click()
+    await expect(part(page, 'image-nginx:1.27-note')).toHaveText('In use by 1 container: site')
+    await expect(part(page, 'scope-images')).toHaveAttribute('aria-label', 'Images, 7')
+  })
+
+  test('CT15: remove an unused image, and see one a container was made from refused unless forced', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-images').click()
+    await part(page, 'image-redis:7-remove').click()
+    await expect(part(page, 'remove-resource-about')).toHaveJSProperty('footer', 'Its names and its layers go. Docker pulls it again when a container needs it.')
+    await part(page, 'remove-resource-confirm').click()
+    // the list is back once the image is gone
+    await expect(part(page, 'images')).toBeVisible()
+    await expect(part(page, 'image-redis:7')).toHaveCount(0)
+    expect(docker.images().some((i) => i.tags.includes('redis:7'))).toBe(false)
+
+    // a stopped container was made from it: the question says which, and waits to be forced
+    await part(page, 'image-jellyfin/jellyfin:10.9-remove').click()
+    await expect(part(page, 'remove-resource-about')).toHaveJSProperty(
+      'footer',
+      'Made from it: media-jellyfin-1. Docker removes an image a container was made from only when it is forced, and never one a running container was made from.'
+    )
+    await expect(part(page, 'remove-resource-confirm')).toHaveAttribute('disabled', '')
+    await part(page, 'remove-resource-force').click()
+    await part(page, 'remove-resource-confirm').click()
+    await expect(part(page, 'images')).toBeVisible()
+    await expect(part(page, 'image-jellyfin/jellyfin:10.9')).toHaveCount(0)
+    expect(docker.images().some((i) => i.tags.includes('jellyfin/jellyfin:10.9'))).toBe(false)
+    expect(docker.container('media-jellyfin-1'), 'the container stays').toBeDefined()
+
+    // a running container runs it: Docker refuses even when forced, in its words
+    await part(page, 'image-pihole/pihole:2024.07.0-remove').click()
+    await part(page, 'remove-resource-force').click()
+    await part(page, 'remove-resource-confirm').click()
+    await expect.poll(() => footer(page, 'remove-resource-failure')).toContain('(cannot be forced) - image is being used by running container')
+    await part(page, 'remove-resource-cancel').click()
+    await expect(part(page, 'image-pihole/pihole:2024.07.0')).toBeVisible()
+  })
+
+  test('CT16: prune the dangling images, and see the space it freed', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-images').click()
+    await expect(part(page, 'images')).toContainText('<none>:<none>')
+    await part(page, 'images-prune').click()
+    await part(page, 'images-prune-confirm-confirm').click()
+    await expect(part(page, 'images-report')).toHaveText('Removed 1 dangling image, and freed 140 MB.')
+    await expect(part(page, 'images')).not.toContainText('<none>:<none>')
+    expect(docker.images().every((i) => i.tags.length > 0)).toBe(true)
+    // nothing left to prune
+    await expect(part(page, 'images-prune')).toHaveAttribute('disabled', '')
+  })
+
+  test('CT17: make a volume, use it in a new container, and see its removal refused while it is used', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-volumes').click()
+    await part(page, 'volumes-new').click()
+    await expect(field(page, 'volume-form-driver')).toHaveValue('local')
+    await field(page, 'volume-form-name').fill('shared')
+    await part(page, 'volume-form-add-label').click()
+    await field(page, 'volume-form-label-0-name').fill('team')
+    await field(page, 'volume-form-label-0-value').fill('web')
+    await part(page, 'volume-form-save').click()
+    await expect(part(page, 'volume-shared-note')).toHaveText('Unused')
+    expect(docker.volume('shared')).toEqual({ name: 'shared', driver: 'local', labels: { team: 'web' } })
+
+    await part(page, 'scope-all').click()
+    await part(page, 'new').click()
+    await field(page, 'form-image').fill('postgres:16')
+    await field(page, 'form-name').fill('worker')
+    await part(page, 'form-add-volume').click()
+    await picker(page, 'form-mount-0-volume').selectOption('shared')
+    await field(page, 'form-mount-0-target').fill('/shared')
+    await part(page, 'form-save').click()
+    await expect(part(page, 'inspector-name')).toHaveText('worker')
+    expect(docker.container('worker')?.mounts).toEqual([{ type: 'volume', source: 'shared', target: '/shared', readOnly: false }])
+
+    await part(page, 'scope-volumes').click()
+    await expect(part(page, 'volume-shared-note')).toHaveText('Used by worker')
+    await part(page, 'volume-shared-remove').click()
+    await expect(part(page, 'remove-resource-about')).toHaveJSProperty('footer', 'worker uses it: Docker removes a volume only once no container uses it, running or not.')
+    await expect(part(page, 'remove-resource-confirm')).toHaveAttribute('disabled', '')
+    await part(page, 'remove-resource-cancel').click()
+    expect(docker.volumes()).toContain('shared')
+  })
+
+  test('CT18: make a network with a subnet, and put a new container on it', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-networks').click()
+    await part(page, 'networks-new').click()
+    await field(page, 'network-form-name').fill('backend')
+    await field(page, 'network-form-subnet').fill('172.30.0.0/16')
+    await field(page, 'network-form-gateway').fill('172.30.0.254')
+    await part(page, 'network-form-internal').click()
+    await part(page, 'network-form-save').click()
+    await expect(part(page, 'network-backend')).toContainText('172.30.0.0/16 · gateway 172.30.0.254')
+    await expect(part(page, 'network-backend')).toContainText('bridge · local · internal')
+    expect(docker.network('backend')).toMatchObject({ driver: 'bridge', subnet: '172.30.0.0/16', gateway: '172.30.0.254', internal: true, attachable: false })
+
+    await part(page, 'scope-all').click()
+    await part(page, 'new').click()
+    await field(page, 'form-image').fill('postgres:16')
+    await field(page, 'form-name').fill('api')
+    await picker(page, 'form-network').selectOption('backend')
+    await part(page, 'form-save').click()
+    await expect(part(page, 'inspector-name')).toHaveText('api')
+    expect(docker.container('api')).toMatchObject({ network: 'backend', running: true })
+    await part(page, 'scope-networks').click()
+    await expect(part(page, 'network-backend-note')).toHaveText('Containers: api')
+  })
+
+  test("CT19: remove a network; Docker's own have no Remove, and one a running container is on is refused", async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'scope-networks').click()
+    for (const own of ['bridge', 'host', 'none']) {
+      await expect(part(page, `network-${own}`)).toBeVisible()
+      await expect(part(page, `network-${own}-remove`)).toHaveCount(0)
+    }
+    await part(page, 'network-blog_default-remove').click()
+    await part(page, 'remove-resource-confirm').click()
+    await expect
+      .poll(() => footer(page, 'remove-resource-failure'))
+      .toBe('blog-db-1 and blog-web-1 run on the network blog_default: Docker removes a network only once no running container is on it.')
+    await part(page, 'remove-resource-cancel').click()
+
+    // a stopped container is on it, which does not hold it
+    await part(page, 'network-media_default-remove').click()
+    await part(page, 'remove-resource-confirm').click()
+    await expect(part(page, 'networks')).toBeVisible()
+    await expect(part(page, 'network-media_default')).toHaveCount(0)
+    expect(docker.networks()).toEqual(['bridge', 'host', 'none', 'blog_default'])
   })
 })
