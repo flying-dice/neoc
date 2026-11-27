@@ -13,7 +13,6 @@ export interface AgentsRpc {
   updateAgent(params: VosApp.Agents.UpdateAgentParams): Promise<Agent[]>
   removeAgent(params: VosApp.Agents.RemoveAgentParams): Promise<Agent[]>
   chats(): Promise<Chat[]>
-  start(params: VosApp.Agents.StartParams): Promise<Conversation>
   open(params: VosApp.Agents.OpenParams): Promise<Conversation>
   send(params: VosApp.Agents.SendParams): Promise<Conversation>
   answer(params: VosApp.Agents.AnswerParams): Promise<Conversation>
@@ -164,9 +163,19 @@ export class Agents {
     this.#open = { ...open, items: open.items.map((i) => (i.id === piece.item ? { ...i, text: i.text + piece.text } : i)) }
   }
 
-  startChat(agent: Agent): Promise<boolean> {
+  /**
+   * Open a new chat with `agent`. It is the window's own until something is said in it: the backend makes the chat with
+   * the first message (`send`), so one left unsaid leaves nothing behind.
+   */
+  startChat(agent: Agent): void {
     this.form = null
-    return this.#show(this.#rpc.start({ agent: agent.id }))
+    this.#failure = null
+    this.#open = {
+      chat: { id: '', title: 'New chat', agent: agent.name, agent_id: agent.id, updated: '' },
+      items: [],
+      busy: false,
+      waiting: false
+    }
   }
 
   openChat(chat: Chat): Promise<boolean> {
@@ -178,8 +187,11 @@ export class Agents {
   async send(): Promise<void> {
     if (!this.sendable || this.#open === null) return
     const text = this.draft
+    const { id, agent_id } = this.#open.chat
     this.draft = ''
-    if (!(await this.#show(this.#rpc.send({ chat: this.#open.chat.id, text })))) this.draft = text
+    // a new chat (no id yet) is made by its first message
+    const where = id === '' ? { agent: agent_id } : { chat: id }
+    if (!(await this.#show(this.#rpc.send({ ...where, text })))) this.draft = text
   }
 
   /** Stop the agent's answer in the open chat; what it said so far stays. */
@@ -197,6 +209,11 @@ export class Agents {
   async removeChat(): Promise<void> {
     this.asking = null
     if (this.#open === null) return
+    // a new chat nothing was said in is the window's own: there is nothing to delete
+    if (this.#open.chat.id === '') {
+      this.#open = null
+      return
+    }
     try {
       this.#chats = await this.#rpc.removeChat({ chat: this.#open.chat.id })
       this.#open = null

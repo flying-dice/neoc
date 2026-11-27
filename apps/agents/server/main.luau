@@ -83,6 +83,10 @@ db:migrate {
   [5] = [[
     alter table agents add column avatar text not null default '';
   ]],
+  -- a chat is made by the first thing said in it: the ones opened and left empty go
+  [6] = [[
+    delete from threads where not exists (select 1 from items where items.thread_id = threads.id);
+  ]],
 }
 
 -- the tokens of the agents migration 4 removed
@@ -291,29 +295,31 @@ RPC.on_request("_chats", function(): agents_ChatsResult
   return chats()
 end)
 
-RPC.on_request("_start", function(params: agents_StartParams, ctx: vos_app_Context): agents_StartResult
-  local agent = roster.find(params.agent)
-  if not agent then
-    return ctx:fail("There is no such agent.")
-  end
-  local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = agent.id, n = agent.name })
-  local row = db:one("select id from threads where rowid = :r", { r = made.last_insert_id })
-  return conversation((row :: { [string]: any }).id) :: agents_Conversation
-end)
-
 RPC.on_request("_open", function(params: agents_OpenParams, ctx: vos_app_Context): agents_OpenResult
   return conversation(params.chat) or ctx:fail("There is no such chat.")
 end)
 
+-- A chat is made by the first thing said in it: a new one is `agent` instead of `chat`, so opening a chat and leaving
+-- it unsaid leaves nothing behind.
 RPC.on_request("_send", function(params: agents_SendParams, ctx: vos_app_Context): agents_SendResult
-  local chat = params.chat
-  local agent, problem = ready(chat)
-  if not agent then
-    return ctx:fail(problem or "")
-  end
   local text = strings.trim(params.text)
   if text == "" then
     return ctx:fail("Write something first.")
+  end
+  local chat: string
+  if params.chat then
+    chat = params.chat
+  else
+    local with = if params.agent then roster.find(params.agent) else nil
+    if not with then
+      return ctx:fail("There is no such agent.")
+    end
+    local made = db:exec("insert into threads(agent_id, agent_name) values (:a, :n)", { a = with.id, n = with.name })
+    chat = (db:one("select id from threads where rowid = :r", { r = made.last_insert_id }) :: { [string]: any }).id
+  end
+  local agent, problem = ready(chat)
+  if not agent then
+    return ctx:fail(problem or "")
   end
   timeline.add(chat, "user", { text = text })
   touch(chat, titleOf(text))

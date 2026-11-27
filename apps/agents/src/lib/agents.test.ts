@@ -36,17 +36,30 @@ describe('a window that has just opened', () => {
 })
 
 describe('a chat', () => {
-  test('starting one opens it, empty, and lists it', async () => {
+  test('starting one opens it, empty, and it is made, and listed, only when something is said in it', async () => {
     const agents = await opened()
-    expect(await agents.startChat(SCRIPTED)).toBe(true)
+    agents.startChat(SCRIPTED)
     expect(agents.open?.items).toEqual([])
     expect(agents.open?.chat.title).toBe('New chat')
+    expect(agents.chats).toHaveLength(0)
+    // left unsaid, it leaves nothing behind
+    agents.back()
+    agents.startChat(SCRIPTED)
+    await agents.removeChat()
+    expect(agents.open).toBeNull()
+    expect(agents.chats).toHaveLength(0)
+    // the first message makes it
+    agents.startChat(SCRIPTED)
+    agents.draft = 'hello'
+    await agents.send()
     expect(agents.chats).toHaveLength(1)
+    expect(agents.open?.chat.id).toBe(agents.chats[0]?.id)
+    expect(agents.open?.chat.title).toBe('hello')
   })
 
   test('a message is sent, the answer comes a piece at a time, and the turn ends', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'hello'
     expect(agents.sendable).toBe(true)
     await agents.send()
@@ -60,7 +73,7 @@ describe('a chat', () => {
 
   test('the first message names the chat, later ones do not', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'hello'
     await agents.send()
     await until(() => agents.open?.busy === false)
@@ -74,7 +87,7 @@ describe('a chat', () => {
 
   test('nothing is sent while the agent answers, and what is typed stays', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'slow'
     await agents.send()
     agents.draft = 'wait'
@@ -85,7 +98,7 @@ describe('a chat', () => {
 
   test('stopping an answer ends the turn and keeps what was said', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'slow'
     await agents.send()
     await until(() => said(agents).at(-1) === 'assistant: Thinking')
@@ -97,7 +110,7 @@ describe('a chat', () => {
 
   test('opening another chat shows it; pieces of the one left behind are not added to it', async () => {
     const agents = await opened(createFakeBackend({ pace: 1, chats: [conversation('old', 'Old', [['user', 'Old'], ['assistant', 'echo: Old']])] }))
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'one two three'
     await agents.send()
     const old = agents.chats.find((c) => c.id === 'old')
@@ -108,7 +121,9 @@ describe('a chat', () => {
 
   test('back leaves the chat for the list', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
+    agents.draft = 'hello'
+    await agents.send()
     agents.back()
     expect(agents.open).toBeNull()
     expect(agents.chats).toHaveLength(1)
@@ -118,7 +133,7 @@ describe('a chat', () => {
 describe('what an agent does besides talking', () => {
   async function after(text: string): Promise<Agents> {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = text
     await agents.send()
     await until(() => agents.open?.busy === false)
@@ -133,7 +148,7 @@ describe('what an agent does besides talking', () => {
 
   test('a permission it asks for holds the turn until it is answered, and the agent goes on with the answer', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'ask'
     await agents.send()
     await until(() => agents.open?.waiting === true)
@@ -149,7 +164,7 @@ describe('what an agent does besides talking', () => {
 
   test('a permission can be refused', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'ask'
     await agents.send()
     await until(() => agents.open?.waiting === true)
@@ -160,7 +175,7 @@ describe('what an agent does besides talking', () => {
 
   test('an answer the agent did not offer is refused, with the reason', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'ask'
     await agents.send()
     await until(() => agents.open?.waiting === true)
@@ -171,7 +186,7 @@ describe('what an agent does besides talking', () => {
 
   test('stopping a turn that waits for an answer leaves the question unanswered', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     agents.draft = 'ask'
     await agents.send()
     await until(() => agents.open?.waiting === true)
@@ -216,7 +231,9 @@ describe('the agents', () => {
 
   test('one is changed, and its chats are listed under its new name', async () => {
     const agents = await opened()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
+    agents.draft = 'hello'
+    await agents.send()
     agents.edit(agents.agents[0]!)
     expect(agents.open).not.toBeNull()
     expect(agents.form?.folder).toBe(SCRIPTED.folder)
@@ -307,7 +324,9 @@ describe("an agent's picture", () => {
 
   test('a chat shows the picture of its agent, and none once the agent is removed', async () => {
     const agents = await opened(createFakeBackend({ agents: [PICTURED, SCRIPTED] }))
-    await agents.startChat(PICTURED)
+    agents.startChat(PICTURED)
+    agents.draft = 'hello'
+    await agents.send()
     const chat = agents.chats[0]!
     expect(chat.agent_id).toBe(PICTURED.id)
     expect(agents.avatarOf(chat)).toBe(PICTURE)
@@ -321,9 +340,10 @@ describe('the host connection', () => {
   test('when it comes back, the open chat is read again', async () => {
     const backend = createFakeBackend({ pace: 1 })
     const agents = await opened(backend)
-    await agents.startChat(SCRIPTED)
-    // said through another window: this one heard nothing
-    await backend.rpc.send({ chat: agents.open!.chat.id, text: 'hello' })
+    // a chat another window started, opened here before its answer came
+    const made = await backend.rpc.send({ agent: SCRIPTED.id, text: 'hello' })
+    await agents.load()
+    await agents.openChat(made.chat)
     await Bun.sleep(20)
     backend.emit('host:reconnected')
     await until(() => said(agents).length === 2)
@@ -335,7 +355,7 @@ describe('the host connection', () => {
     const agents = new Agents(backend.rpc, backend.events)
     const stop = agents.listen()
     await agents.load()
-    await agents.startChat(SCRIPTED)
+    agents.startChat(SCRIPTED)
     stop()
     agents.draft = 'hello'
     await agents.send()
@@ -354,15 +374,15 @@ describe('a backend that cannot be reached', () => {
   test('a message that could not be sent is back in the field, with the reason', async () => {
     const backend = createFakeBackend({ pace: 1 })
     const agents = await opened(backend)
-    await agents.startChat(SCRIPTED)
     const failing = new Agents({ ...backend.rpc, send: () => Promise.reject(new Error('Connection lost')) }, backend.events)
     await failing.load()
-    await failing.openChat(agents.chats[0]!)
+    failing.startChat(SCRIPTED)
     failing.draft = 'hello'
     await failing.send()
     expect(failing.draft).toBe('hello')
     expect(failing.failure).toBe('Connection lost')
     expect(failing.open?.items).toEqual([])
+    expect(failing.chats).toEqual([]) // and no chat was made
   })
 
   test('a rejection that is not an Error is shown as text', async () => {

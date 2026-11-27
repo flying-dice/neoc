@@ -2,7 +2,7 @@
   "name": "@vos-apps/agents",
   "private": true,
   "type": "module",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Chat with agents over the Agent Client Protocol: add one by its address, write to it, and watch what it answers and does.",
   "vos": {
     "title": "Agents",

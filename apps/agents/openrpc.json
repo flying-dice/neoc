@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Agents",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "methods": [
     {
@@ -213,33 +213,6 @@
       }
     },
     {
-      "name": "_start",
-      "summary": "Start a chat with an agent, and answer with it (empty).",
-      "params": [
-        {
-          "name": "agent",
-          "required": true,
-          "description": "The id of one of `agents`.",
-          "schema": {
-            "type": "string",
-            "maxLength": 64
-          }
-        }
-      ],
-      "result": {
-        "name": "conversation",
-        "schema": {
-          "$ref": "#/components/schemas/Conversation"
-        }
-      },
-      "errors": [
-        {
-          "code": -32010,
-          "message": "There is no such agent."
-        }
-      ]
-    },
-    {
       "name": "_open",
       "summary": "A chat and everything said and done in it so far.",
       "params": [
@@ -267,11 +240,21 @@
     },
     {
       "name": "_send",
-      "summary": "Say something in a chat. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event.",
+      "summary": "Say something in a chat, or start one with an agent by saying the first thing in it (`agent` instead of `chat`): a chat is only made when something is said. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event.",
       "params": [
         {
           "name": "chat",
-          "required": true,
+          "required": false,
+          "description": "The chat to say it in. Without it, `agent` starts a new chat.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "agent",
+          "required": false,
+          "description": "The id of one of `agents`, to start a new chat with: used only without `chat`.",
           "schema": {
             "type": "string",
             "maxLength": 64
@@ -296,7 +279,7 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such chat, the message is blank, the agent is still answering, or the agent was removed."
+          "message": "There is no such chat or agent, the message is blank, the agent is still answering, or the agent was removed."
         }
       ]
     },

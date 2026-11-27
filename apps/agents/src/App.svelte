@@ -10,7 +10,6 @@
     updateAgent: (params) => RPC.send_request('agents', '_update_agent', params),
     removeAgent: (params) => RPC.send_request('agents', '_remove_agent', params),
     chats: () => RPC.send_request('agents', '_chats'),
-    start: (params) => RPC.send_request('agents', '_start', params),
     open: (params) => RPC.send_request('agents', '_open', params),
     send: (params) => RPC.send_request('agents', '_send', params),
     answer: (params) => RPC.send_request('agents', '_answer', params),

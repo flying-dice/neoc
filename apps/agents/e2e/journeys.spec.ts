@@ -222,13 +222,19 @@ test.describe('Agents journeys', () => {
     await expect(agentRow(page, name)).toContainText(endpoint)
   })
 
-  test('AG2: start a chat and talk to an agent: the answer streams in, the first message names the chat, the connection stays', async ({ page }) => {
+  test('AG2: start a chat and talk to an agent: the first message makes the chat and names it, the answer streams in, the connection stays', async ({ page }) => {
     await openAgents(page)
     const name = await addAgent(page, endpoint, { token: 'a-secret-token', folder: '/home/ada' })
+    const itsChats = frame(page).getByTestId(/^agents-chat-/).filter({ hasText: name })
     await newChat(page, name)
+    // a chat is made by the first thing said in it: an empty one is not listed, and opening another leaves nothing
+    await expect(itsChats).toHaveCount(0)
+    await newChat(page, name)
+    await expect(itsChats).toHaveCount(0)
     await say(page, 'hello')
     await expect(thread(page)).toContainText('Hi there')
     await expect(part(page, 'title')).toHaveText('hello')
+    await expect(itsChats).toHaveCount(1)
     await expect(part(page, 'chats')).toContainText('hello')
     await turnOver(page)
     // connected with the token on the upgrade and no Origin, as the app, and the session works in the agent's folder

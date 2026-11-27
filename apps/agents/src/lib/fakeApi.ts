@@ -217,17 +217,18 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       return agents.map((a) => ({ ...a }))
     },
     chats: async () => chats.map((c) => ({ ...c.chat })),
-    start: async ({ agent }) => {
-      const who = agents.find((a) => a.id === agent)
-      if (!who) throw new Refused('There is no such agent.')
-      const id = `chat-${nextChat++}`
-      chats = [{ chat: { id, title: 'New chat', agent: who.name, agent_id: who.id, updated: new Date().toISOString() }, items: [] }, ...chats]
-      return view(id)
-    },
     open: async ({ chat }) => view(chat),
-    send: async ({ chat, text }) => {
-      const found = find(chat)
+    send: async ({ chat: given, agent, text }) => {
       if (text.trim() === '') throw new Refused('Write something first.')
+      // a new chat is made by its first message
+      let chat = given ?? ''
+      if (given === undefined) {
+        const who = agents.find((a) => a.id === agent)
+        if (!who) throw new Refused('There is no such agent.')
+        chat = `chat-${nextChat++}`
+        chats = [{ chat: { id: chat, title: 'New chat', agent: who.name, agent_id: who.id, updated: new Date().toISOString() }, items: [] }, ...chats]
+      }
+      const found = find(chat)
       if (running.has(chat)) throw new Refused('The agent is still answering.')
       found.items.push(itemOf(chat, nextItem++, { kind: 'user', text: text.trim() }))
       if (found.chat.title === 'New chat') found.chat.title = titleOf(text)
@@ -288,7 +289,6 @@ export function createFailingBackend(message: string): FakeBackend {
       updateAgent: refuse,
       removeAgent: refuse,
       chats: refuse,
-      start: refuse,
       open: refuse,
       send: refuse,
       answer: refuse,

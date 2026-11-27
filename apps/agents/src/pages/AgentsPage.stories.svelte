@@ -160,11 +160,13 @@
   }}
 />
 
-<!-- A new chat, a message, the agent's answer: the first message names the chat. -->
+<!-- A new chat, a message, the agent's answer: the first message makes the chat, and names it. -->
 <Story
   name="A first message answered"
   play={async ({ canvas, userEvent }) => {
     await startChat(canvas, userEvent)
+    // the chat is not made, nor listed, until something is said in it
+    await expect(canvas.queryByTestId('agents-chat-chat-1')).toBeNull()
     await say(canvas, userEvent, 'hello')
     await said(canvas, 'Hi there')
     await appears(canvas, 'agents-composer-send')
