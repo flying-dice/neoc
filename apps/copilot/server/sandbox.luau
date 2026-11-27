@@ -114,7 +114,7 @@ local function make(api: vnd_bollard_Client, chat: string, copilot: copilots.Cop
     return docker.sentence(refused)
   end
   if archive then
-    local _, failed = api:upload_to_container(made.Id, { path = "/", no_overwrite_dir_non_dir = false }, archive)
+    local _, failed = api:upload_to_container(made.Id, { path = "/" }, archive)
     if failed then
       api:remove_container(made.Id, { force = true })
       return `The skills could not be copied into the container: {docker.sentence(failed)}`

@@ -7150,7 +7150,7 @@ interface vnd_bollard_Upload {
   /** The directory in the container to unpack the archive into; it must exist. */
   path: string
   /** Refuse to replace a directory with a file, or a file with a directory. */
-  no_overwrite_dir_non_dir: boolean
+  no_overwrite_dir_non_dir?: boolean
 }
 
 /** A volume, with Docker's field names. */

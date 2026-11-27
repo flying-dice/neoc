@@ -433,7 +433,7 @@ pub struct Upload {
     pub path: String,
     /// Refuse to replace a directory with a file, or a file with a directory.
     #[serde(default)]
-    pub no_overwrite_dir_non_dir: bool,
+    pub no_overwrite_dir_non_dir: Option<bool>,
 }
 
 #[cfg(test)]

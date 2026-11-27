@@ -754,7 +754,7 @@ pub mod bollard {
         ) -> Result<(), DockerError> {
             let options = query::UploadToContainerOptions {
                 path: opts.path,
-                no_overwrite_dir_non_dir: opts.no_overwrite_dir_non_dir.then(|| "true".to_owned()),
+                no_overwrite_dir_non_dir: opts.no_overwrite_dir_non_dir.unwrap_or(false).then(|| "true".to_owned()),
                 ..Default::default()
             };
             self.api()
