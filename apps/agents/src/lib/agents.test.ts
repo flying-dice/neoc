@@ -125,47 +125,60 @@ describe('what an agent does besides talking', () => {
     return agents
   }
 
-  test('a tool it used is in the chat, with what it was given and what it answered', async () => {
+  test('what it thought, its plan and a tool call that changed a file are in the chat', async () => {
     const agents = await after('tool')
-    expect(agents.open?.items.map((i) => i.kind)).toEqual(['user', 'tool', 'assistant'])
-    expect(agents.open?.items[1]).toMatchObject({ name: 'notes__add', text: '{"title":"Milk"}' })
+    expect(agents.open?.items.map((i) => i.kind)).toEqual(['user', 'reasoning', 'plan', 'tool', 'assistant'])
+    expect(agents.open?.items[3]).toMatchObject({ name: 'Add milk to list.md' })
   })
 
-  test('a question stops the chat until it is answered, and the agent goes on with the answer', async () => {
-    const agents = await after('ask')
-    expect(agents.open?.waiting).toBe(true)
+  test('a permission it asks for holds the turn until it is answered, and the agent goes on with the answer', async () => {
+    const agents = await opened()
+    await agents.startChat(SCRIPTED)
+    agents.draft = 'ask'
+    await agents.send()
+    await until(() => agents.open?.waiting === true)
+    expect(agents.open?.busy).toBe(true)
     agents.draft = 'never mind'
     expect(agents.sendable).toBe(false)
-    await agents.answer(agents.open!.items.at(-1)!, 'yes')
+    await agents.answer(agents.open!.items.at(-1)!, 'allow')
     await until(() => agents.open?.busy === false)
     expect(agents.open?.waiting).toBe(false)
-    expect(said(agents).at(-1)).toBe('assistant: You answered: yes')
+    expect(said(agents).at(-1)).toBe('assistant: Added.')
+    expect(agents.open?.items.find((i) => i.kind === 'permission')?.data).toContain('"chosen":"allow"')
   })
 
-  test('a question can be declined', async () => {
-    const agents = await after('ask')
-    await agents.answer(agents.open!.items.at(-1)!, null)
+  test('a permission can be refused', async () => {
+    const agents = await opened()
+    await agents.startChat(SCRIPTED)
+    agents.draft = 'ask'
+    await agents.send()
+    await until(() => agents.open?.waiting === true)
+    await agents.answer(agents.open!.items.at(-1)!, 'reject')
     await until(() => agents.open?.busy === false)
     expect(said(agents).at(-1)).toBe('assistant: Then I will not.')
   })
 
-  test('what the person did on a surface goes to the agent', async () => {
-    const agents = await after('surface')
-    const surface = agents.open!.items.at(-1)!
-    expect(surface).toMatchObject({ kind: 'activity', name: 'a2ui-surface' })
-    await agents.act(surface, { name: 'confirm', context: { name: 'Ada' } })
-    await until(() => agents.open?.busy === false)
-    expect(said(agents).at(-1)).toBe('assistant: You pressed confirm: {"name":"Ada"}')
+  test('an answer the agent did not offer is refused, with the reason', async () => {
+    const agents = await opened()
+    await agents.startChat(SCRIPTED)
+    agents.draft = 'ask'
+    await agents.send()
+    await until(() => agents.open?.waiting === true)
+    await agents.answer(agents.open!.items.at(-1)!, 'whatever')
+    expect(agents.failure).toBe('The agent did not offer that answer.')
+    expect(agents.open?.waiting).toBe(true)
   })
 
-  test('the state an agent shares is kept as it changes', async () => {
-    const backend = createFakeBackend({ pace: 1 })
-    const agents = await opened(backend)
+  test('stopping a turn that waits for an answer leaves the question unanswered', async () => {
+    const agents = await opened()
     await agents.startChat(SCRIPTED)
-    backend.emit('state', { chat: agents.open!.chat.id, state: '{"count":2}' })
-    expect(agents.open?.state).toBe('{"count":2}')
-    backend.emit('state', { chat: 'another', state: '{"count":3}' })
-    expect(agents.open?.state).toBe('{"count":2}')
+    agents.draft = 'ask'
+    await agents.send()
+    await until(() => agents.open?.waiting === true)
+    await agents.stop()
+    expect(agents.open?.busy).toBe(false)
+    expect(agents.open?.waiting).toBe(false)
+    expect(agents.open?.items.at(-1)).toMatchObject({ kind: 'permission', done: true })
   })
 
   test('deleting the open chat closes it and takes it off the list', async () => {
@@ -177,24 +190,28 @@ describe('what an agent does besides talking', () => {
 })
 
 describe('the agents', () => {
-  test('one is added with a name, an endpoint and a token, and the form closes', async () => {
+  test('one is added with a name, an address, a folder and a token, and the form closes', async () => {
     const agents = await opened(createFakeBackend({ agents: [] }))
     agents.edit(null)
     expect(agents.savable).toBe(false)
-    Object.assign(agents.form!, { name: 'Ada', url: 'https://example.com/agent', token: 'secret' })
+    expect(agents.form?.folder).toBe('/')
+    Object.assign(agents.form!, { name: 'Ada', url: 'ws://example.com:5424/acp', folder: '/home/ada', token: 'secret' })
     expect(agents.savable).toBe(true)
     await agents.save()
     expect(agents.form).toBeNull()
-    expect(agents.agents).toMatchObject([{ name: 'Ada', url: 'https://example.com/agent', token: true }])
+    expect(agents.agents).toMatchObject([{ name: 'Ada', url: 'ws://example.com:5424/acp', folder: '/home/ada', token: true }])
   })
 
   test('a form the backend refuses stays open, with the reason', async () => {
     const agents = await opened()
     agents.edit(null)
-    Object.assign(agents.form!, { name: 'Ada', url: 'ftp://example.com' })
+    Object.assign(agents.form!, { name: 'Ada', url: 'https://example.com/agent' })
     await agents.save()
     expect(agents.form).not.toBeNull()
-    expect(agents.failure).toBe('The endpoint must be an http:// or https:// URL.')
+    expect(agents.failure).toBe('The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
+    Object.assign(agents.form!, { url: 'ws://example.com/acp', folder: 'project' })
+    await agents.save()
+    expect(agents.failure).toBe("The folder must be an absolute path on the agent's machine, like /home/me/project.")
   })
 
   test('one is changed, and its chats are listed under its new name', async () => {
@@ -202,6 +219,7 @@ describe('the agents', () => {
     await agents.startChat(SCRIPTED)
     agents.edit(agents.agents[0]!)
     expect(agents.open).not.toBeNull()
+    expect(agents.form?.folder).toBe(SCRIPTED.folder)
     agents.form!.name = 'Renamed'
     await agents.save()
     expect(agents.agents[0]?.name).toBe('Renamed')

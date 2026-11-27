@@ -57,3 +57,42 @@
     await expect(bubble.scrollWidth).toBeLessThanOrEqual(bubble.clientWidth)
   }}
 />
+
+<!-- A link the agent gave: a web address opens outside the app. -->
+<Story
+  name="A link"
+  args={{
+    item: {
+      ...item('assistant', 'The ACP specification'),
+      name: 'link',
+      data: JSON.stringify({ type: 'link', uri: 'https://agentclientprotocol.com', name: 'The ACP specification' })
+    }
+  }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-message-1-link')).toHaveAttribute('href', 'https://agentclientprotocol.com')
+  }}
+/>
+
+<!-- A file on the agent's machine: named, not opened. -->
+<Story
+  name="A file of the agent's"
+  args={{
+    item: { ...item('assistant', 'list.md'), name: 'link', data: JSON.stringify({ type: 'link', uri: 'file:///home/ada/project/list.md', name: 'list.md' }) }
+  }}
+/>
+
+<!-- An image the agent gave. -->
+<Story
+  name="An image"
+  args={{
+    item: {
+      ...item('assistant', ''),
+      name: 'image',
+      data: JSON.stringify({
+        type: 'image',
+        mime_type: 'image/svg+xml',
+        data: 'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI0MCI+PHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjZjkwIi8+PC9zdmc+'
+      })
+    }
+  }}
+/>

@@ -119,6 +119,27 @@ pub trait AppTools: Send + Sync {
     async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> PortResult<Value>;
 }
 
+/// A bearer token for the host's `/mcp`, and the URL to use it at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lease {
+    pub token: String,
+    pub url: String,
+}
+
+/// MCP bearer tokens an app leases for an agent of its own, so an agent elsewhere calls over `/mcp` the tools
+/// [`AppTools::call`] runs for it: the same authority, another transport. A lease is kept in memory only: it is not
+/// an agent of the roster, and it goes when it is released or the app's backend stops.
+#[async_trait]
+pub trait ToolLeases: Send + Sync {
+    /// Lease a token for `agent` (the actor `app.tools.call` names: `<app>:<id>`), able to call every app's tools but
+    /// `app`'s own. The URL names `host` (a name or an IP address), or the host's own address when there is none.
+    fn lease(&self, app: &AppId, agent: &Actor, host: Option<&str>) -> PortResult<Lease>;
+    /// Revoke a token `app` leased; `false` when it is none of its leases (unknown, or released already).
+    async fn release(&self, app: &AppId, token: &str) -> bool;
+    /// Revoke every token `app` leased: its backend stopped.
+    async fn release_all(&self, app: &AppId);
+}
+
 #[async_trait]
 pub trait Notifier: Send + Sync {
     async fn notify(&self, n: Notification) -> PortResult<()>;

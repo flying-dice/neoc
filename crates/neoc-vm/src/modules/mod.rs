@@ -9,7 +9,6 @@
 
 /// `lib:*`: the modules of the `neoc-vm-lib-*` crates, under the paths they had.
 pub mod lib {
-    pub use neoc_vm_lib_agui as agui;
     pub use neoc_vm_lib_archive as archive;
     pub use neoc_vm_lib_args as args;
     pub use neoc_vm_lib_base64 as base64;
@@ -49,6 +48,7 @@ pub mod std {
 }
 /// `vnd:*`: the modules of the `neoc-vm-vnd-*` crates, under the paths they had.
 pub mod vnd {
+    pub use neoc_vm_vnd_agent_client_protocol as agent_client_protocol;
     pub use neoc_vm_vnd_bollard as bollard;
     pub use neoc_vm_vnd_hyper as hyper;
     pub use neoc_vm_vnd_jsonschema as jsonschema;

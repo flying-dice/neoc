@@ -5,6 +5,7 @@
  *                        system database, so the running host accepts it)
  *   pairDevice(name)     POST /pair with a fresh code and returns the session cookie
  *   callTool(name, args) an agent calls an app's tool over MCP with the token the host wrote to mcp.json
+ *   callToolAt(access, name, args)  the same, at an MCP server and with a token given (an app's lease)
  */
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -41,7 +42,8 @@ export async function pairDevice(deviceName: string): Promise<PairedDevice> {
   }
 }
 
-interface McpAccess {
+/** Where an agent reaches an MCP server, and the header that says who it is. */
+export interface McpAccess {
   url: string
   headers: { Authorization: string }
 }
@@ -67,7 +69,11 @@ async function resultOf(res: Response): Promise<{ result?: unknown; error?: { me
  * token the host wrote to `<data>/mcp.json` at start. Returns the tool result's text.
  */
 export async function callTool(tool: string, args: Record<string, unknown>): Promise<string> {
-  const access = JSON.parse(readFileSync(join(DATA, 'mcp.json'), 'utf8')) as McpAccess
+  return callToolAt(JSON.parse(readFileSync(join(DATA, 'mcp.json'), 'utf8')) as McpAccess, tool, args)
+}
+
+/** An agent calls `<app>__<tool>` over MCP (Streamable HTTP) at `access`. Returns the tool result's text. */
+export async function callToolAt(access: McpAccess, tool: string, args: Record<string, unknown>): Promise<string> {
   const post = (body: object, session?: string): Promise<Response> =>
     fetch(access.url, {
       method: 'POST',

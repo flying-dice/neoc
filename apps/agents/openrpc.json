@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Agents",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "methods": [
     {
@@ -35,7 +35,7 @@
         {
           "name": "url",
           "required": true,
-          "description": "The agent's AG-UI endpoint: an `http` or `https` URL that takes the POST of a run and answers with an event stream.",
+          "description": "The agent's address: a `ws` or `wss` URL where it speaks the Agent Client Protocol over a WebSocket (`acpd`'s `/acp`).",
           "schema": {
             "type": "string",
             "maxLength": 2000
@@ -43,7 +43,15 @@
         },
         {
           "name": "token",
-          "description": "A bearer token the endpoint wants, sent as `Authorization: Bearer <token>`. Blank or absent: none.",
+          "description": "A bearer token the agent's address wants, sent as `Authorization: Bearer <token>` when the app connects. Blank or absent: none.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        {
+          "name": "folder",
+          "description": "The folder the agent's sessions work in: an absolute path on the agent's machine. Blank or absent: `/`.",
           "schema": {
             "type": "string",
             "maxLength": 4000
@@ -62,13 +70,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "The name is blank, the URL is not an http or https URL, or the keychain did not take the token."
+          "message": "The name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, or the keychain did not take the token."
         }
       ]
     },
     {
       "name": "_update_agent",
-      "summary": "Change an agent's name, endpoint or token.",
+      "summary": "Change an agent's name, address, token or folder. A chat's next turn connects to it as it is now.",
       "params": [
         {
           "name": "agent",
@@ -91,7 +99,7 @@
         {
           "name": "url",
           "required": true,
-          "description": "The agent's AG-UI endpoint: an `http` or `https` URL that takes the POST of a run and answers with an event stream.",
+          "description": "The agent's address: a `ws` or `wss` URL where it speaks the Agent Client Protocol over a WebSocket (`acpd`'s `/acp`).",
           "schema": {
             "type": "string",
             "maxLength": 2000
@@ -111,6 +119,14 @@
           "schema": {
             "type": "boolean"
           }
+        },
+        {
+          "name": "folder",
+          "description": "The folder the agent's sessions work in: an absolute path on the agent's machine. Blank or absent: `/`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
         }
       ],
       "result": {
@@ -125,13 +141,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such agent, the name is blank, the URL is not an http or https URL, or the keychain refused."
+          "message": "There is no such agent, the name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, or the keychain refused."
         }
       ]
     },
     {
       "name": "_remove_agent",
-      "summary": "Remove an agent and its token. Its chats stay, and can be read.",
+      "summary": "Remove an agent and its token; a turn it is taking ends. Its chats stay, and can be read.",
       "params": [
         {
           "name": "agent",
@@ -155,7 +171,7 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such agent, or it is answering in a chat."
+          "message": "There is no such agent."
         }
       ]
     },
@@ -257,13 +273,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such chat, the message is blank, the agent is still answering or is waiting for an answer, or the agent was removed."
+          "message": "There is no such chat, the message is blank, the agent is still answering, or the agent was removed."
         }
       ]
     },
     {
       "name": "_answer",
-      "summary": "Answer a question the agent stopped at (an interrupt), or decline it. When every open question of the chat has its answer the agent goes on, as after `send`.",
+      "summary": "Answer a permission the agent asked for during its turn with one of the options it offered; its turn goes on.",
       "params": [
         {
           "name": "chat",
@@ -276,24 +292,18 @@
         {
           "name": "item",
           "required": true,
-          "description": "The id of the `interrupt` item.",
+          "description": "The id of the `permission` item.",
           "schema": {
             "type": "integer"
           }
         },
         {
-          "name": "decline",
-          "description": "Decline to answer: the agent is told the question was cancelled.",
-          "schema": {
-            "type": "boolean"
-          }
-        },
-        {
-          "name": "payload",
-          "description": "The answer as JSON text, of the shape the question asked for (`response_schema` in the item's data). Absent: no payload.",
+          "name": "option",
+          "required": true,
+          "description": "The `option_id` of one of the options in the item's data.",
           "schema": {
             "type": "string",
-            "maxLength": 200000
+            "maxLength": 2000
           }
         }
       ],
@@ -306,56 +316,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such chat or question, it has its answer already, or the agent is still answering."
-        }
-      ]
-    },
-    {
-      "name": "_act",
-      "summary": "Tell the agent what the person did on a surface it drew (an A2UI action: a button pressed). The agent goes on, as after `send`.",
-      "params": [
-        {
-          "name": "chat",
-          "required": true,
-          "schema": {
-            "type": "string",
-            "maxLength": 64
-          }
-        },
-        {
-          "name": "item",
-          "required": true,
-          "description": "The id of the `activity` item the surface is in.",
-          "schema": {
-            "type": "integer"
-          }
-        },
-        {
-          "name": "action",
-          "required": true,
-          "description": "The A2UI action as JSON text: its `name`, the `surfaceId`, the `sourceComponentId` and its `context`.",
-          "schema": {
-            "type": "string",
-            "maxLength": 200000
-          }
-        }
-      ],
-      "result": {
-        "name": "conversation",
-        "schema": {
-          "$ref": "#/components/schemas/Conversation"
-        }
-      },
-      "errors": [
-        {
-          "code": -32010,
-          "message": "There is no such chat or surface, or the agent is still answering."
+          "message": "There is no such chat or question, it is answered already, its turn is over, or the agent did not offer that option."
         }
       ]
     },
     {
       "name": "_stop",
-      "summary": "Stop the agent's answer in a chat; what it said so far stays.",
+      "summary": "Stop the agent's answer in a chat: the agent is asked to stop (its open questions are cancelled), and its turn ends when it has. What it said so far stays.",
       "params": [
         {
           "name": "chat",
@@ -458,27 +425,6 @@
       ]
     },
     {
-      "name": "_state",
-      "summary": "The state the agent shares with a chat changed.",
-      "params": [
-        {
-          "name": "chat",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "state",
-          "required": true,
-          "description": "The state as JSON text.",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ]
-    },
-    {
       "name": "_turn",
       "summary": "The agent's turn in a chat is over, however it ended (complete, stopped or failed): read the chat again.",
       "params": [
@@ -505,18 +451,23 @@
           },
           "url": {
             "type": "string",
-            "description": "Its AG-UI endpoint."
+            "description": "Its address: a `ws` or `wss` URL."
           },
           "token": {
             "type": "boolean",
             "description": "Whether a bearer token is kept for it. The token itself never leaves the keychain."
+          },
+          "folder": {
+            "type": "string",
+            "description": "The folder its sessions work in, on its machine."
           }
         },
         "required": [
           "id",
           "name",
           "url",
-          "token"
+          "token",
+          "folder"
         ]
       },
       "Chat": {
@@ -562,30 +513,28 @@
               "assistant",
               "reasoning",
               "tool",
-              "activity",
-              "step",
-              "subagent",
-              "custom",
-              "interrupt",
+              "plan",
+              "permission",
+              "note",
               "error"
             ],
-            "description": "`user`: what the person said. `assistant`: what the agent said. `reasoning`: what it thought. `tool`: a tool it used. `activity`: something it is doing, drawn from `data` (an A2UI surface when `name` is `a2ui-surface`). `step`, `subagent`: a part of its work. `custom`: an event of its own. `interrupt`: a question it stopped at. `error`: a run that failed."
+            "description": "`user`: what the person said. `assistant`: what the agent said. `reasoning`: what it thought. `tool`: a tool call of its. `plan`: its plan for the turn. `permission`: a permission it asked for. `note`: something the person should know about the chat (the agent started a new session, it stopped short). `error`: a turn that failed."
           },
           "text": {
             "type": "string",
-            "description": "`user`, `assistant`, `reasoning`, `error`: the text. `tool`: its arguments, JSON text. `interrupt`: the question. `subagent`: what it is for."
+            "description": "`user`, `assistant`, `reasoning`, `note`, `error`: the text (`assistant` with a `name`: what the piece is, a link's name). `permission`: what the agent asks to do."
           },
           "name": {
             "type": "string",
-            "description": "`tool`: the tool. `activity`: the activity type. `step`, `subagent`, `custom`: its name. `error`: the agent's code for it."
+            "description": "`tool`: the call's title. `assistant`: empty for text, else the kind of piece in `data`: `image`, `link` or `resource`."
           },
           "data": {
             "type": "string",
-            "description": "JSON text, or empty. `tool`: `{ result?, error?, ours }` (`ours`: a vos tool this app ran). `activity`: its content. `custom`: its value. `interrupt`: `{ reason?, response_schema?, status }` with status `open`, `resolved` or `cancelled`. `subagent`: `{ error? }`."
+            "description": "JSON text, or empty. `assistant` with a `name`: the piece, `{ type: \"image\", mime_type, data }` (base64), `{ type: \"link\", uri, name }` or `{ type: \"resource\", uri, text }`. `tool`: `{ kind?, status?, content?, locations?, input?, output? }`: status `pending`, `in_progress`, `completed` or `failed`; content a list of pieces, `{ type: \"text\", text }`, an image, a link, a resource, `{ type: \"diff\", path, patch, new_file }` (`patch` a unified diff) or `{ type: \"terminal\", terminal_id }`; locations `{ path, line? }`; input and output JSON text. `plan`: `{ entries: [{ content, priority, status }] }` (priority `high`, `medium` or `low`; status `pending`, `in_progress` or `completed`). `permission`: `{ kind?, options: [{ option_id, name, kind }], chosen? }` with option kind `allow_once`, `allow_always`, `reject_once` or `reject_always`, and `chosen` the option the person picked."
           },
           "done": {
             "type": "boolean",
-            "description": "False while it is still coming or still running."
+            "description": "False while it is still coming or still running; for a `permission`, while it waits for its answer."
           }
         },
         "required": [
@@ -616,19 +565,14 @@
           },
           "waiting": {
             "type": "boolean",
-            "description": "The agent stopped at a question that has no answer yet."
-          },
-          "state": {
-            "type": "string",
-            "description": "The state the agent shares with the chat (AG-UI state) as JSON text; empty when it has none."
+            "description": "The agent asked for a permission that has no answer yet."
           }
         },
         "required": [
           "chat",
           "items",
           "busy",
-          "waiting",
-          "state"
+          "waiting"
         ]
       }
     }

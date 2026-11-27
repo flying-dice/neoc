@@ -3,7 +3,7 @@ resolver = "3"
 # The runtime's `lib:*` and `vnd:*` modules are one crate each, in `crates/neoc-vm-lib/<module>` and `crates/neoc-vm-vnd/<module>`:
 # those folders hold crates and are not crates, so `crates/*` would fail on them, and the patterns name what is directly
 # under `crates/`.
-members = ["crates/neoc", "crates/neoc-agui", "crates/neoc-vm", "crates/neoc-vm-core", "crates/neoc-vm-std", "crates/vos-*", "crates/neoc-vm-lib/*", "crates/neoc-vm-vnd/*"]
+members = ["crates/neoc", "crates/neoc-vm", "crates/neoc-vm-core", "crates/neoc-vm-std", "crates/vos-*", "crates/neoc-vm-lib/*", "crates/neoc-vm-vnd/*"]
 
 [workspace.package]
 # neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
@@ -18,9 +18,9 @@ publish = false
 # One place for versions. Crates say `tokio = { workspace = true }` and add features only if they need more.
 [workspace.dependencies]
 neoc-vm = { path = "crates/neoc-vm" }
-neoc-agui = { path = "crates/neoc-agui" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
 neoc-vm-std = { path = "crates/neoc-vm-std" }
+neoc-vm-vnd-agent_client_protocol = { path = "crates/neoc-vm-vnd/agent_client_protocol" }
 neoc-vm-vnd-bollard = { path = "crates/neoc-vm-vnd/bollard" }
 neoc-vm-vnd-hyper = { path = "crates/neoc-vm-vnd/hyper" }
 neoc-vm-vnd-jsonschema = { path = "crates/neoc-vm-vnd/jsonschema" }
@@ -36,7 +36,6 @@ neoc-vm-vnd-sqlx_mysql = { path = "crates/neoc-vm-vnd/sqlx_mysql" }
 neoc-vm-vnd-sqlx_postgres = { path = "crates/neoc-vm-vnd/sqlx_postgres" }
 neoc-vm-vnd-testcontainers_modules = { path = "crates/neoc-vm-vnd/testcontainers_modules" }
 neoc-vm-vnd-toml = { path = "crates/neoc-vm-vnd/toml" }
-neoc-vm-lib-agui = { path = "crates/neoc-vm-lib/agui" }
 neoc-vm-lib-archive = { path = "crates/neoc-vm-lib/archive" }
 neoc-vm-lib-args = { path = "crates/neoc-vm-lib/args" }
 neoc-vm-lib-base64 = { path = "crates/neoc-vm-lib/base64" }

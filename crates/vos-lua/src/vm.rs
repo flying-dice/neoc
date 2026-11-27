@@ -37,7 +37,9 @@ use std::{
 };
 use tokio::sync::Notify;
 use vos_application::{
-    ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
+    ports::{
+        AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, Lease, PortResult, ToolLeases,
+    },
     AppFiles, Files, NoFiles,
 };
 use vos_domain::{Actor, AppId, Notification, QualifiedToolName, ToolSpec};
@@ -104,6 +106,8 @@ pub struct VmConfig {
     pub files: Arc<dyn AppFiles>,
     /// The tools of every running app (`app.tools.all`, `app.tools.call`); none unless the host gives them.
     pub host_tools: Arc<dyn AppTools>,
+    /// MCP bearer tokens the app leases for an agent of its own (`app.tools.lease`); none unless the host gives them.
+    pub leases: Arc<dyn ToolLeases>,
     /// The other apps' backends (`RPC.send_request`); none unless the host gives them.
     pub peers: Arc<dyn AppPeers>,
     /// Library modules this VM does not offer, on top of [`crate::NOT_FOR_APPS`] (its `std:thread` workers neither).
@@ -142,6 +146,19 @@ impl AppTools for NoTools {
     }
 }
 
+/// No leases: what an app sees when the host gives none (tests of other things).
+struct NoLeases;
+#[async_trait::async_trait]
+impl ToolLeases for NoLeases {
+    fn lease(&self, _app: &AppId, _agent: &Actor, _host: Option<&str>) -> PortResult<Lease> {
+        Err(vos_application::PortError::NotFound("this host serves no /mcp".into()))
+    }
+    async fn release(&self, _app: &AppId, _token: &str) -> bool {
+        false
+    }
+    async fn release_all(&self, _app: &AppId) {}
+}
+
 /// The other apps' backends, as one app's backend reaches them: `RPC.send_request(app, method, params)` runs a handler
 /// of another app's backend, told that this app called (`ctx.actor` is the app).
 #[async_trait::async_trait]
@@ -164,6 +181,7 @@ impl Default for VmConfig {
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
             host_tools: Arc::new(NoTools),
+            leases: Arc::new(NoLeases),
             peers: Arc::new(NoPeers),
             refused_modules: Vec::new(),
             test_hooks: false,
@@ -206,6 +224,8 @@ pub(crate) struct Shared {
     pub roster: Arc<dyn AgentRoster>,
     /// Every running app's tools: what `app.tools.all` lists and `app.tools.call` runs.
     pub host_tools: Arc<dyn AppTools>,
+    /// What `app.tools.lease` leases and `app.tools.release` revokes.
+    pub leases: Arc<dyn ToolLeases>,
     /// The other apps' backends: where `app.request` sends.
     pub peers: Arc<dyn AppPeers>,
     /// What `RPC.on_notification(app, name, fn)` registered: listeners of apps' notifications, by app and name.
@@ -616,7 +636,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { roster, files, host_tools, peers, refused_modules, test_hooks } = config;
+        let VmConfig { roster, files, host_tools, leases, peers, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -648,6 +668,7 @@ impl AppVm {
             offered,
             roster,
             host_tools,
+            leases,
             peers,
             listeners: Mutex::default(),
             handlers: Mutex::default(),

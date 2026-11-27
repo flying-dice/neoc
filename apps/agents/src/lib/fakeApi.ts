@@ -1,9 +1,9 @@
 /**
  * A stand-in for the Agents app's backend, for stories and unit tests: the agents and chats kept in the page, with no
- * host, and an agent that answers by a small script instead of an AG-UI endpoint. What the person says picks what it
- * does: `hello` is answered `Hi there`, `slow` says one piece and then goes on until it is stopped (so a story can
- * show an answer on its way without racing it), `tool` uses a tool, `ask` stops at a question, `surface` draws an
- * A2UI surface with a button, and anything else is echoed, a piece at a time.
+ * host, and an agent that answers by a small script instead of an ACP agent. What the person says picks what it does:
+ * `hello` is answered `Hi there`, `slow` says one piece and then goes on until it is stopped (so a story can show an
+ * answer on its way without racing it), `tool` thinks, plans and changes a file, `ask` asks for a permission and goes
+ * on with the answer, and anything else is echoed, a piece at a time.
  */
 type Agent = VosApp.Agents.Agent
 type Chat = VosApp.Agents.Chat
@@ -11,29 +11,21 @@ type Conversation = VosApp.Agents.Conversation
 type Item = VosApp.Agents.Item
 import type { AgentsEvents, AgentsRpc } from './agents.svelte'
 
-export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'http://localhost:4000/agent', token: false }
+export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'ws://localhost:5424/acp', token: false, folder: '/home/ada/project' }
 
-/** The surface the scripted agent draws: a greeting bound to its data, a field that writes to it, and a button. */
-export const SURFACE = {
-  a2ui_operations: [
-    { version: 'v0.9', createSurface: { surfaceId: 'booking', catalogId: 'basic' } },
-    {
-      version: 'v0.9',
-      updateComponents: {
-        surfaceId: 'booking',
-        components: [
-          { id: 'root', component: 'Card', child: 'column' },
-          { id: 'column', component: 'Column', children: ['title', 'who', 'guests', 'confirm'] },
-          { id: 'title', component: 'Text', variant: 'h3', text: 'Book a table' },
-          { id: 'who', component: 'TextField', label: 'Name', value: { path: '/name' } },
-          { id: 'guests', component: 'Text', text: { call: 'formatString', args: { value: 'A table for ${/guests}, for ${/name}.' } } },
-          { id: 'confirm', component: 'Button', variant: 'primary', child: 'confirm_label', action: { event: { name: 'confirm', context: { name: { path: '/name' } } } } },
-          { id: 'confirm_label', component: 'Text', text: 'Confirm' }
-        ]
-      }
-    },
-    { version: 'v0.9', updateDataModel: { surfaceId: 'booking', value: { name: 'Ada', guests: 2 } } }
-  ]
+/** The options an agent offers when it asks before it changes a file. */
+export const OPTIONS = [
+  { option_id: 'allow', name: 'Allow', kind: 'allow_once' },
+  { option_id: 'always', name: 'Always allow', kind: 'allow_always' },
+  { option_id: 'reject', name: 'Reject', kind: 'reject_once' }
+]
+
+/** A change to a file, as a tool call carries it. */
+export const DIFF = {
+  type: 'diff',
+  path: '/home/ada/project/list.md',
+  patch: '--- /home/ada/project/list.md\n+++ /home/ada/project/list.md\n@@ -1,2 +1,3 @@\n # Shopping\n-Bread\n+Bread\n+Milk\n',
+  new_file: false
 }
 
 export interface FakeBackend {
@@ -65,19 +57,35 @@ export type Said = Pick<Item, 'kind'> & Partial<Omit<Item, 'id' | 'chat' | 'kind
 
 const itemOf = (chat: string, id: number, said: Said): Item => ({ id, chat, text: '', name: '', data: '', done: true, ...said })
 
-/** One thing the scripted agent does: say a piece, add an item, or go on until stopped (`null`). */
+/** One thing the scripted agent does: say a piece, add an item, or go on until stopped or answered (`null`). */
 type Step = string | Said | null
+
+/** A tool call of the scripted agent's: it adds milk to a list. */
+export const TOOL: Said = {
+  kind: 'tool',
+  name: 'Add milk to list.md',
+  data: JSON.stringify({ kind: 'edit', status: 'completed', content: [DIFF], locations: [{ path: DIFF.path, line: 2 }] })
+}
+/** The scripted agent's plan. */
+export const PLAN: Said = {
+  kind: 'plan',
+  data: JSON.stringify({
+    entries: [
+      { content: 'Find the list', priority: 'high', status: 'completed' },
+      { content: 'Add milk', priority: 'medium', status: 'in_progress' }
+    ]
+  })
+}
+/** The permission the scripted agent asks for. */
+export const ASKING: Said = { kind: 'permission', text: 'Add milk to list.md', data: JSON.stringify({ kind: 'edit', options: OPTIONS }), done: false }
 
 /** What the script does about a prompt. */
 function script(text: string): Step[] {
   const said = text.trim().toLowerCase()
   if (said === 'hello') return ['Hi ', 'there']
   if (said === 'slow') return ['Thinking', null]
-  if (said === 'tool')
-    return [{ kind: 'tool', name: 'notes__add', text: '{"title":"Milk"}', data: JSON.stringify({ ours: true, result: '{"id":1}' }) }, 'Added.']
-  if (said === 'ask')
-    return [{ kind: 'interrupt', text: 'Send the report to everyone?', name: 'approval', data: JSON.stringify({ status: 'open' }), done: false }]
-  if (said === 'surface') return [{ kind: 'activity', name: 'a2ui-surface', data: JSON.stringify(SURFACE) }]
+  if (said === 'tool') return [{ kind: 'reasoning', text: 'The list is in list.md.' }, PLAN, TOOL, 'Added.']
+  if (said === 'ask') return [ASKING, null]
   return ['echo:', ...text.trim().split(/\s+/).map((word) => ` ${word}`)]
 }
 
@@ -88,8 +96,7 @@ export function conversation(id: string, title: string, said: readonly (Said | r
     chat: { id, title, agent: SCRIPTED.name, updated: '2026-06-09T08:41:00.000Z' },
     items,
     busy: false,
-    waiting: items.some((item) => item.kind === 'interrupt' && !item.done),
-    state: ''
+    waiting: items.some((item) => item.kind === 'permission' && !item.done)
   }
 }
 
@@ -103,8 +110,8 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     agent: SCRIPTED.id,
     items: c.items.map((item) => ({ ...item }))
   }))
-  // the turn in progress in each chat: how to stop it
-  const running = new Map<string, () => void>()
+  // the turn in progress in each chat: how to stop it, and how it goes on after a pause
+  const running = new Map<string, { stop: () => void; resume: (steps: Step[]) => void }>()
   const listeners = new Map<string, Set<(data: unknown) => void>>()
   let nextChat = chats.length + 1
   let nextAgent = 1
@@ -123,17 +130,17 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       chat: { ...found.chat },
       items: found.items.map((item) => ({ ...item })),
       busy: running.has(id),
-      waiting: found.items.some((item) => item.kind === 'interrupt' && !item.done),
-      state: ''
+      waiting: found.items.some((item) => item.kind === 'permission' && !item.done)
     }
   }
-  const check = (name: string, url: string): void => {
+  const check = (name: string, url: string, folder: string): void => {
     if (name.trim() === '') throw new Refused('Give the agent a name.')
-    if (!/^https?:\/\/[^/]/.test(url.trim())) throw new Refused('The endpoint must be an http:// or https:// URL.')
+    if (!/^wss?:\/\/[^/]/.test(url.trim())) throw new Refused('The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
+    if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(folder.trim() || '/')) throw new Refused("The folder must be an absolute path on the agent's machine, like /home/me/project.")
   }
 
   function finish(id: string): void {
-    for (const item of find(id).items) if (item.kind !== 'interrupt') item.done = true
+    for (const item of find(id).items) item.done = true
     running.delete(id)
     emit('turn', { chat: id })
   }
@@ -146,7 +153,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     const next = (): void => {
       const step = steps.shift()
       if (step === undefined) return finish(id)
-      if (step === null) return // going on, until stopped
+      if (step === null) return // going on, until stopped or answered
       if (typeof step === 'string') {
         if (!answer) {
           answer = itemOf(id, nextItem++, { kind: 'assistant', done: false })
@@ -156,6 +163,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         answer.text += step
         emit('piece', { chat: id, item: answer.id, text: step })
       } else {
+        answer = undefined
         const item = itemOf(id, nextItem++, step)
         found.items.push(item)
         emit('item', { chat: id, item: { ...item } })
@@ -163,25 +171,32 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       timer = setTimeout(next, pace)
     }
     timer = setTimeout(next, pace)
-    running.set(id, () => clearTimeout(timer))
-  }
-
-  const free = (chat: string): void => {
-    if (running.has(chat)) throw new Refused('The agent is still answering.')
+    running.set(id, {
+      stop: () => clearTimeout(timer),
+      resume: (more) => {
+        steps = more
+        timer = setTimeout(next, pace)
+      }
+    })
   }
 
   const rpc: AgentsRpc = {
     agents: async () => agents.map((a) => ({ ...a })),
-    addAgent: async ({ name, url, token }) => {
-      check(name, url)
-      agents = [...agents, { id: `agent-${nextAgent++}`, name: name.trim(), url: url.trim(), token: (token ?? '') !== '' }]
+    addAgent: async ({ name, url, token, folder }) => {
+      check(name, url, folder ?? '')
+      agents = [...agents, { id: `agent-${nextAgent++}`, name: name.trim(), url: url.trim(), token: (token ?? '') !== '', folder: folder?.trim() || '/' }]
       return agents.map((a) => ({ ...a }))
     },
-    updateAgent: async ({ agent, name, url, token, forget }) => {
+    updateAgent: async ({ agent, name, url, token, forget, folder }) => {
       const who = agents.find((a) => a.id === agent)
       if (!who) throw new Refused('There is no such agent.')
-      check(name, url)
-      Object.assign(who, { name: name.trim(), url: url.trim(), token: (token ?? '') !== '' ? true : forget === true ? false : who.token })
+      check(name, url, folder ?? '')
+      Object.assign(who, {
+        name: name.trim(),
+        url: url.trim(),
+        folder: folder?.trim() || '/',
+        token: (token ?? '') !== '' ? true : forget === true ? false : who.token
+      })
       for (const c of chats) if (c.agent === who.id) c.chat.agent = who.name
       return agents.map((a) => ({ ...a }))
     },
@@ -201,7 +216,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     send: async ({ chat, text }) => {
       const found = find(chat)
       if (text.trim() === '') throw new Refused('Write something first.')
-      free(chat)
+      if (running.has(chat)) throw new Refused('The agent is still answering.')
       found.items.push(itemOf(chat, nextItem++, { kind: 'user', text: text.trim() }))
       if (found.chat.title === 'New chat') found.chat.title = titleOf(text)
       found.chat.updated = new Date().toISOString()
@@ -209,34 +224,30 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       turn(chat, script(text))
       return view(chat)
     },
-    answer: async ({ chat, item, decline, payload }) => {
+    answer: async ({ chat, item, option }) => {
       const found = find(chat)
-      free(chat)
-      const question = found.items.find((i) => i.id === item && i.kind === 'interrupt' && !i.done)
-      if (!question) throw new Refused('That question is not open any more.')
+      const question = found.items.find((i) => i.id === item && i.kind === 'permission' && !i.done)
+      const going = running.get(chat)
+      if (!question || !going) throw new Refused('That question is not open any more.')
+      const offered = OPTIONS.find((o) => o.option_id === option)
+      if (!offered) throw new Refused('The agent did not offer that answer.')
       question.done = true
-      question.data = JSON.stringify({ status: decline ? 'cancelled' : 'resolved' })
-      turn(chat, [decline ? 'Then I will not.' : `You answered: ${String(JSON.parse(payload ?? '""'))}`])
-      return view(chat)
-    },
-    act: async ({ chat, action }) => {
-      find(chat)
-      free(chat)
-      const done = JSON.parse(action) as { name: string; context: Record<string, unknown> }
-      turn(chat, [`You pressed ${done.name}: ${JSON.stringify(done.context)}`])
+      question.data = JSON.stringify({ kind: 'edit', options: OPTIONS, chosen: option })
+      emit('item', { chat, item: { ...question } })
+      going.resume(offered.kind.startsWith('allow') ? [TOOL, 'Added.'] : ['Then I will not.'])
       return view(chat)
     },
     stop: async ({ chat }) => {
       find(chat)
-      const stop = running.get(chat)
-      if (stop) {
-        stop()
+      const going = running.get(chat)
+      if (going) {
+        going.stop()
         finish(chat)
       }
       return view(chat)
     },
     removeChat: async ({ chat }) => {
-      running.get(chat)?.()
+      running.get(chat)?.stop()
       running.delete(chat)
       chats = chats.filter((c) => c.chat.id !== chat)
       return chats.map((c) => ({ ...c.chat }))
@@ -269,7 +280,6 @@ export function createFailingBackend(message: string): FakeBackend {
       open: refuse,
       send: refuse,
       answer: refuse,
-      act: refuse,
       stop: refuse,
       removeChat: refuse
     },

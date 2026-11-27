@@ -19,357 +19,6 @@ export type mlua_Stream<T, E> = {
 	close: (self: mlua_Stream<T, E>) -> (),
 }
 
--- ===== lib:agui =====
-
---- One part of a message's content, told apart by its `type`.
-export type lib_agui_ContentPart =
-	--- Text.
-	{ type: "text", text: string, id: string?, metadata: any? }
-	--- An image.
-	| { type: "image", source: lib_agui_PartSource, id: string?, metadata: any? }
-	--- Sound.
-	| { type: "audio", source: lib_agui_PartSource, id: string?, metadata: any? }
-	--- A video.
-	| { type: "video", source: lib_agui_PartSource, id: string?, metadata: any? }
-	--- A document.
-	| { type: "document", source: lib_agui_PartSource, id: string?, metadata: any? }
-	--- Deprecated in the SDK for the four kinds above; still read and written.
-	| { type: "binary", mime_type: string, id: string?, url: string?, data: string?, filename: string? }
-
---- Something the agent should know.
-export type lib_agui_Context = {
-	--- What the value is.
-	description: string,
-	--- The value.
-	value: string,
-}
-
---- One event of a run, told apart by its `type`. Data inside an event (`snapshot`, `content`,
---- `raw_event`, `value`) is as the agent sent it, with JSON `null` as `nil`.
-export type lib_agui_Event =
-	--- A message of the agent begins.
-	{ type: "TEXT_MESSAGE_START", message_id: string, role: string, name: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The next piece of a message's text.
-	| { type: "TEXT_MESSAGE_CONTENT", message_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A message is complete.
-	| { type: "TEXT_MESSAGE_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A start, a content and an end in one: the first chunk of a message carries its id.
-	| { type: "TEXT_MESSAGE_CHUNK", message_id: string?, role: string?, delta: string?, name: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The agent asks for a tool.
-	| { type: "TOOL_CALL_START", tool_call_id: string, tool_call_name: string, parent_message_id: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A piece of a call's arguments, which are JSON text once joined.
-	| { type: "TOOL_CALL_ARGS", tool_call_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A call's arguments are complete.
-	| { type: "TOOL_CALL_END", tool_call_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A start, arguments and an end in one: the first chunk of a call carries its id and the tool's name.
-	| { type: "TOOL_CALL_CHUNK", tool_call_id: string?, tool_call_name: string?, parent_message_id: string?, delta: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The result of a tool the agent ran itself.
-	| { type: "TOOL_CALL_RESULT", message_id: string, tool_call_id: string, content: string, role: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The whole state.
-	| { type: "STATE_SNAPSHOT", snapshot: any?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A change to the state.
-	| { type: "STATE_DELTA", delta: { any }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The whole conversation as the agent has it.
-	| { type: "MESSAGES_SNAPSHOT", messages: { lib_agui_Message }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- An activity message, whole.
-	| { type: "ACTIVITY_SNAPSHOT", message_id: string, activity_type: string, content: any?, replace: boolean, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A change to the content of an activity message.
-	| { type: "ACTIVITY_DELTA", message_id: string, activity_type: string, patch: { any }, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- An event of the agent's own framework.
-	| { type: "RAW", event: any?, source: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- An event of the application's own.
-	| { type: "CUSTOM", name: string, value: any?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The run began.
-	| { type: "RUN_STARTED", thread_id: string, run_id: string, protocol_version: string?, parent_run_id: string?, input: lib_agui_RunAgentInput?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The run ended as the agent meant it to.
-	| { type: "RUN_FINISHED", thread_id: string?, run_id: string?, result: any?, outcome: lib_agui_RunOutcome?, usage: { lib_agui_TokenUsage }?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The run failed.
-	| { type: "RUN_ERROR", message: string, code: string?, usage: { lib_agui_TokenUsage }?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A step of the run began.
-	| { type: "STEP_STARTED", step_name: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A step of the run ended.
-	| { type: "STEP_FINISHED", step_name: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The agent begins to reason.
-	| { type: "REASONING_START", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A reasoning message begins.
-	| { type: "REASONING_MESSAGE_START", message_id: string, role: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The next piece of the reasoning's text.
-	| { type: "REASONING_MESSAGE_CONTENT", message_id: string, delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A reasoning message is complete.
-	| { type: "REASONING_MESSAGE_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A start, a content and an end of reasoning in one.
-	| { type: "REASONING_MESSAGE_CHUNK", message_id: string?, delta: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The agent stops reasoning.
-	| { type: "REASONING_END", message_id: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- The provider's opaque form of a message's or a tool call's reasoning.
-	| { type: "REASONING_ENCRYPTED_VALUE", subtype: string, entity_id: string, encrypted_value: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A subagent began.
-	| { type: "SUBAGENT_STARTED", name: string, description: string?, parent_subagent_run_id: string?, parent_tool_call_id: string?, parent_message_id: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A subagent ended as it meant to.
-	| { type: "SUBAGENT_FINISHED", result: any?, outcome: lib_agui_SubagentOutcome?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- A subagent failed.
-	| { type: "SUBAGENT_ERROR", message: string, code: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- Deprecated in the SDK for `REASONING_START`; agents still send it.
-	| { type: "THINKING_START", title: string?, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- Deprecated in the SDK for `REASONING_END`.
-	| { type: "THINKING_END", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- Deprecated in the SDK for `REASONING_MESSAGE_START`.
-	| { type: "THINKING_TEXT_MESSAGE_START", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- Deprecated in the SDK for `REASONING_MESSAGE_CONTENT`.
-	| { type: "THINKING_TEXT_MESSAGE_CONTENT", delta: string, timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-	--- Deprecated in the SDK for `REASONING_MESSAGE_END`.
-	| { type: "THINKING_TEXT_MESSAGE_END", timestamp: number?, raw_event: any?, metadata: any?, subagent_run_id: string? }
-
---- The tool a call names, and what it is called with.
-export type lib_agui_FunctionCall = {
-	--- The tool's name.
-	name: string,
-	--- The arguments, as JSON text.
-	arguments: string,
-}
-
---- A question a run stopped at: the next run answers it with a `ResumeEntry`.
-export type lib_agui_Interrupt = {
-	--- What a resume entry's `interrupt_id` names.
-	id: string,
-	--- Why the run stopped, in the agent's own word (`tool_approval`, ...).
-	reason: string?,
-	--- The question, for the person.
-	message: string?,
-	--- The tool call the question is about.
-	tool_call_id: string?,
-	--- The JSON Schema the answer's `payload` must fit.
-	response_schema: any?,
-	--- When the question stops being answerable.
-	expires_at: string?,
-	--- The sender's own annotations.
-	metadata: any?,
-	--- The subagent that asked.
-	subagent_run_id: string?,
-}
-
---- One message of the conversation, told apart by its `role`.
-export type lib_agui_Message =
-	--- Instructions from whoever built the program in front of the agent.
-	{ role: "developer", id: string, content: string, name: string?, metadata: any? }
-	--- The system prompt.
-	| { role: "system", id: string, content: string, name: string?, metadata: any? }
-	--- What the agent said, and the tools it asked for.
-	| { role: "assistant", id: string, content: string?, tool_calls: { lib_agui_ToolCall }?, name: string?, metadata: any? }
-	--- What the person said.
-	| { role: "user", id: string, content: string | { lib_agui_ContentPart }, name: string?, metadata: any? }
-	--- The result of a tool call.
-	| { role: "tool", id: string, content: string | { lib_agui_ContentPart }, tool_call_id: string, error: string?, encrypted_value: string?, metadata: any? }
-	--- Something the agent is doing, shown between the messages; never sent back to an agent.
-	| { role: "activity", id: string, activity_type: string, content: any, metadata: any? }
-	--- The agent's reasoning.
-	| { role: "reasoning", id: string, content: string, encrypted_value: string?, metadata: any? }
-
---- Where the bytes of a part are, told apart by its `type`.
-export type lib_agui_PartSource =
-	--- Inline.
-	{ type: "data", value: string, mime_type: string }
-	--- At a URL.
-	| { type: "url", value: string, mime_type: string? }
-	--- A file the provider already holds.
-	| { type: "file", value: string, provider: string?, mime_type: string? }
-
---- The kinds of `lib_agui_PatchError`.
-export type lib_agui_PatchErrorKind = "invalid_patch" | "failed" | "too_large"
-
---- Why a JSON Patch was not applied.
-export type lib_agui_PatchError =
-	--- The patch is not a list of RFC 6902 operations.
-	{ kind: "invalid_patch", reason: string, message: string, op: string }
-	--- An operation could not be applied: a path that is not there, a failed `test`.
-	| { kind: "failed", reason: string, message: string, op: string }
-	--- The patch has more operations than one may, or would grow the document past what one may be.
-	| { kind: "too_large", reason: string, message: string, op: string }
-
---- The answer to one interrupt.
-export type lib_agui_ResumeEntry = {
-	--- The interrupt's `id`.
-	interrupt_id: string,
-	--- `resolved` or `cancelled`.
-	status: string,
-	--- The answer: what the interrupt's `response_schema` describes.
-	payload: any?,
-	--- The sender's own annotations.
-	metadata: any?,
-}
-
---- The body of the POST that starts a run.
-export type lib_agui_RunAgentInput = {
-	--- The conversation the run belongs to.
-	thread_id: string,
-	--- This run's own id.
-	run_id: string,
-	--- The run this one continues or branches from.
-	parent_run_id: string?,
-	--- The whole conversation so far. Activity messages are not sent back to an agent: leave them out.
-	messages: { lib_agui_Message }?,
-	--- The tools the caller offers: the agent asks for one with a tool call, the run ends, and the caller
-	--- answers with a `tool` message in the next run.
-	tools: { lib_agui_Tool }?,
-	--- Things the agent should know, each a description and a value.
-	context: { lib_agui_Context }?,
-	--- The state the agent starts from.
-	state: any?,
-	--- Anything else for the agent, passed through as it is.
-	forwarded_props: any?,
-	--- The answers to the interrupts the last run ended with.
-	resume: { lib_agui_ResumeEntry }?,
-}
-
---- The kinds of `lib_agui_RunError`.
-export type lib_agui_RunErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "too_large" | "connection_lost" | "bad_response" | "status" | "protocol" | "other"
-
---- Why a run could not start, or ended before the agent ended it. The transport's kinds mean what they mean in
---- `vnd:hyper`; `reason` is for a person or a log.
-export type lib_agui_RunError =
-	--- An option, a header or the input was refused before anything was sent.
-	{ kind: "invalid_input", reason: string, message: string, op: string }
-	--- The URL is not an `http` or `https` URL with a host.
-	| { kind: "invalid_url", reason: string, message: string, op: string }
-	--- No connection could be made: the name did not resolve, or the host refused or could not be reached.
-	| { kind: "connect", reason: string, message: string, op: string }
-	--- The TLS handshake failed, usually over the certificate.
-	| { kind: "tls", reason: string, message: string, op: string }
-	--- A time limit passed: connecting, no data arriving, or the whole run.
-	| { kind: "timed_out", limit: vnd_hyper_TimeLimit, reason: string, message: string, op: string }
-	--- One event is longer than `max_event`.
-	| { kind: "too_large", max_event: number, message: string, op: string }
-	--- The connection ended or failed before the stream did.
-	| { kind: "connection_lost", reason: string, message: string, op: string }
-	--- The endpoint answered with something that is not valid HTTP.
-	| { kind: "bad_response", reason: string, message: string, op: string }
-	--- The endpoint answered, and not with 2xx (a 3xx too: redirects are not followed).
-	| { kind: "status", status: number, body: string, message: string, op: string }
-	--- The answer is not an event stream, or an event in it is not an AG-UI event (a field missing or of the
-	--- wrong type).
-	| { kind: "protocol", reason: string, message: string, op: string }
-	--- Anything else, reported and never hidden.
-	| { kind: "other", reason: string, message: string, op: string }
-
---- What a run's request sends besides the input, and the limits it keeps to.
-export type lib_agui_RunOptions = {
-	--- Headers to add to the request (`Authorization` for an endpoint that wants a token).
-	--- `Content-Type: application/json` and `Accept: text/event-stream` are sent unless given. Default: `{}`.
-	headers: { [string]: string }?,
-	--- PEM certificates to trust instead of the platform's.
-	ca_pem: string?,
-	--- Seconds the TCP connect and the TLS handshake may take. Default: `10.0`.
-	connect_timeout: number?,
-	--- Seconds without data: an agent that is thinking sends nothing, so this is longer than `vnd:hyper`'s. Default: `300.0`.
-	idle_timeout: number?,
-	--- Seconds the whole run may take. No limit when not given.
-	timeout: number?,
-	--- The most bytes one event may take; a longer one ends the run with `too_large`. It bounds one event,
-	--- not the run. Default: `8388608`.
-	max_event: number?,
-}
-
---- How a run ended.
-export type lib_agui_RunOutcome = {
-	--- `success`, or `interrupt`.
-	type: string,
-	--- The questions the run stopped at: the next run answers every one of them in its input's `resume`.
-	interrupts: { lib_agui_Interrupt }?,
-}
-
---- How a subagent ended.
-export type lib_agui_SubagentOutcome = {
-	--- `success`, or `suspended`.
-	type: string,
-	--- The interrupts of the run it is suspended at.
-	interrupt_ids: { string }?,
-}
-
---- The tokens one model call of a run used.
-export type lib_agui_TokenUsage = {
-	--- Whose model it was.
-	provider: string?,
-	--- The model.
-	model: string?,
-	--- The tokens read.
-	input_tokens: number?,
-	--- The tokens written.
-	output_tokens: number?,
-	--- Both together.
-	total_tokens: number?,
-	--- The tokens of the output that were reasoning.
-	reasoning_tokens: number?,
-	--- The tokens of the input that were read from a cache.
-	cached_input_tokens: number?,
-	--- The tokens of the input that were written to a cache.
-	cache_write_input_tokens: number?,
-}
-
---- A tool the caller offers.
-export type lib_agui_Tool = {
-	--- The tool's name.
-	name: string,
-	--- What it does, for the model.
-	description: string,
-	--- The JSON Schema of its arguments; an object with no properties when left out.
-	parameters: any?,
-}
-
---- A tool the agent asked for.
-export type lib_agui_ToolCall = {
-	--- The call's id: a `tool` message answers it by this.
-	id: string,
-	--- Always `function`; that when left out.
-	type: string?,
-	--- The tool asked for, and its arguments.
-	["function"]: lib_agui_FunctionCall,
-	--- The provider's opaque form, to be sent back as it is.
-	encrypted_value: string?,
-	--- The sender's own annotations.
-	metadata: any?,
-}
-
-export type lib_agui = {
-	--- Start a run: POST `input` to the agent's AG-UI endpoint at `url` (`http` or `https`) and read its answer as
-	--- a stream of events. Returns when the endpoint has answered: a stream whose `next()` gives the events.
-	---
-	--- `next()` is `(event, nil)`, `(nil, nil)` when the stream has ended (the agent closed it, which after a
-	--- `RUN_FINISHED` or a `RUN_ERROR` is the end of the run and before one is a run cut short), or `(nil, err)`
-	--- when the stream failed (the connection was lost, nothing arrived for `idle_timeout`, an event is not an
-	--- AG-UI event or is over `max_event`); nothing follows an error. An event of a type the module does not know
-	--- is skipped. `close()` stops the run: the connection closes, which is how an agent is told to stop, and
-	--- `next()` returns `(nil, nil)` from then on.
-	---
-	--- Redirects are not followed: a 3xx, like any answer that is not 2xx, is a `status` error that quotes the
-	--- start of the body. An answer that is not `text/event-stream` is `protocol`. The connection belongs to the
-	--- script: it closes when the run is closed or collected and when the script stops.
-	---
-	--- ```luau
-	--- local run, err = agui.run("http://127.0.0.1:1/agent", {
-	---     thread_id = "t1",
-	---     run_id = "r1",
-	---     messages = { { id = "m1", role = "user", content = "hello" } },
-	--- }, { headers = { authorization = "Bearer token" }, connect_timeout = 2 })
-	--- if run == nil then
-	---     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
-	--- end
-	--- ```
-	---
-	--- Yields the calling coroutine while it waits.
-	run: (url: string, input: lib_agui_RunAgentInput, opts: lib_agui_RunOptions?) -> (mlua_Stream<lib_agui_Event, lib_agui_RunError>?, lib_agui_RunError?),
-	--- Apply a JSON Patch (RFC 6902: what `STATE_DELTA.delta` and `ACTIVITY_DELTA.patch` are) to `document` and
-	--- return the new document; `document` itself is not changed. All of the patch applies or none of it. A table
-	--- with no entries is an empty list; JSON `null` is `nil`, so a patch cannot store one in an array.
-	---
-	--- ```luau
-	--- local state = { steps = { "read" } }
-	--- local next = assert(agui.apply_patch(state, { { op = "add", path = "/steps/-", value = "write" } }))
-	--- local none, err = agui.apply_patch(state, { { op = "remove", path = "/missing" } })
-	--- assert(none == nil and err ~= nil and err.kind == "failed")
-	--- ```
-	apply_patch: (document: any, patch: { any }) -> (any, lib_agui_PatchError?),
-}
-
 -- ===== lib:archive =====
 
 --- The kinds of `lib_archive_ArchiveError`.
@@ -4519,6 +4168,432 @@ export type std_time = {
 	sleep: (duration: std_time_Duration) -> std_time_Duration,
 }
 
+-- ===== vnd:agent_client_protocol =====
+
+--- The kinds of `vnd_agent_client_protocol_AcpError`.
+export type vnd_agent_client_protocol_AcpErrorKind = "invalid_input" | "connect" | "status" | "protocol" | "rpc" | "closed" | "timed_out"
+
+--- Why a call failed. `reason` is for a person or a log.
+export type vnd_agent_client_protocol_AcpError =
+	--- An option, a header, the URL or an argument was refused before anything was sent.
+	{ kind: "invalid_input", reason: string, message: string, op: string }
+	--- No connection could be made: the name did not resolve, the host refused or could not be reached, or the
+	--- TLS handshake failed.
+	| { kind: "connect", reason: string, message: string, op: string }
+	--- The endpoint answered the WebSocket upgrade with an HTTP status instead (`403` for an `Origin` acpd
+	--- refuses, `404` for an agent it does not have).
+	| { kind: "status", code: number, body: string, message: string, op: string }
+	--- The endpoint is not an ACP agent: the WebSocket upgrade went wrong, or an answer is not what ACP v1 says.
+	| { kind: "protocol", reason: string, message: string, op: string }
+	--- The request failed with a JSON-RPC error: the agent's answer, or the SDK's own (-32600 for an agent of
+	--- another protocol version, -32603 for an answer that is not what ACP says it is).
+	| { kind: "rpc", code: number, reason: string, message: string, op: string }
+	--- The connection is closed: by `close()`, by the agent, or by the engine shutting down.
+	| { kind: "closed", reason: string, message: string, op: string }
+	--- `connect` took longer than its `timeout`.
+	| { kind: "timed_out", reason: string, message: string, op: string }
+
+--- What the agent can do.
+export type vnd_agent_client_protocol_AgentCapabilities = {
+	--- Whether it can load a session it had before (`load_session`).
+	load_session: boolean,
+	--- What a prompt may hold.
+	prompt_capabilities: vnd_agent_client_protocol_PromptCapabilities,
+	--- The MCP servers it can be given.
+	mcp_capabilities: vnd_agent_client_protocol_McpCapabilities,
+}
+
+--- A way to sign in to the agent.
+export type vnd_agent_client_protocol_AuthMethod = {
+	--- Its id.
+	id: string,
+	--- Its name, for people.
+	name: string,
+	--- What it is.
+	description: string?,
+}
+
+--- A command a prompt can start with (`/review`).
+export type vnd_agent_client_protocol_AvailableCommand = {
+	--- Its name, without the `/`.
+	name: string,
+	--- What it does.
+	description: string,
+	--- What it takes after its name, when it takes something.
+	input: vnd_agent_client_protocol_AvailableCommandInput?,
+}
+
+--- What a command takes after its name.
+export type vnd_agent_client_protocol_AvailableCommandInput = {
+	--- A hint, for people, of what to write.
+	hint: string,
+}
+
+--- How `connect` connects.
+export type vnd_agent_client_protocol_ConnectOptions = {
+	--- Headers to add to the WebSocket upgrade (`Authorization` for an endpoint that wants a token). No `Origin`
+	--- is sent unless given here. Default: `{}`.
+	headers: { [string]: string }?,
+	--- Seconds the connection and the agent's answer to `initialize` may take together. Default: `30.0`.
+	timeout: number?,
+	--- Who the client says it is in `initialize`; `neoc` and its version when not given.
+	client_info: vnd_agent_client_protocol_Implementation?,
+}
+
+--- A connection to an agent. Copies of the handle are the same connection.
+declare extern type vnd_agent_client_protocol_Connection with
+	--- The agent's answer to `initialize`: its version, what it can do, its name. Read-only.
+	agent: vnd_agent_client_protocol_InitializeResponse
+	--- The IP address of this end of the connection: the address this machine has on the way to the agent
+	--- (`127.0.0.1` for an agent on this machine). Read-only.
+	local_address: string
+	--- Start a session (`session/new`) in `cwd` on the agent's machine, with the MCP servers it connects to.
+	--- What the agent sends for the session from then on is read by its turns: an update sent between two
+	--- turns (the commands a new session has, say) is given by the next one.
+	---
+	--- Yields the calling coroutine while it waits.
+	new_session: (self: vnd_agent_client_protocol_Connection, params: vnd_agent_client_protocol_NewSessionRequest) -> (vnd_agent_client_protocol_NewSessionResponse?, vnd_agent_client_protocol_AcpError?)
+	--- Load a session the agent had before (`session/load`), when its `agent_capabilities.load_session` says
+	--- it can. The agent replays the session's history before it answers; that history is dropped here.
+	---
+	--- Yields the calling coroutine while it waits.
+	load_session: (self: vnd_agent_client_protocol_Connection, params: vnd_agent_client_protocol_LoadSessionRequest) -> (vnd_agent_client_protocol_LoadSessionResponse?, vnd_agent_client_protocol_AcpError?)
+	--- Send a prompt (`session/prompt`) to a session this connection started or loaded, and return the turn at
+	--- once: its `next()` gives what the agent does until it answers. A session has one turn at a time: a
+	--- prompt while one is going is `invalid_input`.
+	prompt: (self: vnd_agent_client_protocol_Connection, params: vnd_agent_client_protocol_PromptRequest) -> (vnd_agent_client_protocol_Turn?, vnd_agent_client_protocol_AcpError?)
+	--- Ask the agent to stop the session's turn (`session/cancel`). The permission requests the turn is
+	--- waiting on are answered `cancelled` first, as ACP asks; the turn then ends with a `done` event whose
+	--- `stop_reason` is `cancelled`, when the agent has stopped.
+	cancel: (self: vnd_agent_client_protocol_Connection, session_id: string) -> (boolean?, vnd_agent_client_protocol_AcpError?)
+	--- Close the connection. Calls in flight and turns end with a `closed` error. Closing again does nothing.
+	close: (self: vnd_agent_client_protocol_Connection) -> ()
+end
+
+--- A piece of a prompt or of what the agent says, told apart by its `type`.
+export type vnd_agent_client_protocol_ContentBlock =
+	--- Text (Markdown, for what the agent says).
+	{ type: "text", text: string }
+	--- An image (in a prompt, when the agent's `prompt_capabilities.image` says it takes one).
+	| { type: "image", data: string, mime_type: string, uri: string? }
+	--- Sound (in a prompt, when the agent's `prompt_capabilities.audio` says it takes it).
+	| { type: "audio", data: string, mime_type: string }
+	--- A reference to something the agent can read for itself.
+	| { type: "resource_link", uri: string, name: string, mime_type: string?, title: string?, description: string?, size: number? }
+	--- Something embedded whole (in a prompt, when the agent's `prompt_capabilities.embedded_context` says it
+	--- takes it).
+	| { type: "resource", resource: vnd_agent_client_protocol_EmbeddedResource }
+
+--- The content of an embedded resource: text or bytes.
+export type vnd_agent_client_protocol_EmbeddedResource = {
+	--- Where it is from.
+	uri: string,
+	--- Its media type.
+	mime_type: string?,
+	--- Its text, when it is text.
+	text: string?,
+	--- Its bytes, base64, when it is not text.
+	blob: string?,
+}
+
+--- An environment variable an MCP server is started with.
+export type vnd_agent_client_protocol_EnvVariable = {
+	--- The variable's name.
+	name: string,
+	--- Its value.
+	value: string,
+}
+
+--- A header sent to an MCP server.
+export type vnd_agent_client_protocol_HttpHeader = {
+	--- The header's name.
+	name: string,
+	--- Its value.
+	value: string,
+}
+
+--- A program on one end of the connection: its name and version.
+export type vnd_agent_client_protocol_Implementation = {
+	--- Its name, for programs.
+	name: string,
+	--- Its name, for people.
+	title: string?,
+	--- Its version.
+	version: string,
+}
+
+--- The agent's answer to `initialize`.
+export type vnd_agent_client_protocol_InitializeResponse = {
+	--- The version of ACP the agent speaks: always 1 (the SDK refuses another with an `rpc` error, -32600).
+	protocol_version: number,
+	--- What it can do.
+	agent_capabilities: vnd_agent_client_protocol_AgentCapabilities,
+	--- Its name and version.
+	agent_info: vnd_agent_client_protocol_Implementation?,
+	--- The ways to sign in to it; none when it needs no sign-in.
+	auth_methods: { vnd_agent_client_protocol_AuthMethod },
+}
+
+--- What `load_session` is given.
+export type vnd_agent_client_protocol_LoadSessionRequest = {
+	--- The session to load: what `new_session` answered.
+	session_id: string,
+	--- The folder the session works in: an absolute path on the agent's machine.
+	cwd: string,
+	--- The MCP servers the agent connects to for the session.
+	mcp_servers: { vnd_agent_client_protocol_McpServer },
+}
+
+--- The agent's answer to `load_session`.
+export type vnd_agent_client_protocol_LoadSessionResponse = {
+	--- The session's modes, when the agent has modes.
+	modes: vnd_agent_client_protocol_SessionModeState?,
+}
+
+--- The MCP servers a session may be given besides `stdio` ones, which every agent takes.
+export type vnd_agent_client_protocol_McpCapabilities = {
+	--- `http` servers.
+	http: boolean,
+	--- `sse` servers.
+	sse: boolean,
+}
+
+--- An MCP server the agent connects to for the session, told apart by its `type`.
+export type vnd_agent_client_protocol_McpServer =
+	--- A server at a URL, over streamable HTTP (when the agent's `mcp_capabilities.http` says it can).
+	{ type: "http", name: string, url: string, headers: { vnd_agent_client_protocol_HttpHeader } }
+	--- A server at a URL, over server-sent events (when the agent's `mcp_capabilities.sse` says it can).
+	| { type: "sse", name: string, url: string, headers: { vnd_agent_client_protocol_HttpHeader } }
+	--- A program the agent starts on its own machine, which every agent can do. The wire has no `type` for it.
+	| { type: "stdio", name: string, command: string, args: { string }, env: { vnd_agent_client_protocol_EnvVariable } }
+
+--- What `new_session` is given.
+export type vnd_agent_client_protocol_NewSessionRequest = {
+	--- The folder the session works in: an absolute path on the agent's machine.
+	cwd: string,
+	--- The MCP servers the agent connects to for the session.
+	mcp_servers: { vnd_agent_client_protocol_McpServer },
+}
+
+--- The agent's answer to `new_session`.
+export type vnd_agent_client_protocol_NewSessionResponse = {
+	--- The session: what a prompt, a load and a cancel name.
+	session_id: string,
+	--- Its modes, when the agent has modes.
+	modes: vnd_agent_client_protocol_SessionModeState?,
+}
+
+--- An answer the agent offers to a permission request.
+export type vnd_agent_client_protocol_PermissionOption = {
+	--- What `respond_permission` answers with.
+	option_id: string,
+	--- The answer, for people.
+	name: string,
+	--- What kind of answer it is.
+	kind: vnd_agent_client_protocol_PermissionOptionKind,
+}
+
+--- What kind of answer a permission option is.
+--- - `allow_once`: Allow this once.
+--- - `allow_always`: Allow this, and don't ask again.
+--- - `reject_once`: Refuse this once.
+--- - `reject_always`: Refuse this, and don't ask again.
+export type vnd_agent_client_protocol_PermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always"
+
+--- The answer to a permission request, told apart by its `outcome`.
+export type vnd_agent_client_protocol_PermissionOutcome =
+	--- One of the options the agent offered.
+	{ outcome: "selected", option_id: string }
+	--- None: the turn is being cancelled.
+	| { outcome: "cancelled" }
+
+--- A step of a plan.
+export type vnd_agent_client_protocol_PlanEntry = {
+	--- What the step is.
+	content: string,
+	--- How much it matters.
+	priority: vnd_agent_client_protocol_PlanEntryPriority,
+	--- Where it is.
+	status: vnd_agent_client_protocol_PlanEntryStatus,
+}
+
+--- How much a step of a plan matters.
+--- - `high`: Most.
+--- - `medium`: Some.
+--- - `low`: Least.
+export type vnd_agent_client_protocol_PlanEntryPriority = "high" | "medium" | "low"
+
+--- Where a step of a plan is.
+--- - `pending`: Not started.
+--- - `in_progress`: Being done.
+--- - `completed`: Done.
+export type vnd_agent_client_protocol_PlanEntryStatus = "pending" | "in_progress" | "completed"
+
+--- The kinds of content a prompt may hold besides text and resource links, which every agent takes.
+export type vnd_agent_client_protocol_PromptCapabilities = {
+	--- `image` blocks.
+	image: boolean,
+	--- `audio` blocks.
+	audio: boolean,
+	--- `resource` blocks: context embedded in the prompt.
+	embedded_context: boolean,
+}
+
+--- What `prompt` is given.
+export type vnd_agent_client_protocol_PromptRequest = {
+	--- The session.
+	session_id: string,
+	--- What the person says.
+	prompt: { vnd_agent_client_protocol_ContentBlock },
+}
+
+--- A mode the agent can work in (`ask`, `code`, ...).
+export type vnd_agent_client_protocol_SessionMode = {
+	--- Its id.
+	id: string,
+	--- Its name, for people.
+	name: string,
+	--- What it is.
+	description: string?,
+}
+
+--- The modes of a session.
+export type vnd_agent_client_protocol_SessionModeState = {
+	--- The mode the session is in.
+	current_mode_id: string,
+	--- The modes it can be in.
+	available_modes: { vnd_agent_client_protocol_SessionMode },
+}
+
+--- One `session/update`: something the agent did or said, told apart by its `type` (the wire's
+--- `sessionUpdate`).
+export type vnd_agent_client_protocol_SessionUpdate =
+	--- A piece of what the person said (a loaded session's history).
+	{ type: "user_message_chunk", content: vnd_agent_client_protocol_ContentBlock }
+	--- A piece of the agent's answer.
+	| { type: "agent_message_chunk", content: vnd_agent_client_protocol_ContentBlock }
+	--- A piece of the agent's reasoning.
+	| { type: "agent_thought_chunk", content: vnd_agent_client_protocol_ContentBlock }
+	--- The agent starts a tool call.
+	| { type: "tool_call", tool_call_id: string, title: string, kind: vnd_agent_client_protocol_ToolKind?, status: vnd_agent_client_protocol_ToolCallStatus?, content: { vnd_agent_client_protocol_ToolCallContent }?, locations: { vnd_agent_client_protocol_ToolCallLocation }?, raw_input: any?, raw_output: any? }
+	--- A change to a tool call: the fields it has replace the call's, and the rest stay as they were.
+	| { type: "tool_call_update", tool_call_id: string, title: string?, kind: vnd_agent_client_protocol_ToolKind?, status: vnd_agent_client_protocol_ToolCallStatus?, content: { vnd_agent_client_protocol_ToolCallContent }?, locations: { vnd_agent_client_protocol_ToolCallLocation }?, raw_input: any?, raw_output: any? }
+	--- The agent's plan, whole: it replaces the one before.
+	| { type: "plan", entries: { vnd_agent_client_protocol_PlanEntry } }
+	--- The commands a prompt can start with, whole.
+	| { type: "available_commands_update", available_commands: { vnd_agent_client_protocol_AvailableCommand } }
+	--- The session changed mode.
+	| { type: "current_mode_update", current_mode_id: string }
+	--- An update this module does not read: a kind it does not know, or one that is not what ACP v1 says.
+	| { type: "other", session_update: string, update: any }
+
+--- Why the agent ended a turn.
+--- - `end_turn`: It finished.
+--- - `max_tokens`: It reached its limit of tokens.
+--- - `max_turn_requests`: It reached its limit of model requests in one turn.
+--- - `refusal`: It refused to go on.
+--- - `cancelled`: The turn was cancelled (`cancel`).
+export type vnd_agent_client_protocol_StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled"
+
+--- What a tool call produced, told apart by its `type`.
+export type vnd_agent_client_protocol_ToolCallContent =
+	--- Content.
+	{ type: "content", content: vnd_agent_client_protocol_ContentBlock }
+	--- A change to a file.
+	| { type: "diff", path: string, old_text: string?, new_text: string }
+	--- A terminal the agent runs a command in.
+	| { type: "terminal", terminal_id: string }
+
+--- A place in a file a tool call is about.
+export type vnd_agent_client_protocol_ToolCallLocation = {
+	--- The file: an absolute path.
+	path: string,
+	--- The line, from 1.
+	line: number?,
+}
+
+--- Where a tool call is.
+--- - `pending`: Not started: its input is still streaming, or it waits for permission.
+--- - `in_progress`: Running.
+--- - `completed`: Done.
+--- - `failed`: Failed.
+export type vnd_agent_client_protocol_ToolCallStatus = "pending" | "in_progress" | "completed" | "failed"
+
+--- A tool call as a permission request describes it: its id, and what is known of it.
+export type vnd_agent_client_protocol_ToolCallUpdate = {
+	--- The call.
+	tool_call_id: string,
+	--- What it does, for people.
+	title: string?,
+	--- What kind of thing it does.
+	kind: vnd_agent_client_protocol_ToolKind?,
+	--- Where it is.
+	status: vnd_agent_client_protocol_ToolCallStatus?,
+	--- What it produced.
+	content: { vnd_agent_client_protocol_ToolCallContent }?,
+	--- The places in files it is about.
+	locations: { vnd_agent_client_protocol_ToolCallLocation }?,
+	--- Its input, as the agent has it.
+	raw_input: any?,
+	--- Its output, as the agent has it.
+	raw_output: any?,
+}
+
+--- What kind of thing a tool call does, for choosing how to show it.
+--- - `read`: Reads files or data.
+--- - `edit`: Changes files.
+--- - `delete`: Deletes files.
+--- - `move`: Moves or renames files.
+--- - `search`: Searches.
+--- - `execute`: Runs a command.
+--- - `think`: Thinks or plans.
+--- - `fetch`: Fetches from the network.
+--- - `switch_mode`: Changes the session's mode.
+--- - `other`: Anything else.
+export type vnd_agent_client_protocol_ToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "switch_mode" | "other"
+
+--- A prompt's turn: what the agent does until it answers the prompt.
+declare extern type vnd_agent_client_protocol_Turn with
+	--- The next event of the turn: `(event, nil)`; `(nil, nil)` once the `done` event has been given; or
+	--- `(nil, err)` when the turn failed (the agent answered the prompt with an error, or the connection
+	--- closed), after which nothing follows.
+	---
+	--- Yields the calling coroutine while it waits.
+	next: (self: vnd_agent_client_protocol_Turn) -> (vnd_agent_client_protocol_TurnEvent?, vnd_agent_client_protocol_AcpError?)
+	--- Answer the permission request `id` (a `permission` event's `id`) with `outcome`: one of the options the
+	--- agent offered, or `cancelled`. A request is answered once; an `id` that is not waiting is
+	--- `invalid_input`.
+	respond_permission: (self: vnd_agent_client_protocol_Turn, id: string, outcome: vnd_agent_client_protocol_PermissionOutcome) -> (boolean?, vnd_agent_client_protocol_AcpError?)
+end
+
+--- What a turn gives, told apart by its `type`.
+export type vnd_agent_client_protocol_TurnEvent =
+	--- The agent did or said something.
+	{ type: "update", update: vnd_agent_client_protocol_SessionUpdate }
+	--- The agent asks before it goes on: answer with `respond_permission(id, outcome)`.
+	| { type: "permission", id: string, tool_call: vnd_agent_client_protocol_ToolCallUpdate, options: { vnd_agent_client_protocol_PermissionOption } }
+	--- The agent answered the prompt: the turn is over.
+	| { type: "done", stop_reason: vnd_agent_client_protocol_StopReason }
+
+export type vnd_agent_client_protocol = {
+	--- Connect to the ACP agent at `url` (`ws://` or `wss://`) and initialize it: the WebSocket upgrade, then
+	--- `initialize` with protocol version 1 and no client capabilities (no file system, no terminal). Returns once
+	--- the agent has answered with protocol version 1; the SDK refuses any other version (an `rpc` error, -32600).
+	---
+	--- The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
+	--- are collected, and when the script stops. Closing it is how an `acpd` agent process is stopped.
+	---
+	--- ```luau
+	--- local conn, err = agent_client_protocol.connect("ws://127.0.0.1:1/acp", { timeout = 2 })
+	--- if conn == nil then
+	---     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+	--- end
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	connect: (url: string, opts: vnd_agent_client_protocol_ConnectOptions?) -> (vnd_agent_client_protocol_Connection?, vnd_agent_client_protocol_AcpError?),
+}
+
 -- ===== vnd:bollard =====
 
 --- A client for one daemon. Cheap to clone: every clone is the same client.
@@ -7942,6 +8017,21 @@ declare extern type vos_app_Kv with
 	delete: (self: vos_app_Kv, key: string) -> ()
 end
 
+--- A bearer token for the host's `/mcp`, leased for an agent of the app's own, and where the agent uses it.
+export type vos_app_Lease = {
+	--- The bearer token (`Authorization: Bearer <token>`).
+	token: string,
+	--- `<scheme>://<host>:<port>/mcp`.
+	url: string,
+}
+
+--- What `app.tools.lease` takes besides the agent.
+export type vos_app_LeaseOptions = {
+	--- The host name or IP address the URL names: the address this machine has where the agent is (the local
+	--- address of the connection to it). The host's own address when left out.
+	host: string?,
+}
+
 --- One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it, written
 --- with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash, NUL or a name
 --- over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure is returned as
@@ -8009,7 +8099,8 @@ export type vos_app_ToolCallError =
 	| { kind: "internal", message: string, op: string }
 
 --- The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
---- `app.tools.call(name, agent, args)`.
+--- `app.tools.call(name, agent, args)`, or over the host's `/mcp` with `app.tools.lease(agent, opts?)` and
+--- `app.tools.release(token)`.
 declare extern type vos_app_tools with
 end
 
@@ -8026,6 +8117,19 @@ export type vos_app_toolsStatics = {
 	---
 	--- Yields the calling coroutine while it waits.
 	call: (name: string, agent: vos_app_Caller, args: { [string]: any }?) -> (any, vos_app_ToolCallError?),
+	--- Lease a bearer token for the host's `/mcp` for an agent of this app's own, so an agent elsewhere calls the
+	--- tools `app.tools.call` runs for it: every tool of every running app but this one's, the tool told the same
+	--- `ctx.actor`. Like `app.tools.call`, nothing checks whom the app gives it to. The lease is in memory only, never
+	--- in the person's roster: it works until `app.tools.release(token)`, or until this app's backend stops (it is
+	--- stopped, reloaded or uninstalled, or the host stops). Raises for an agent whose `id` or `name` is not 1 to 200
+	--- bytes, a `host` that is not a host name or an IP address, and inside a read-only call.
+	lease: (agent: vos_app_Caller, opts: vos_app_LeaseOptions?) -> vos_app_Lease,
+	--- Revoke a token this app leased: it stops working at once, and the agent's MCP sessions are told their tool
+	--- list changed. A token that is not one of this app's leases (released already, say) is left alone. Raises
+	--- inside a read-only call.
+	---
+	--- Yields the calling coroutine while it waits.
+	release: (token: string) -> (),
 }
 
 --- The `app` API.
@@ -8326,8 +8430,7 @@ declare vector: vos_NotForApps_vector
 -- ===== require =====
 
 declare require: 
-	((path: "lib:agui") -> lib_agui)
-	& ((path: "lib:archive") -> lib_archive)
+	((path: "lib:archive") -> lib_archive)
 	& ((path: "lib:args") -> lib_args)
 	& ((path: "lib:base64") -> lib_base64)
 	& ((path: "lib:cache") -> lib_cache)
@@ -8367,6 +8470,7 @@ declare require:
 	& ((path: "std:task") -> std_task)
 	& ((path: "std:thread") -> std_thread)
 	& ((path: "std:time") -> std_time)
+	& ((path: "vnd:agent_client_protocol") -> vnd_agent_client_protocol)
 	& ((path: "vnd:bollard") -> vnd_bollard)
 	& ((path: "vnd:hyper") -> vnd_hyper)
 	& ((path: "vnd:jsonschema") -> vnd_jsonschema)

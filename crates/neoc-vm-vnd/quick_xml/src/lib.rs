@@ -315,6 +315,7 @@ pub mod quick_xml {
     ) -> Result<String, EncodeError> {
         let root = options.unwrap_or_default().root;
         let document = Value::Object(value.into_iter().map(|(key, item)| (key, item.value)).collect());
+        let document = neoc_vm_core::json::with_sorted_keys(document);
         if root.is_empty() || has_empty_name(&document) {
             return Err(EncodeError::Unsupported { reason: "an XML name is not empty".to_owned() });
         }

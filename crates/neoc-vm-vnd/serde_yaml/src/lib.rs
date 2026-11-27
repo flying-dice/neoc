@@ -198,7 +198,7 @@ pub mod serde_yaml {
     /// assert(serde_yaml.encode({ name = "bob", tags = { "a", "b" } }) == "name: bob\ntags:\n- a\n- b\n")
     /// ```
     pub fn encode(value: Unknown<PlainData>) -> Result<String, EncodeError> {
-        ::serde_yaml::to_string(&value.value)
+        ::serde_yaml::to_string(&neoc_vm_core::json::with_sorted_keys(value.value))
             .map_err(|error| EncodeError::Unsupported { reason: error.to_string() })
     }
 

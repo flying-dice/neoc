@@ -12,6 +12,9 @@ pub enum ToolGrant {
     /// Agent may call any tool of this app (`*` handled by `CallAnyTool`).
     CallTools(AppId),
     CallAnyTool,
+    /// Agent may call any tool of every app but this one, including apps started later: what an app leases for an
+    /// agent of its own (`app.tools.lease`), which is offered every app's tools but the app's that speaks for it.
+    CallAnyToolBut(AppId),
 }
 
 /// Per-agent identity resolved from the MCP bearer token; the unit of attribution and of what it may call.
@@ -27,6 +30,7 @@ impl AgentIdentity {
         let allowed = self.grants.iter().any(|g| match g {
             ToolGrant::CallAnyTool => true,
             ToolGrant::CallTools(app) => app == tool.app(),
+            ToolGrant::CallAnyToolBut(app) => app != tool.app(),
         });
         if allowed {
             Ok(())
@@ -55,5 +59,18 @@ mod tests {
             .authorize_tool_call(&t)
             .is_err());
         assert!(agent(vec![]).authorize_tool_call(&t).is_err());
+    }
+
+    #[test]
+    fn a_grant_of_every_app_but_one_refuses_that_one_only() {
+        let notes = QualifiedToolName::new(AppId::parse("notes").unwrap(), "add_note").unwrap();
+        let agents = QualifiedToolName::new(AppId::parse("agents").unwrap(), "send").unwrap();
+        let leased = agent(vec![ToolGrant::CallAnyToolBut(AppId::parse("agents").unwrap())]);
+        assert!(leased.authorize_tool_call(&notes).is_ok());
+        assert!(leased.authorize_tool_call(&agents).is_err());
+        assert_eq!(
+            serde_json::to_value(&leased.grants[0]).unwrap(),
+            serde_json::json!({"kind": "call_any_tool_but", "app": "agents"})
+        );
     }
 }

@@ -87,7 +87,7 @@ use std::collections::BTreeMap;
 use mlua_ir::ir::Ty;
 use mlua_ir::{Registry, Shape};
 
-pub mod client;
+mod client;
 mod server;
 
 /// The bytes of a body as a field of a record: a Lua string, whatever its bytes (a `String` field would refuse

@@ -11,7 +11,7 @@
  *   adapters    -> application, domain; never each other (but codegen, below)
  *   codegen     -> domain, lua (dev-time: it writes the declarations from the schema of the modules the Lua adapter links)
  *   lua         -> application, domain, neoc-vm (the one vos crate that may use the Lua VM library)
- *   VM crates   -> each other and neoc-agui, nothing else (the Lua VM library, on mlua-ir: `neoc-vm`, which links all
+ *   VM crates   -> each other, nothing else (the Lua VM library, on mlua-ir: `neoc-vm`, which links all
  *                  the others, `neoc-vm-core`, `neoc-vm-std`, one `neoc-vm-lib-<module>` per `lib:*` module and one
  *                  `neoc-vm-vnd-<module>` per `vnd:*` module; the lua adapter and the `neoc` CLI may depend on `neoc-vm`)
  *   neoc        -> neoc-vm only (the CLI over the VM; it never reaches into the vos crates)
@@ -37,9 +37,6 @@ const INTERNAL: Record<string, string[]> = {
   // The Lua VM (Luau): a support library, not an adapter. Among the vos crates only the Lua adapter may depend on it
   // (the one place a script engine is wired to a port), so the VM stays swappable. The `neoc` CLI is its other client.
   // (The VM crates are not listed one by one: `VM_CRATE` below says which they are, and what they may depend on.)
-  // The AG-UI protocol (types, events, the event stream): what `lib:agui` gives a script. It depends on no other
-  // crate here, and only the VM depends on it.
-  'neoc-agui': [],
   neoc: ['neoc-vm'],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
@@ -61,10 +58,10 @@ const INTERNAL: Record<string, string[]> = {
 
 /**
  * The crates of the Lua VM: `neoc-vm`, `neoc-vm-core`, `neoc-vm-std`, `neoc-vm-lib-<module>` and `neoc-vm-vnd-<module>`. They
- * may depend on one another and on neoc-agui, and on no vos crate. A new module crate is placed by its name.
+ * may depend on one another, and on no vos crate. A new module crate is placed by its name.
  */
 const VM_CRATE = /^neoc-vm(-.+)?$/
-const VM_ALLOWED = ['neoc-agui']
+const VM_ALLOWED: string[] = []
 
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
@@ -141,7 +138,7 @@ export function findProblems(packages: WorkspaceCrate[]): { problems: string[]; 
     for (const { name } of pkg.dependencies.filter((d) => d.kind === null)) {
       const internal = name in INTERNAL || VM_CRATE.test(name)
       if (internal && !allowed.includes(name) && !(vm && VM_CRATE.test(name))) {
-        const list = vm ? 'neoc-agui and the VM crates' : allowed.join(', ') || 'none'
+        const list = vm ? 'the VM crates' : allowed.join(', ') || 'none'
         problems.push(`${pkg.name} -> ${name}: internal edge not allowed (allowed: ${list})`)
       }
       const core = CORE_EXTERNAL[pkg.name]

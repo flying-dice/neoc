@@ -6,15 +6,28 @@
 //! The roster is mirrored in memory so [`AgentDirectory::authenticate`] (called on every MCP request) is
 //! synchronous. Grants are read at call time: editing them takes effect on the next `tools/call`, and the
 //! agent's sessions are told the tool list changed.
+//!
+//! An app may also lease a token for an agent of its own ([`ToolLeases`]): kept in memory beside the roster, never
+//! stored and never listed, it authenticates as the agent `app.tools.call` names and goes when the app releases it
+//! or its backend stops.
 
 use crate::{
     error::PortError,
-    ports::{AgentCard, AgentDirectory, AgentRoster, AgentStore, RandomSource, ToolRegistry},
+    ports::{
+        AgentCard, AgentDirectory, AgentRoster, AgentStore, Lease, RandomSource, ToolLeases, ToolRegistry,
+    },
     tokens::random_hex,
 };
+use async_trait::async_trait;
 use parking_lot::RwLock;
-use std::{collections::BTreeMap, sync::Arc};
-use vos_domain::{hash_token, same_hash, Agent, AgentId, AgentIdentity, DomainError, Grants};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::IpAddr,
+    sync::Arc,
+};
+use vos_domain::{
+    hash_token, same_hash, Actor, Agent, AgentId, AgentIdentity, AppId, DomainError, Grants, ToolGrant,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentError {
@@ -51,6 +64,54 @@ pub struct AgentPatch {
 struct Roster {
     agents: BTreeMap<AgentId, Agent>,
     persistent: Vec<(AgentId, String)>,
+    /// The tokens apps leased for agents of their own: in memory only.
+    leases: Vec<Leased>,
+}
+
+/// A token an app leased: the hash of the token, and who it authenticates as.
+struct Leased {
+    app: AppId,
+    hash: String,
+    identity: AgentIdentity,
+}
+
+/// Where the host serves `/mcp`: what a lease's URL names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpEndpoint {
+    /// `http`, or `https` when the host serves TLS.
+    pub scheme: String,
+    /// The host's own address, for a lease that names none.
+    pub host: String,
+    pub port: u16,
+}
+
+impl McpEndpoint {
+    /// `<scheme>://<host>:<port>/mcp` for `host` (a name or an IP address), or the host's own address; an IPv6
+    /// address is bracketed.
+    pub fn url(&self, host: Option<&str>) -> Result<String, PortError> {
+        let host = host.unwrap_or(&self.host);
+        let host = url_host(host)
+            .ok_or_else(|| PortError::Rejected(format!("`{host}` is not a host name or an IP address")))?;
+        Ok(format!("{}://{host}:{}/mcp", self.scheme, self.port))
+    }
+}
+
+/// `host` as a URL names it: an IP address (an IPv6 one in brackets, given with or without them), or a DNS name of
+/// dot-separated labels of letters, digits and `-`. Anything else is `None`.
+fn url_host(host: &str) -> Option<String> {
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    match bare.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => return Some(v4.to_string()),
+        Ok(IpAddr::V6(v6)) => return Some(format!("[{v6}]")),
+        Err(_) => {}
+    }
+    let label = |l: &str| {
+        (1..=63).contains(&l.len())
+            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+    };
+    (host.len() <= 253 && host.split('.').all(label)).then(|| host.to_owned())
 }
 
 pub struct AgentService {
@@ -58,6 +119,8 @@ pub struct AgentService {
     tools: Arc<dyn ToolRegistry>,
     random: Arc<dyn RandomSource>,
     roster: RwLock<Roster>,
+    /// Where `/mcp` is, for a lease's URL (none: the host leases nothing).
+    mcp: Option<McpEndpoint>,
 }
 
 /// A bearer token: 192 bits of randomness as hex, prefixed so a leaked token is recognisable. Every agent token
@@ -74,7 +137,14 @@ impl AgentService {
         tools: Arc<dyn ToolRegistry>,
         random: Arc<dyn RandomSource>,
     ) -> Self {
-        Self { store, tools, random, roster: RwLock::default() }
+        Self { store, tools, random, roster: RwLock::default(), mcp: None }
+    }
+
+    /// Where the host serves `/mcp`: what the URL of a token an app leases names.
+    #[must_use]
+    pub fn with_mcp(mut self, endpoint: McpEndpoint) -> Self {
+        self.mcp = Some(endpoint);
+        self
     }
 
     /// Read the roster from the store (at start, and in tests that share a store).
@@ -179,10 +249,15 @@ impl AgentService {
         }
         agent.grants = grants;
         self.store_update(&agent).await?;
+        self.tell(id).await;
+        Ok(agent)
+    }
+
+    /// Tell the sessions of `id` that what it may call changed.
+    async fn tell(&self, id: &AgentId) {
         if let Err(e) = self.tools.visibility_changed(id).await {
             tracing::warn!(agent = %id.0, error = %e, "could not tell the agent its tool list changed");
         }
-        Ok(agent)
     }
 
     async fn store_update(&self, agent: &Agent) -> Result<(), AgentError> {
@@ -203,9 +278,7 @@ impl AgentService {
             roster.agents.remove(id);
             roster.persistent.retain(|(a, _)| a != id);
         }
-        if let Err(e) = self.tools.visibility_changed(id).await {
-            tracing::warn!(agent = %id.0, error = %e, "could not tell the agent its tool list changed");
-        }
+        self.tell(id).await;
         Ok(())
     }
 
@@ -239,7 +312,59 @@ impl AgentDirectory for AgentService {
                 found = Some(agent);
             }
         }
-        found.and_then(|id| roster.agents.get(id)).map(Agent::identity)
+        let mut leased: Option<&AgentIdentity> = None;
+        for lease in &roster.leases {
+            if same_hash(&lease.hash, &hash) {
+                leased = Some(&lease.identity);
+            }
+        }
+        found.and_then(|id| roster.agents.get(id)).map(Agent::identity).or_else(|| leased.cloned())
+    }
+}
+
+#[async_trait]
+impl ToolLeases for AgentService {
+    fn lease(&self, app: &AppId, agent: &Actor, host: Option<&str>) -> Result<Lease, PortError> {
+        let mcp = self.mcp.as_ref().ok_or_else(|| PortError::NotFound("this host serves no /mcp".into()))?;
+        let url = mcp.url(host)?;
+        let token = mint_agent_token(self.random.as_ref());
+        // the agent `app.tools.call` names, offered what an app offers its agents: every app's tools but its own
+        let identity = AgentIdentity {
+            id: AgentId(agent.id.clone()),
+            name: agent.name.clone(),
+            grants: vec![ToolGrant::CallAnyToolBut(app.clone())],
+        };
+        self.roster.write().leases.push(Leased { app: app.clone(), hash: hash_token(&token), identity });
+        Ok(Lease { token, url })
+    }
+
+    async fn release(&self, app: &AppId, token: &str) -> bool {
+        let hash = hash_token(token);
+        let released = {
+            let mut roster = self.roster.write();
+            let at = roster.leases.iter().position(|l| l.app == *app && same_hash(&l.hash, &hash));
+            at.map(|at| roster.leases.remove(at))
+        };
+        match released {
+            Some(lease) => {
+                self.tell(&lease.identity.id).await;
+                true
+            }
+            None => false,
+        }
+    }
+
+    async fn release_all(&self, app: &AppId) {
+        let released: BTreeSet<AgentId> = {
+            let mut roster = self.roster.write();
+            let (gone, kept): (Vec<Leased>, Vec<Leased>) =
+                std::mem::take(&mut roster.leases).into_iter().partition(|l| l.app == *app);
+            roster.leases = kept;
+            gone.into_iter().map(|l| l.identity.id).collect()
+        };
+        for id in &released {
+            self.tell(id).await;
+        }
     }
 }
 

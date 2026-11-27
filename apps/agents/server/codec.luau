@@ -1,6 +1,7 @@
 --!strict
--- JSON text to a plain Luau value and back. What an agent sends inside an event (an activity's content, the state, a
--- tool's result) is kept as JSON text: in the database, and on its way to the window, which reads it itself.
+-- JSON text to a plain Luau value and back. What an item carries besides its text (a tool call's content and input, a
+-- plan, the options of a permission) is kept as JSON text: in the database, and on its way to the window, which reads
+-- it itself.
 local json = require("vnd:serde_json")
 
 local codec = {}

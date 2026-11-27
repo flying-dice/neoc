@@ -166,6 +166,8 @@ async fn run(settings: Settings, cwd: &Path, home: Option<&Path>) -> anyhow::Res
         grants: Grants::allow_all(),
     };
     let mut config = HostConfig::new(port);
+    config.bind = settings.bind;
+    config.scheme = settings.scheme();
     config.data_dir = Some(settings.data_dir.clone());
     config.client_dir = client_dir;
     config.dev_client_port = settings.dev_client_port;

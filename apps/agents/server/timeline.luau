@@ -4,19 +4,9 @@
 -- hundreds of pieces, and the item is not sent again for each).
 local db = app.db
 
-export type Kind =
-  "user"
-  | "assistant"
-  | "reasoning"
-  | "tool"
-  | "activity"
-  | "step"
-  | "subagent"
-  | "custom"
-  | "interrupt"
-  | "error"
--- An item as the database has it: `key` is the id the agent gave the thing (a message id, a tool call id), by which a
--- later event finds it.
+export type Kind = "user" | "assistant" | "reasoning" | "tool" | "plan" | "permission" | "note" | "error"
+-- An item as the database has it: `key` is the id the agent gave the thing (a tool call id, a permission request's
+-- id), by which a later update finds it.
 export type Row = { id: number, key: string, kind: Kind, text: string, name: string, data: string, done: boolean }
 export type Fields = { key: string?, text: string?, name: string?, data: string?, done: boolean? }
 
@@ -54,7 +44,7 @@ function timeline.get(chat: string, id: number): Row?
 end
 
 -- The item of that kind the agent named `key`, in this chat. With `after`, only an item added after the item of that
--- id: an agent may use the same id again in a later run (`call_1`), and it means a new thing by it.
+-- id: an agent may use the same id again in a later turn (`call_1`), and it means a new thing by it.
 function timeline.find(chat: string, kind: Kind, key: string, after: number?): Row?
   local r = db:one(
     `select {COLUMNS} from items where thread_id = :c and kind = :k and key = :key and id > :after`
@@ -132,9 +122,10 @@ function timeline.append(chat: string, id: number, piece: string)
   RPC.send_notification("_piece", { chat = chat, item = id, text = piece })
 end
 
--- Nothing in the chat is still coming: a run that ended, however it ended, leaves no spinner behind.
+-- Nothing in the chat is still coming: a turn that ended, however it ended, leaves no spinner behind, and no
+-- question of the agent's open (it asked within the turn, and the turn is over).
 function timeline.settle(chat: string)
-  for _, r in db:all("select id from items where thread_id = :c and done = 0 and kind <> 'interrupt'", { c = chat }) do
+  for _, r in db:all("select id from items where thread_id = :c and done = 0", { c = chat }) do
     timeline.set(chat, r.id, { done = true })
   end
 end

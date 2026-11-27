@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 neoc-vm-core = { workspace = true }
 neoc-vm-std = { workspace = true }
+neoc-vm-vnd-agent_client_protocol = { workspace = true }
 neoc-vm-vnd-bollard = { workspace = true }
 neoc-vm-vnd-hyper = { workspace = true }
 neoc-vm-vnd-jsonschema = { workspace = true }
@@ -30,7 +31,6 @@ neoc-vm-vnd-sysinfo = { workspace = true }
 neoc-vm-vnd-sqlx_postgres = { workspace = true }
 neoc-vm-vnd-testcontainers_modules = { workspace = true }
 neoc-vm-vnd-toml = { workspace = true }
-neoc-vm-lib-agui = { workspace = true }
 neoc-vm-lib-archive = { workspace = true }
 neoc-vm-lib-args = { workspace = true }
 neoc-vm-lib-base64 = { workspace = true }

@@ -2,8 +2,8 @@
   "name": "@vos-apps/agents",
   "private": true,
   "type": "module",
-  "version": "0.3.0",
-  "description": "Chat with agents: add one by its AG-UI endpoint, write to it, and watch what it answers and does.",
+  "version": "0.4.0",
+  "description": "Chat with agents over the Agent Client Protocol: add one by its address, write to it, and watch what it answers and does.",
   "vos": {
     "title": "Agents",
     "icon": "sparkles",
@@ -19,12 +19,11 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test ./src ./tests",
+    "test": "bun test ./src",
     "storybook": "storybook dev -p 6010 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },
   "devDependencies": {
-    "@copilotkit/aimock": "^1.48.1",
     "@storybook/addon-a11y": "10.6.7",
     "@storybook/addon-docs": "10.6.7",
     "@storybook/addon-svelte-csf": "5.1.6",

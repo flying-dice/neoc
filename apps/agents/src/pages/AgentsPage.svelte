@@ -54,8 +54,7 @@
           ondraft={(text) => (agents.draft = text)}
           onsend={() => void agents.send()}
           onstop={() => void agents.stop()}
-          onanswer={(item, answer) => void agents.answer(item, answer)}
-          onaction={(item, action) => void agents.act(item, action)}
+          onanswer={(item, option) => void agents.answer(item, option.option_id)}
           onremove={() => (agents.asking = 'chat')}
           onback={() => agents.back()}
         />
@@ -68,7 +67,7 @@
             icon="sparkles"
             heading="No chat open"
             message={agents.loaded && agents.agents.length === 0
-              ? 'Add an agent to chat with: a name and its AG-UI endpoint.'
+              ? 'Add an agent to chat with: a name and its ACP address.'
               : 'Pick an agent in the sidebar to start a chat.'}
             data-testid="agents-no-chat"
           >

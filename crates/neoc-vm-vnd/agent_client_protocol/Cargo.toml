@@ -1,0 +1,38 @@
+[package]
+name = "neoc-vm-vnd-agent_client_protocol"
+description = "vnd:agent_client_protocol"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_vnd_agent_client_protocol"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+parking_lot = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# `vnd:agent_client_protocol`: the official ACP SDK (its v1 client role, its sessions and its schema types). No
+# features: its process and stdio adapters are for running an agent, which this module does not do.
+agent-client-protocol = "5.6"
+# The WebSocket under the SDK's `Lines` transport: one JSON-RPC message per text frame, as acpd serves `/acp`. The
+# socket is ours (TCP, and TLS for `wss`), so the crate's own TLS features stay off.
+tokio-tungstenite = { workspace = true }
+# TLS for `wss`, as `vnd:hyper` has it: rustls over the `ring` provider, the certificate checked by the platform
+# verifier (the operating system's trust store).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-platform-verifier = "0.7"
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

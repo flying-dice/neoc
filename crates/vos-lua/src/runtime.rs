@@ -19,7 +19,7 @@ use vos_application::{
     panics,
     ports::{
         AgentRoster, AppBus, AppData, AppPackage, AppRuntime, AppTools, CallContext, Notifier, PortResult,
-        Shell,
+        Shell, ToolLeases,
     },
     FileStore, NoFiles, PortError,
 };
@@ -32,6 +32,8 @@ pub struct LuaRuntime {
     files: Arc<dyn FileStore>,
     /// Every running app's tools, for `app.tools.all` and `app.tools.call` (none until the host binds them).
     tools: Arc<LateTools>,
+    /// The MCP tokens apps lease for agents of their own (`app.tools.lease`): an app's go when its backend stops.
+    leases: Arc<dyn ToolLeases>,
 }
 
 /// The tools port, bound after the runtime is built: the use case that implements it is built on the runtime. Held
@@ -235,7 +237,15 @@ impl LuaRuntime {
             roster: None,
             files: Arc::new(NoFiles),
             tools: Arc::default(),
+            leases: VmConfig::default().leases,
         }
+    }
+
+    /// Where every app leases MCP tokens for agents of its own (`app.tools.lease`, `app.tools.release`).
+    #[must_use]
+    pub fn with_leases(mut self, leases: Arc<dyn ToolLeases>) -> Self {
+        self.leases = leases;
+        self
     }
 
     /// The agent contacts `app.agents:list()` shows to every app.
@@ -314,6 +324,7 @@ impl AppRuntime for LuaRuntime {
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
             files: self.files.files(app),
             host_tools: self.tools.clone(),
+            leases: self.leases.clone(),
             peers: Arc::new(Peers(Arc::downgrade(&self.hub))),
             refused_modules: Vec::new(),
             test_hooks: false,
@@ -328,6 +339,8 @@ impl AppRuntime for LuaRuntime {
             // leaves it answering without that work, with requests to any server it starts again running
             // read-only: stated in the `AppRuntime::load` port doc, accepted in AGOS-64.
             old.stop_background();
+            // the tokens it leased go with it: its connections to the agents it gave them to were background work
+            self.leases.release_all(app).await;
         }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
         self.hub.forward(app, &vm).await?;
@@ -375,6 +388,8 @@ impl AppRuntime for LuaRuntime {
             // an in-flight call keeps its own Arc until it ends: stop everything the app started first (its
             // listeners are closed, its tasks and workers aborted), so nothing outlives the uninstall
             vm.shutdown();
+            // and the tokens it leased for its agents stop working
+            self.leases.release_all(app).await;
             // last Arc => dropped => the VM is freed
             if let Ok(vm) = Arc::try_unwrap(vm) {
                 vm.unload();

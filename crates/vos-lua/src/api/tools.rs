@@ -1,4 +1,5 @@
-//! `app.tools`: the tools of every running app, for an app that offers them to an agent of its own.
+//! `app.tools`: the tools of every running app, for an app that offers them to an agent of its own, here
+//! (`app.tools.call`) or over the host's `/mcp` with a token it leases for it (`app.tools.lease`).
 
 use super::{app::tools, json::Json, shared};
 use mlua_ir::ir::Ty;
@@ -65,6 +66,26 @@ pub struct Caller {
     pub name: String,
 }
 
+/// What `app.tools.lease` takes besides the agent.
+#[derive(Clone, Debug, Default, Deserialize, Shape)]
+#[serde(deny_unknown_fields)]
+#[shape(module = "vos:app")]
+pub struct LeaseOptions {
+    /// The host name or IP address the URL names: the address this machine has where the agent is (the local
+    /// address of the connection to it). The host's own address when left out.
+    pub host: Option<String>,
+}
+
+/// A bearer token for the host's `/mcp`, leased for an agent of the app's own, and where the agent uses it.
+#[derive(Clone, Debug, Serialize, Shape)]
+#[shape(module = "vos:app")]
+pub struct Lease {
+    /// The bearer token (`Authorization: Bearer <token>`).
+    pub token: String,
+    /// `<scheme>://<host>:<port>/mcp`.
+    pub url: String,
+}
+
 /// Why a tool of a running app gave no result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -107,6 +128,21 @@ pub type ToolArgs = Json<BTreeMap<String, Unknown<ToolInput>>>;
 /// The longest id or name of the agent a tool call is made for.
 const MAX_CALLER: usize = 200;
 
+/// The actor a tool is told called it for `agent`, an agent of the app's own: refused (by `what`) when its `id` or
+/// `name` is not 1 to 200 bytes.
+fn caller(sh: &super::Sh, what: &str, agent: &Caller) -> mlua::Result<Actor> {
+    for (key, value) in [("id", &agent.id), ("name", &agent.name)] {
+        if value.is_empty() || value.len() > MAX_CALLER {
+            return Err(mlua::Error::runtime(format!(
+                "{what}: the agent needs `{key}`, a string of 1 to {MAX_CALLER} bytes"
+            )));
+        }
+    }
+    // the id is the app's own for its agent: under the app's name, it is never the id of an agent the person
+    // connected to this machine, nor of another app's
+    Ok(Actor::agent(&format!("{}:{}", sh.app, agent.id), &agent.name))
+}
+
 #[mlua_ir::object(module = "vos:app")]
 impl tools {
     /// Every tool of every running app (this one's too), in name order.
@@ -143,21 +179,41 @@ impl tools {
         let sh = shared(&lua)?;
         sh.writable("app.tools.call")?;
         let name = QualifiedToolName::parse(&name).map_err(|e| mlua::Error::runtime(e.to_string()))?;
-        for (key, value) in [("id", &agent.id), ("name", &agent.name)] {
-            if value.is_empty() || value.len() > MAX_CALLER {
-                return Err(mlua::Error::runtime(format!(
-                    "app.tools.call: the agent needs `{key}`, a string of 1 to {MAX_CALLER} bytes"
-                )));
-            }
-        }
-        // the id is the app's own for its agent: under the app's name, it is never the id of an agent the person
-        // connected to this machine, nor of another app's
-        let caller = Actor::agent(&format!("{}:{}", sh.app, agent.id), &agent.name);
+        let caller = caller(&sh, "app.tools.call", &agent)?;
         let args = match args.map(|args| args.value) {
             Some(args @ Value::Object(_)) => args,
             // none given, or an empty table (which reads as `[]`): no arguments
             _ => json!({}),
         };
         Ok(sh.host_tools.call(caller, &name, args).await.map(Json::new).map_err(ToolCallError::from))
+    }
+
+    /// Lease a bearer token for the host's `/mcp` for an agent of this app's own, so an agent elsewhere calls the
+    /// tools `app.tools.call` runs for it: every tool of every running app but this one's, the tool told the same
+    /// `ctx.actor`. Like `app.tools.call`, nothing checks whom the app gives it to. The lease is in memory only, never
+    /// in the person's roster: it works until `app.tools.release(token)`, or until this app's backend stops (it is
+    /// stopped, reloaded or uninstalled, or the host stops). Raises for an agent whose `id` or `name` is not 1 to 200
+    /// bytes, a `host` that is not a host name or an IP address, and inside a read-only call.
+    pub fn lease(lua: &Lua, agent: Caller, opts: Option<LeaseOptions>) -> mlua::Result<Lease> {
+        let sh = shared(lua)?;
+        sh.writable("app.tools.lease")?;
+        let actor = caller(&sh, "app.tools.lease", &agent)?;
+        let host = opts.and_then(|o| o.host);
+        let lease = sh
+            .leases
+            .lease(&sh.app, &actor, host.as_deref())
+            .map_err(|e| mlua::Error::runtime(format!("app.tools.lease: {e}")))?;
+        Ok(Lease { token: lease.token, url: lease.url })
+    }
+
+    /// Revoke a token this app leased: it stops working at once, and the agent's MCP sessions are told their tool
+    /// list changed. A token that is not one of this app's leases (released already, say) is left alone. Raises
+    /// inside a read-only call.
+    #[host("Wait")]
+    pub async fn release(lua: Lua, token: String) -> mlua::Result<()> {
+        let sh = shared(&lua)?;
+        sh.writable("app.tools.release")?;
+        sh.leases.release(&sh.app, &token).await;
+        Ok(())
     }
 }

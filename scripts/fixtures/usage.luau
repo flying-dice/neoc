@@ -19,7 +19,6 @@ local process = require("std:process")
 local task = require("std:task")
 local thread = require("std:thread")
 local time = require("std:time")
-local agui = require("lib:agui")
 local archive = require("lib:archive")
 local args = require("lib:args")
 local base64 = require("lib:base64")
@@ -50,6 +49,7 @@ local tracing = require("lib:tracing")
 local unicode = require("lib:unicode")
 local url = require("lib:url")
 local vcr = require("lib:vcr")
+local agent_client_protocol = require("vnd:agent_client_protocol")
 local bollard = require("vnd:bollard")
 local hyper = require("vnd:hyper")
 local jsonschema = require("vnd:jsonschema")
@@ -73,7 +73,6 @@ local _modules: { any } = {
   net,
   process,
   thread,
-  agui,
   archive,
   args,
   cache,
@@ -96,6 +95,7 @@ local _modules: { any } = {
   text,
   unicode,
   vcr,
+  agent_client_protocol,
   bollard,
   hyper,
   jsonschema,

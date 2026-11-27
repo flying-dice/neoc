@@ -32,7 +32,7 @@ pub mod tokens;
 #[cfg(test)]
 mod tool_calls_tests;
 
-pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, NewAgent};
+pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, McpEndpoint, NewAgent};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};
 pub use error::{AppError, PortError};
 pub use files::{

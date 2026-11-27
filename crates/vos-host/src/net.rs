@@ -50,14 +50,19 @@ pub fn reachable_urls(
 /// host bound to a LAN address does not listen on loopback at all). IPv6 addresses are bracketed.
 #[must_use]
 pub fn local_url(scheme: &str, bind: IpAddr, port: u16, path: &str) -> String {
-    let ip = match bind {
+    match local_ip(bind) {
+        IpAddr::V4(v4) => format!("{scheme}://{v4}:{port}{path}"),
+        IpAddr::V6(v6) => format!("{scheme}://[{v6}]:{port}{path}"),
+    }
+}
+
+/// The address under which a process on this machine reaches a host bound to `bind` (see [`local_url`]).
+#[must_use]
+pub fn local_ip(bind: IpAddr) -> IpAddr {
+    match bind {
         IpAddr::V4(v4) if v4.is_unspecified() => IpAddr::from([127, 0, 0, 1]),
         IpAddr::V6(v6) if v6.is_unspecified() => IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]),
         other => other,
-    };
-    match ip {
-        IpAddr::V4(v4) => format!("{scheme}://{v4}:{port}{path}"),
-        IpAddr::V6(v6) => format!("{scheme}://[{v6}]:{port}{path}"),
     }
 }
 

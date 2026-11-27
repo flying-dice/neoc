@@ -197,7 +197,7 @@ pub mod serde_json {
         if deeper_than(&value, MAX_DEPTH as usize) {
             return Err(EncodeError::TooDeep { max_depth: MAX_DEPTH });
         }
-        Ok(value)
+        Ok(neoc_vm_core::json::with_sorted_keys(value))
     }
 
     /// Write a value as compact JSON: plain data (a table without holes is an array, any other table an object,

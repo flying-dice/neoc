@@ -8,6 +8,7 @@
 //! app.db / app.kv                 data (migrations, statements, transactions) and a small key-value store
 //! app.files.documents:read(path)  the app's managed files (documents, cache, temp)
 //! app.tools.all() / .call(...)    the tools of every running app, for an agent of the app's own
+//! app.tools.lease(agent, opts?)   an MCP bearer token for that agent, to call them over `/mcp` (.release(token))
 //! app.notify { ... }              a notification
 //! app.open_window(params?)         the app's window, opened or brought forward
 //! app.agents:list()               the agent contacts
@@ -88,7 +89,8 @@ pub mod app {
     pub const agents: Agents = Agents;
 
     /// The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
-    /// `app.tools.call(name, agent, args)`.
+    /// `app.tools.call(name, agent, args)`, or over the host's `/mcp` with `app.tools.lease(agent, opts?)` and
+    /// `app.tools.release(token)`.
     #[derive(Clone, Copy, Debug, Object)]
     pub struct tools;
 

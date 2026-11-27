@@ -1,10 +1,10 @@
 use crate::{
-    agents::{AgentError, AgentPatch, AgentService, NewAgent},
-    ports::{AgentDirectory, AgentStore},
+    agents::{AgentError, AgentPatch, AgentService, McpEndpoint, NewAgent},
+    ports::{AgentDirectory, AgentRoster, AgentStore, ToolLeases},
     testing::{MemAgentStore, MemRegistry, SeededRandom},
 };
 use std::sync::Arc;
-use vos_domain::{hash_token, Agent, AgentId, AppId, Grants, QualifiedToolName, ToolGrant};
+use vos_domain::{hash_token, Actor, Agent, AgentId, AppId, Grants, QualifiedToolName, ToolGrant};
 
 struct Rig {
     store: Arc<MemAgentStore>,
@@ -15,7 +15,8 @@ struct Rig {
 fn rig() -> Rig {
     let store = Arc::new(MemAgentStore::default());
     let tools = Arc::new(MemRegistry::default());
-    let svc = AgentService::new(store.clone(), tools.clone(), Arc::new(SeededRandom::default()));
+    let svc = AgentService::new(store.clone(), tools.clone(), Arc::new(SeededRandom::default()))
+        .with_mcp(McpEndpoint { scheme: "http".into(), host: "127.0.0.1".into(), port: 7400 });
     Rig { store, tools, svc }
 }
 
@@ -170,4 +171,88 @@ fn every_agent_token_is_minted_with_the_vos_prefix_and_192_random_bits() {
         assert!(hex.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
     assert_ne!(a, b);
+}
+
+/// The actor `app.tools.call` names for the Agents app's agent `ada`.
+fn ada() -> Actor {
+    Actor::agent("agents:ada", "Ada")
+}
+
+#[tokio::test]
+async fn a_lease_authenticates_as_the_apps_agent_and_may_call_every_app_but_its_own() {
+    let r = rig();
+    let lease = r.svc.lease(&app("agents"), &ada(), None).unwrap();
+    assert!(lease.token.starts_with("vos_"), "minted like every agent token");
+    assert_eq!(lease.url, "http://127.0.0.1:7400/mcp");
+
+    let id = r.svc.authenticate(&lease.token).unwrap();
+    assert_eq!(Actor::from(&id), ada(), "a call over /mcp is attributed as `app.tools.call` attributes it");
+    assert_eq!(id.grants, [ToolGrant::CallAnyToolBut(app("agents"))]);
+    assert!(agent_may(&id, &QualifiedToolName::new(app("notes"), "append").unwrap()).is_ok());
+    assert!(
+        agent_may(&id, &QualifiedToolName::new(app("agents"), "send").unwrap()).is_err(),
+        "not its own app"
+    );
+}
+
+#[tokio::test]
+async fn a_lease_is_never_stored_nor_listed() {
+    let r = rig();
+    r.svc.create(new("Claude")).await.unwrap();
+    let lease = r.svc.lease(&app("agents"), &ada(), None).unwrap();
+    assert!(r.svc.authenticate(&lease.token).is_some());
+    assert_eq!(r.svc.list().len(), 1, "the roster is the person's agents only");
+    assert_eq!(r.svc.cards().len(), 1, "apps are not shown it either");
+    assert!(r.store.token_hashes().await.unwrap().is_empty(), "nothing of it is stored");
+}
+
+#[tokio::test]
+async fn releasing_a_lease_revokes_it_and_tells_its_sessions() {
+    let r = rig();
+    let first = r.svc.lease(&app("agents"), &ada(), None).unwrap();
+    let second = r.svc.lease(&app("agents"), &ada(), None).unwrap();
+    assert_ne!(first.token, second.token, "each lease is a token of its own");
+
+    assert!(!r.svc.release(&app("other"), &first.token).await, "another app cannot release it");
+    assert!(r.svc.authenticate(&first.token).is_some());
+    assert!(r.svc.release(&app("agents"), &first.token).await);
+    assert!(r.svc.authenticate(&first.token).is_none(), "released");
+    assert!(r.svc.authenticate(&second.token).is_some(), "the other lease is left alone");
+    assert_eq!(r.tools.visibility_changes(), ["agents:ada"]);
+    assert!(!r.svc.release(&app("agents"), &first.token).await, "a second release finds nothing");
+    assert_eq!(r.tools.visibility_changes().len(), 1);
+}
+
+#[tokio::test]
+async fn every_lease_of_an_app_goes_when_its_backend_stops() {
+    let r = rig();
+    let a = r.svc.lease(&app("agents"), &ada(), None).unwrap();
+    let b = r.svc.lease(&app("agents"), &Actor::agent("agents:bo", "Bo"), None).unwrap();
+    let other = r.svc.lease(&app("broker"), &Actor::agent("broker:cy", "Cy"), None).unwrap();
+    r.svc.release_all(&app("agents")).await;
+    assert!(r.svc.authenticate(&a.token).is_none() && r.svc.authenticate(&b.token).is_none());
+    assert!(r.svc.authenticate(&other.token).is_some(), "another app's leases stay");
+    assert_eq!(r.tools.visibility_changes(), ["agents:ada", "agents:bo"]);
+}
+
+#[test]
+fn a_lease_url_names_the_host_it_is_given_or_the_hosts_own() {
+    let r = rig();
+    let url = |host: Option<&str>| r.svc.lease(&app("agents"), &ada(), host).map(|l| l.url);
+    assert_eq!(url(Some("100.64.0.7")).unwrap(), "http://100.64.0.7:7400/mcp");
+    assert_eq!(url(Some("fd7a:115c::7")).unwrap(), "http://[fd7a:115c::7]:7400/mcp", "IPv6 is bracketed");
+    assert_eq!(url(Some("[fd7a:115c::7]")).unwrap(), "http://[fd7a:115c::7]:7400/mcp");
+    assert_eq!(url(Some("studio.local")).unwrap(), "http://studio.local:7400/mcp");
+    for bad in ["", "a b", "evil.com/x", "user@host", "host:80", "-x", "[nope]"] {
+        assert!(url(Some(bad)).is_err(), "{bad:?}");
+    }
+    let tls = McpEndpoint { scheme: "https".into(), host: "::1".into(), port: 8443 };
+    assert_eq!(tls.url(None).unwrap(), "https://[::1]:8443/mcp");
+
+    let unserved = AgentService::new(
+        Arc::new(MemAgentStore::default()),
+        Arc::new(MemRegistry::default()),
+        Arc::new(SeededRandom::default()),
+    );
+    assert!(unserved.lease(&app("agents"), &ada(), None).is_err(), "no /mcp, no lease");
 }

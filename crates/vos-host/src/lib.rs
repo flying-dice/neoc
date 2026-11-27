@@ -45,7 +45,8 @@ use vos_application::{
         AgentDirectory, AppRuntime, AppTools, Clock, DataStore, DeviceRegistry, EventSink, Fetcher,
         InstalledAppStore, RandomSource, ToolRegistry,
     },
-    AgentService, AppService, DeviceService, FileStore, FilesService, HostFiles, PairingPolicy, Ports,
+    AgentService, AppService, DeviceService, FileStore, FilesService, HostFiles, McpEndpoint, PairingPolicy,
+    Ports,
 };
 use vos_domain::{limits, Agent};
 use vos_fetch::UrlFetcher;
@@ -64,6 +65,11 @@ pub struct HostConfig {
     pub client_dir: Option<PathBuf>,
     /// The port the host listens on (the Origin/Host guard requires it in every `Host` header).
     pub port: u16,
+    /// The address it listens on: the URL of a token an app leases for its agent names its local address when the
+    /// app names none (`app.tools.lease`).
+    pub bind: IpAddr,
+    /// `https` when TLS is served here, else `http`.
+    pub scheme: &'static str,
     pub dev_client_port: Option<u16>,
     /// Extra `Host` names accepted on any port (a reverse proxy, a DNS name).
     pub allowed_hosts: Vec<String>,
@@ -101,6 +107,8 @@ impl HostConfig {
             data_dir: None,
             client_dir: None,
             port,
+            bind: IpAddr::from([127, 0, 0, 1]),
+            scheme: "http",
             dev_client_port: None,
             allowed_hosts: vec![],
             secure_cookies: false,
@@ -158,12 +166,21 @@ pub async fn build(cfg: HostConfig) -> anyhow::Result<Host> {
         cfg.host_files.then(|| Arc::new(LocalFiles::new(cfg.home.as_deref())) as Arc<dyn HostFiles>);
     let system = open_system(cfg.data_dir.as_deref())?;
     let random = cfg.random;
-    // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, and is what
-    // apps list
-    let contacts = Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()));
+    // the roster is also the MCP adapter's directory, tells it when an agent's tool list changes, is what apps list,
+    // and keeps the tokens apps lease for agents of their own (`app.tools.lease`) at the host's own `/mcp`
+    let mcp_endpoint = McpEndpoint {
+        scheme: cfg.scheme.to_owned(),
+        host: net::local_ip(cfg.bind).to_string(),
+        port: cfg.port,
+    };
+    let contacts =
+        Arc::new(AgentService::new(system.clone(), mcp_state.clone(), random.clone()).with_mcp(mcp_endpoint));
     contacts.load().await?;
     let lua = Arc::new(
-        LuaRuntime::new(hub.clone(), hub.clone()).with_roster(contacts.clone()).with_files(files.clone()),
+        LuaRuntime::new(hub.clone(), hub.clone())
+            .with_roster(contacts.clone())
+            .with_leases(contacts.clone())
+            .with_files(files.clone()),
     );
     let runtime: Arc<dyn AppRuntime> = lua.clone();
     let tools: Arc<dyn ToolRegistry> = mcp_state.clone();

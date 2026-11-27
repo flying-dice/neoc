@@ -17,13 +17,12 @@ export interface AgentsRpc {
   open(params: VosApp.Agents.OpenParams): Promise<Conversation>
   send(params: VosApp.Agents.SendParams): Promise<Conversation>
   answer(params: VosApp.Agents.AnswerParams): Promise<Conversation>
-  act(params: VosApp.Agents.ActParams): Promise<Conversation>
   stop(params: VosApp.Agents.StopParams): Promise<Conversation>
   removeChat(params: VosApp.Agents.RemoveChatParams): Promise<Chat[]>
 }
 /**
- * Where the window hears the backend's notifications (`item`, `piece`, `state`, `turn`: `App.svelte` wires them to the
- * bus) and the host's events (`host:reconnected`).
+ * Where the window hears the backend's notifications (`item`, `piece`, `turn`: `App.svelte` wires them to the bus) and
+ * the host's events (`host:reconnected`).
  */
 export interface AgentsEvents {
   on(name: string, fn: (data: unknown) => void): () => void
@@ -40,17 +39,13 @@ interface Piece {
   item: number
   text: string
 }
-/** The state the agent shares, as JSON text, when it changed. */
-interface Shared {
-  chat: string
-  state: string
-}
-
 /** The form an agent is added or changed in. `agent` is the one being changed; without it the form adds one. */
 export interface AgentForm {
   agent: Agent | null
   name: string
   url: string
+  /** The folder its sessions work in, on its machine. */
+  folder: string
   /** A new token. Empty leaves the token the agent has, when it has one. */
   token: string
   /** Remove the token the agent has. */
@@ -102,9 +97,9 @@ export class Agents {
   get loaded(): boolean {
     return this.#loaded
   }
-  /** Whether what is typed can be sent: there is something to say, and the agent is neither answering nor asking. */
+  /** Whether what is typed can be sent: there is something to say, and the agent is not answering. */
   get sendable(): boolean {
-    return this.#open !== null && !this.#open.busy && !this.#open.waiting && this.draft.trim() !== ''
+    return this.#open !== null && !this.#open.busy && this.draft.trim() !== ''
   }
 
   /** Run a call that answers with a chat. It never rejects: a failure is kept, to be shown. */
@@ -141,10 +136,6 @@ export class Agents {
     const stops = [
       this.#events.on('item', (data) => this.#change(data as Changed)),
       this.#events.on('piece', (data) => this.#add(data as Piece)),
-      this.#events.on('state', (data) => {
-        const shared = data as Shared
-        if (this.#open?.chat.id === shared.chat) this.#open = { ...this.#open, state: shared.state }
-      }),
       // the turn is over (complete, stopped or failed): read the chat as the backend has it
       this.#events.on('turn', (data) => {
         const chat = (data as { chat: string }).chat
@@ -160,7 +151,9 @@ export class Agents {
     const open = this.#open
     if (open?.chat.id !== chat) return
     const known = open.items.some((i) => i.id === item.id)
-    this.#open = { ...open, items: known ? open.items.map((i) => (i.id === item.id ? item : i)) : [...open.items, item] }
+    const items = known ? open.items.map((i) => (i.id === item.id ? item : i)) : [...open.items, item]
+    // the agent waits while a permission it asked for has no answer
+    this.#open = { ...open, items, waiting: items.some((i) => i.kind === 'permission' && !i.done) }
   }
 
   #add(piece: Piece): void {
@@ -192,18 +185,10 @@ export class Agents {
     if (this.#open !== null) await this.#show(this.#rpc.stop({ chat: this.#open.chat.id }))
   }
 
-  /** Answer a question the agent stopped at, with what the person wrote, or decline it. */
-  async answer(item: Item, answer: string | null): Promise<void> {
+  /** Answer a permission the agent asked for with one of the options it offered. */
+  async answer(item: Item, option: string): Promise<void> {
     if (this.#open === null) return
-    const chat = this.#open.chat.id
-    const params = answer === null ? { chat, item: item.id, decline: true } : { chat, item: item.id, payload: JSON.stringify(answer) }
-    await this.#show(this.#rpc.answer(params))
-  }
-
-  /** Tell the agent what the person did on a surface it drew. */
-  async act(item: Item, action: unknown): Promise<void> {
-    if (this.#open === null || this.#open.busy) return
-    await this.#show(this.#rpc.act({ chat: this.#open.chat.id, item: item.id, action: JSON.stringify(action) }))
+    await this.#show(this.#rpc.answer({ chat: this.#open.chat.id, item: item.id, option }))
   }
 
   /** Delete the open chat. */
@@ -222,10 +207,10 @@ export class Agents {
   /** Open the form: to add an agent, or to change the one given. */
   edit(agent: Agent | null): void {
     this.#failure = null
-    this.form = { agent, name: agent?.name ?? '', url: agent?.url ?? '', token: '', forget: false }
+    this.form = { agent, name: agent?.name ?? '', url: agent?.url ?? '', folder: agent?.folder ?? '/', token: '', forget: false }
   }
 
-  /** Whether the form can be saved: it has a name and an endpoint. What is wrong with them is the backend's to say. */
+  /** Whether the form can be saved: it has a name and an address. What is wrong with them is the backend's to say. */
   get savable(): boolean {
     return this.form !== null && this.form.name.trim() !== '' && this.form.url.trim() !== ''
   }
@@ -238,8 +223,8 @@ export class Agents {
     try {
       this.#agents =
         form.agent === null
-          ? await this.#rpc.addAgent({ name: form.name, url: form.url, ...token })
-          : await this.#rpc.updateAgent({ agent: form.agent.id, name: form.name, url: form.url, forget: form.forget, ...token })
+          ? await this.#rpc.addAgent({ name: form.name, url: form.url, folder: form.folder, ...token })
+          : await this.#rpc.updateAgent({ agent: form.agent.id, name: form.name, url: form.url, folder: form.folder, forget: form.forget, ...token })
       this.#chats = await this.#rpc.chats()
       this.#failure = null
       this.form = null

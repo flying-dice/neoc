@@ -1,6 +1,7 @@
-<!-- @molecule MessageBubble — one thing said in a chat: the person's on the right, the agent's on the left, with a spinner while it is still coming -->
+<!-- @molecule MessageBubble — one thing said in a chat: the person's on the right, the agent's on the left (text, or an image, a link or a resource it gave), with a spinner while it is still coming -->
 <script lang="ts">
   type Item = VosApp.Agents.Item
+  import { dataOf, opens, pieceOf } from '../lib/items'
 
   interface Props {
     /** A `user` or an `assistant` item. */
@@ -8,11 +9,28 @@
   }
 
   let { item }: Props = $props()
+
+  // the agent's text has no name; anything else it said is a piece in the item's data
+  const piece = $derived(item.name === '' ? undefined : pieceOf(dataOf(item)))
 </script>
 
-<p class="message {item.kind}" data-testid="agents-message-{item.kind}-{item.id}">
-  <span class="text">{item.text}</span>{#if !item.done}<ui-spinner label="The agent is answering"></ui-spinner>{/if}
-</p>
+<div class="message {item.kind}" data-testid="agents-message-{item.kind}-{item.id}">
+  {#if piece?.type === 'image'}
+    <img src="data:{piece.mime_type};base64,{piece.data}" alt="From the agent ({piece.mime_type})" />
+  {:else if piece?.type === 'link'}
+    {#if opens(piece.uri)}
+      <a href={piece.uri} target="_blank" rel="noreferrer" data-testid="agents-message-{item.id}-link">{piece.name}</a>
+    {:else}
+      <span class="text">{piece.name}</span>
+    {/if}
+    {#if piece.name !== piece.uri}<span class="uri">{piece.uri}</span>{/if}
+  {:else if piece?.type === 'resource'}
+    <span class="uri">{piece.uri}</span>
+    <pre>{piece.text}</pre>
+  {:else}
+    <span class="text">{item.text}</span>{#if !item.done}<ui-spinner label="The agent is answering"></ui-spinner>{/if}
+  {/if}
+</div>
 
 <style>
   .message {
@@ -35,6 +53,28 @@
   /* the agent's line breaks are kept; the markup's own are not */
   .text {
     white-space: pre-wrap;
+  }
+  .uri {
+    display: block;
+    font: var(--type-footnote);
+    color: var(--label-secondary);
+  }
+  a {
+    color: inherit;
+    text-decoration: underline;
+  }
+  img {
+    display: block;
+    max-width: 100%;
+    border-radius: var(--radius-sm, 4px);
+  }
+  pre {
+    margin: 4px 0 0;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
   }
   ui-spinner {
     display: inline-block;

@@ -84,7 +84,7 @@
   }}
 />
 
-<!-- Nobody to chat with: an agent is added by its name and its AG-UI endpoint, and can be chatted with at once. -->
+<!-- Nobody to chat with: an agent is added by its name and its ACP address, and can be chatted with at once. -->
 <Story
   name="Adding the first agent"
   args={{ backend: () => createFakeBackend({ agents: [] }) }}
@@ -97,15 +97,17 @@
     await userEvent.type(field(canvas, 'agents-form-name'), 'Ada')
     await userEvent.type(field(canvas, 'agents-form-url'), 'ftp://example.com')
     await userEvent.click(canvas.getByTestId('agents-form-save'))
-    await waitFor(() => expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', 'The endpoint must be an http:// or https:// URL.'))
-    await userEvent.type(field(canvas, 'agents-form-url'), 'https://example.com/agent', { initialSelectionStart: 0, initialSelectionEnd: 1000 })
+    await waitFor(() =>
+      expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', 'The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
+    )
+    await userEvent.type(field(canvas, 'agents-form-url'), 'ws://example.com:5424/acp', { initialSelectionStart: 0, initialSelectionEnd: 1000 })
     await userEvent.click(canvas.getByTestId('agents-form-save'))
     await appears(canvas, 'agents-agent-agent-1')
     await expect(canvas.queryByTestId('agents-form')).toBeNull()
   }}
 />
 
-<!-- An agent's row has the way to change it: its name, endpoint and token, or to remove it. -->
+<!-- An agent's row has the way to change it: its name, address, folder and token, or to remove it. -->
 <Story
   name="Changing an agent"
   play={async ({ canvas, userEvent }) => {
@@ -196,6 +198,21 @@
     await said(canvas, 'Thinking')
     await say(canvas, userEvent, 'hello')
     await said(canvas, 'Hi there')
+  }}
+/>
+
+<!-- The agent asks before it changes a file: the answer the person picks goes to it, and it goes on. -->
+<Story
+  name="A permission answered"
+  play={async ({ canvas, userEvent }) => {
+    await startChat(canvas, userEvent)
+    await say(canvas, userEvent, 'ask')
+    await appears(canvas, 'agents-question-2-option-0')
+    await expect(canvas.getByTestId('agents-composer-stop')).toBeVisible()
+    await userEvent.click(canvas.getByTestId('agents-question-2-option-0'))
+    await said(canvas, 'Added.')
+    await expect(canvas.getByTestId('agents-question-2-answer')).toHaveTextContent('Answered: Allow')
+    await appears(canvas, 'agents-composer-send')
   }}
 />
 

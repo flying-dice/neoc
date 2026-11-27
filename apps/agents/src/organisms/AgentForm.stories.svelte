@@ -14,12 +14,13 @@
     onremove: () => void
   }
 
+  const REFUSED = 'The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.'
   const onsave = fn<() => void>()
   const oncancel = fn<() => void>()
   const onremove = fn<() => void>()
 
-  const EMPTY: Form = { agent: null, name: '', url: '', token: '', forget: false }
-  const KNOWN: Form = { agent: { ...SCRIPTED, token: true }, name: SCRIPTED.name, url: SCRIPTED.url, token: '', forget: false }
+  const EMPTY: Form = { agent: null, name: '', url: '', folder: '/', token: '', forget: false }
+  const KNOWN: Form = { agent: { ...SCRIPTED, token: true }, name: SCRIPTED.name, url: SCRIPTED.url, folder: SCRIPTED.folder, token: '', forget: false }
 
   /** The form an agent is added or changed in. It keeps nothing: what is typed goes into the form it was given. */
   const { Story } = defineMeta({
@@ -42,7 +43,7 @@
   </div>
 {/snippet}
 
-<!-- A new agent: nothing to add until it has a name and an endpoint. -->
+<!-- A new agent: nothing to add until it has a name and an address. -->
 <Story
   name="A new agent"
   play={async ({ canvas }) => {
@@ -57,6 +58,7 @@
   args={{ form: KNOWN, savable: true }}
   play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('agents-form-token').shadowRoot!.querySelector('input')).toHaveValue('')
+    await expect(canvas.getByTestId('agents-form-folder').shadowRoot!.querySelector('input')).toHaveValue(SCRIPTED.folder)
     await expect(canvas.getByTestId('agents-form-forget')).toBeVisible()
     await userEvent.click(canvas.getByTestId('agents-form-remove'))
     await expect(onremove).toHaveBeenCalledTimes(1)
@@ -70,8 +72,8 @@
 <!-- The backend refused what was typed: its reason, under the fields. -->
 <Story
   name="Refused"
-  args={{ form: { ...EMPTY, name: 'Ada', url: 'ftp://example.com' }, savable: true, failure: 'The endpoint must be an http:// or https:// URL.' }}
+  args={{ form: { ...EMPTY, name: 'Ada', url: 'https://example.com/agent' }, savable: true, failure: REFUSED }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', 'The endpoint must be an http:// or https:// URL.')
+    await expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', REFUSED)
   }}
 />

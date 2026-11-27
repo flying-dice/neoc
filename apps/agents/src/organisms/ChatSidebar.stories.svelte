@@ -73,7 +73,7 @@
 <Story
   name="Several agents"
   args={{
-    agents: [SCRIPTED, { id: 'writer', name: 'Writer', url: 'https://writer.example.com/agui', token: true }],
+    agents: [SCRIPTED, { id: 'writer', name: 'Writer', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing' }],
     chats: CHATS.slice(0, 1)
   }}
 />

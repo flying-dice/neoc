@@ -2,9 +2,7 @@
 <script lang="ts">
   type Conversation = VosApp.Agents.Conversation
   type Item = VosApp.Agents.Item
-  import { A2UI_ACTIVITY, surfacesOf, type UserAction } from '../lib/a2ui'
-  import { dataOf, pretty } from '../lib/items'
-  import A2uiSurface from '../molecules/A2uiSurface.svelte'
+  import type { PermissionOption } from '../lib/items'
   import ActivityCard from '../molecules/ActivityCard.svelte'
   import Composer from '../molecules/Composer.svelte'
   import MessageBubble from '../molecules/MessageBubble.svelte'
@@ -21,13 +19,13 @@
     ondraft: (text: string) => void
     onsend: () => void
     onstop: () => void
-    onanswer: (item: Item, answer: string | null) => void
-    onaction: (item: Item, action: UserAction) => void
+    /** The person answered a permission the agent asked for. */
+    onanswer: (item: Item, option: PermissionOption) => void
     onremove: () => void
     onback?: () => void
   }
 
-  let { conversation, draft, failure = null, back = false, ondraft, onsend, onstop, onanswer, onaction, onremove, onback }: Props = $props()
+  let { conversation, draft, failure = null, back = false, ondraft, onsend, onstop, onanswer, onremove, onback }: Props = $props()
 
   let thread = $state<HTMLElement>()
   // everything the agent says or does moves the newest line: keep it in view
@@ -40,8 +38,6 @@
   $effect(() => {
     void document.fonts.ready.then(toNewest)
   })
-
-  const shared = $derived(conversation.state === '' || conversation.state === 'null' ? '' : pretty(conversation.state))
 </script>
 
 <section class="chat" aria-label={conversation.chat.title}>
@@ -67,14 +63,12 @@
     {#each conversation.items as item (item.id)}
       {#if item.kind === 'user' || item.kind === 'assistant'}
         <MessageBubble {item} />
-      {:else if item.kind === 'interrupt'}
-        <QuestionCard {item} onanswer={(answer) => onanswer(item, answer)} />
+      {:else if item.kind === 'permission'}
+        <QuestionCard {item} onanswer={(option) => onanswer(item, option)} />
       {:else if item.kind === 'error'}
         <ui-banner tone="error" data-testid="agents-item-error-{item.id}">{item.text}</ui-banner>
-      {:else if item.kind === 'activity' && item.name === A2UI_ACTIVITY}
-        {#each surfacesOf(dataOf(item)) as surface (surface.id)}
-          <A2uiSurface {surface} disabled={conversation.busy} onaction={(action) => onaction(item, action)} />
-        {/each}
+      {:else if item.kind === 'note'}
+        <ui-banner tone="info" data-testid="agents-item-note-{item.id}">{item.text}</ui-banner>
       {:else}
         <ActivityCard {item} />
       {/if}
@@ -82,12 +76,6 @@
       <ui-empty-state icon="sparkles" heading="Chat with {conversation.chat.agent}" message="Write a message below."
       ></ui-empty-state>
     {/each}
-    {#if shared !== ''}
-      <details class="state" data-testid="agents-state">
-        <summary data-testid="agents-state-summary">State the agent shares</summary>
-        <pre>{shared}</pre>
-      </details>
-    {/if}
   </div>
   {#if failure}
     <ui-banner tone="error" data-testid="agents-failure">{failure}</ui-banner>
@@ -134,22 +122,5 @@
     flex-direction: column;
     gap: 8px;
     padding: 16px;
-  }
-  .state {
-    align-self: flex-start;
-    max-width: 100%;
-    font: var(--type-footnote);
-    color: var(--label-secondary);
-  }
-  .state summary {
-    cursor: pointer;
-  }
-  .state pre {
-    margin: 4px 0 0;
-    max-height: 200px;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-family: ui-monospace, monospace;
   }
 </style>

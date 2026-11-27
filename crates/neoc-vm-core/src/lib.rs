@@ -6,14 +6,15 @@
 //!   and who may run its code; [`host`] makes every module call a traced, lifecycle-aware one.
 //! - [`scheduler`] runs a script's tasks (`std:task`); [`script_env`] is the environment an embedder runs an
 //!   untrusted script in; [`panics`] ends a host function's panic as an error of the call that reached it.
-//! - [`osstr`], [`byte_stream`], [`child_exit`], [`command_options`], [`log_sink`] and [`random`] are what more than
-//!   one module needs.
+//! - [`osstr`], [`byte_stream`], [`child_exit`], [`command_options`], [`json`], [`log_sink`] and [`random`] are what
+//!   more than one module needs.
 
 pub mod byte_stream;
 pub mod child_exit;
 pub mod command_options;
 pub mod engine;
 pub mod host;
+pub mod json;
 pub mod lifecycle;
 pub mod limits;
 pub mod log_sink;

@@ -271,3 +271,77 @@ async fn an_app_lists_and_calls_the_tools_of_the_running_apps_for_an_agent_of_it
     );
     r.stop().await;
 }
+
+/// An app that leases an MCP token for an agent of its own, and has a tool of its own the agent is not offered.
+const LEASER: &str = r#"
+RPC.on_request("ping", function() return "pong" end)
+RPC.on_request("_lease", function() return app.tools.lease({ id = "ada", name = "Ada" }) end)
+RPC.on_request("_release", function(args) app.tools.release(args.token); return true end)
+"#;
+
+/// What `/mcp` answers a bare request with `token`: 401 once the token is no longer good.
+async fn mcp_status(r: &common::Running, token: &str) -> u16 {
+    let initialize = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": { "name": "t", "version": "1" } }
+    });
+    reqwest::Client::new()
+        .post(r.url("/mcp"))
+        .bearer_auth(token)
+        .header("accept", "application/json, text/event-stream")
+        .json(&initialize)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn a_token_an_app_leases_calls_the_other_apps_tools_over_mcp_as_its_agent_until_released() {
+    let r = start(|_| {}).await;
+    install_ledger(&r).await;
+    let url = common::publish_package(
+        &common::temp("leaser").join("pkg"),
+        "leaser",
+        "app.luau",
+        &[("app.luau", LEASER.as_bytes().to_vec())],
+    );
+    r.host.service.install_from_url(&url).await.unwrap();
+    let leaser = AppId::parse("leaser").unwrap();
+    let ask = |method: &'static str, args: Value| {
+        let service = r.host.service.clone();
+        let leaser = leaser.clone();
+        async move { service.call_handler(&leaser, method, args).await.unwrap() }
+    };
+
+    let lease = ask("_lease", json!({})).await;
+    let token = lease["token"].as_str().unwrap().to_owned();
+    assert_eq!(lease["url"], r.url("/mcp"), "the host's own address: it is bound to loopback");
+    assert!(r.host.agents.list().is_empty(), "a lease is not an agent of the roster");
+
+    // every running app's tools but the leasing app's own
+    let (agent, changed) = connect_agent(r.addr, &token).await;
+    assert_eq!(tool_names(&agent).await, ["ledger__add", "ledger__peek", "ledger__sneaky"]);
+
+    // attributed as `app.tools.call` attributes it: the app's agent, under the app's id
+    let added = call(&agent, "ledger__add", json!({})).await;
+    assert_ne!(added.is_error, Some(true), "{added:?}");
+    assert_eq!(who(&r).await, json!(["agent:leaser:ada:Ada"]));
+    let own = call(&agent, "leaser__ping", json!({})).await;
+    assert_eq!(own.is_error, Some(true), "not the leasing app's own tools: {own:?}");
+
+    // released: the session is told its tools changed, and the token is refused from then on
+    let before = changed.0.load(Ordering::SeqCst);
+    assert_eq!(ask("_release", json!({ "token": token })).await, json!(true));
+    wait_until("the session is told", || changed.0.load(Ordering::SeqCst) > before).await;
+    assert_eq!(mcp_status(&r, &token).await, 401);
+
+    // and every lease of the app goes when its backend stops
+    let again = ask("_lease", json!({})).await;
+    let token = again["token"].as_str().unwrap().to_owned();
+    assert_ne!(mcp_status(&r, &token).await, 401);
+    r.host.service.disable(&leaser).await.unwrap();
+    assert_eq!(mcp_status(&r, &token).await, 401);
+    r.stop().await;
+}

@@ -14,7 +14,6 @@
     open: (params) => RPC.send_request('agents', '_open', params),
     send: (params) => RPC.send_request('agents', '_send', params),
     answer: (params) => RPC.send_request('agents', '_answer', params),
-    act: (params) => RPC.send_request('agents', '_act', params),
     stop: (params) => RPC.send_request('agents', '_stop', params),
     removeChat: (params) => RPC.send_request('agents', '_remove_chat', params)
   }
@@ -26,8 +25,6 @@
           return RPC.on_notification('agents', '_item', fn)
         case 'piece':
           return RPC.on_notification('agents', '_piece', fn)
-        case 'state':
-          return RPC.on_notification('agents', '_state', fn)
         case 'turn':
           return RPC.on_notification('agents', '_turn', fn)
         default:

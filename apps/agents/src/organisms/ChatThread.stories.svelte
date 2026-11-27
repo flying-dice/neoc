@@ -3,9 +3,9 @@
   import { expect, fn } from 'storybook/test'
   type Conversation = VosApp.Agents.Conversation
   type Item = VosApp.Agents.Item
-  import type { UserAction } from '../lib/a2ui'
+  import type { PermissionOption } from '../lib/items'
   import ChatThread from './ChatThread.svelte'
-  import { SURFACE, conversation } from '../lib/fakeApi'
+  import { ASKING, OPTIONS, PLAN, TOOL, conversation } from '../lib/fakeApi'
 
   interface Args {
     conversation: Conversation
@@ -15,8 +15,7 @@
     ondraft: (text: string) => void
     onsend: () => void
     onstop: () => void
-    onanswer: (item: Item, answer: string | null) => void
-    onaction: (item: Item, action: UserAction) => void
+    onanswer: (item: Item, option: PermissionOption) => void
     onremove: () => void
     onback?: () => void
   }
@@ -24,8 +23,7 @@
   const ondraft = fn<(text: string) => void>()
   const onsend = fn<() => void>()
   const onstop = fn<() => void>()
-  const onanswer = fn<(item: Item, answer: string | null) => void>()
-  const onaction = fn<(item: Item, action: UserAction) => void>()
+  const onanswer = fn<(item: Item, option: PermissionOption) => void>()
   const onremove = fn<() => void>()
   const onback = fn<() => void>()
 
@@ -41,27 +39,19 @@
   })
   /** Everything an agent can put in a chat besides its words. */
   const WORK = conversation('w', 'Add milk to my list', [
+    { kind: 'note', text: 'The agent cannot load an earlier session, so it started a new one: it does not remember the earlier messages.' },
     ['user', 'Add milk to my list'],
-    { kind: 'reasoning', text: 'The person keeps a shopping list in Notes. I should add to it.' },
-    { kind: 'step', name: 'plan' },
-    { kind: 'tool', name: 'notes__add', text: '{"title":"Milk"}', data: JSON.stringify({ ours: true, result: '{"id":12}' }) },
-    { kind: 'tool', name: 'web_search', text: '{"q":"milk"}', data: JSON.stringify({ ours: false }), done: false },
-    { kind: 'subagent', name: 'researcher', text: 'Looks for prices', data: JSON.stringify({ error: 'It ran out of time.' }) },
-    { kind: 'activity', name: 'PLAN', data: JSON.stringify({ steps: ['find the list', 'add milk'] }) },
-    { kind: 'custom', name: 'usage', data: JSON.stringify({ tokens: 412 }) },
+    { kind: 'reasoning', text: 'The person keeps a shopping list in list.md. I should add to it.' },
+    PLAN,
+    TOOL,
+    { kind: 'tool', name: 'Search for prices', data: JSON.stringify({ kind: 'search', status: 'failed' }) },
     ['assistant', 'Milk is on your list.'],
-    { kind: 'error', text: "The agent's answer ended before it was finished." }
+    { kind: 'assistant', name: 'link', text: 'list.md', data: JSON.stringify({ type: 'link', uri: 'file:///home/ada/project/list.md', name: 'list.md' }) },
+    { kind: 'note', text: 'The agent stopped: it reached the most it may write in one answer.' },
+    { kind: 'error', text: 'The connection to the agent closed before it finished answering.' }
   ])
-  const ASKED = conversation('q', 'Send the report', [
-    ['user', 'Send the report'],
-    { kind: 'interrupt', text: 'Send the report to everyone?', name: 'approval', data: JSON.stringify({ status: 'open' }), done: false }
-  ])
-  const DRAWN = conversation('s', 'Book a table', [
-    ['user', 'Book a table'],
-    { kind: 'activity', name: 'a2ui-surface', data: JSON.stringify(SURFACE) }
-  ])
-  const field = (canvas: { getByTestId(id: string): HTMLElement }, id: string): HTMLInputElement =>
-    canvas.getByTestId(id).shadowRoot!.querySelector('input')!
+  /** The agent asks before it goes on: its turn is running, and waits for the answer. */
+  const ASKED = { ...conversation('q', 'Add milk to my list', [['user', 'Add milk to my list'], ASKING]), busy: true }
 
   const long = conversation(
     'l',
@@ -74,11 +64,10 @@
     title: 'Organisms/ChatThread',
     component: ChatThread,
     tags: ['autodocs'],
-    args: { conversation: TALK, draft: '', ondraft, onsend, onstop, onanswer, onaction, onremove, onback },
+    args: { conversation: TALK, draft: '', ondraft, onsend, onstop, onanswer, onremove, onback },
     beforeEach: () => {
       onback.mockClear()
       onanswer.mockClear()
-      onaction.mockClear()
       onremove.mockClear()
     },
     render: template
@@ -113,50 +102,31 @@
   }}
 />
 
-<!-- What an agent did: its reasoning and tools closed until asked for, an activity it reported, and a run that failed. -->
+<!-- What an agent did: its reasoning and tools closed until asked for, its plan open, notes on the chat, and a turn that failed. -->
 <Story
   name="What the agent did"
-  args={{ conversation: { ...WORK, state: '{"list":["Milk"]}' } }}
+  args={{ conversation: WORK }}
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('notes__add')
-    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('an app on this machine')
-    await userEvent.click(canvas.getByTestId('agents-item-tool-4-summary'))
-    await expect(canvas.getByTestId('agents-item-tool-4')).toHaveTextContent('"title": "Milk"')
-    await expect(canvas.getByTestId('agents-item-subagent-6')).toHaveTextContent('It ran out of time.')
-    await expect(canvas.getByTestId('agents-item-activity-7')).toHaveTextContent('find the list')
-    await expect(canvas.getByTestId('agents-item-error-10')).toHaveTextContent('ended before it was finished')
-    await expect(canvas.getByTestId('agents-state')).toHaveTextContent('State the agent shares')
+    await expect(canvas.getByTestId('agents-item-note-1')).toHaveTextContent('started a new one')
+    await expect(canvas.getByTestId('agents-item-plan-4')).toHaveTextContent('Add milk')
+    await expect(canvas.getByTestId('agents-item-tool-5')).toHaveTextContent('Add milk to list.md')
+    await userEvent.click(canvas.getByTestId('agents-item-tool-5-summary'))
+    await expect(canvas.getByTestId('agents-item-5-diff-0')).toHaveTextContent('+Milk')
+    await expect(canvas.getByTestId('agents-item-tool-6')).toHaveTextContent('failed')
+    await expect(canvas.getByTestId('agents-message-assistant-8')).toHaveTextContent('list.md')
+    await expect(canvas.getByTestId('agents-item-error-10')).toHaveTextContent('closed before it finished')
   }}
 />
 
-<!-- The agent stopped at a question: it is answered or declined in the chat, and nothing else is sent until then. -->
+<!-- The agent asks before it goes on: it is answered in the chat with one of its options, and its turn can be stopped. -->
 <Story
-  name="A question from the agent"
+  name="A permission the agent asks for"
   args={{ conversation: ASKED }}
   play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('agents-question-2')).toHaveTextContent('Send the report to everyone?')
-    await expect(canvas.getByTestId('agents-composer-send')).toHaveProperty('disabled', true)
-    await userEvent.type(field(canvas, 'agents-question-2-input'), 'Only to Ada')
-    await userEvent.click(canvas.getByTestId('agents-question-2-answer'))
-    await expect(onanswer).toHaveBeenCalledWith(ASKED.items[1], 'Only to Ada')
-    await userEvent.click(canvas.getByTestId('agents-question-2-decline'))
-    await expect(onanswer).toHaveBeenCalledWith(ASKED.items[1], null)
-  }}
-/>
-
-<!-- A surface the agent drew (A2UI): what is typed in it changes its text at once, and its button tells the agent. -->
-<Story
-  name="A surface the agent drew"
-  args={{ conversation: DRAWN }}
-  play={async ({ canvas, userEvent }) => {
-    await expect(canvas.getByTestId('agents-surface-booking')).toHaveTextContent('A table for 2, for Ada.')
-    await userEvent.type(field(canvas, 'agents-a2ui-booking-who'), ' L')
-    await expect(canvas.getByTestId('agents-surface-booking')).toHaveTextContent('A table for 2, for Ada L.')
-    await userEvent.click(canvas.getByTestId('agents-a2ui-booking-confirm'))
-    await expect(onaction).toHaveBeenCalledWith(
-      DRAWN.items[1],
-      expect.objectContaining({ name: 'confirm', surfaceId: 'booking', sourceComponentId: 'confirm', context: { name: 'Ada L' } })
-    )
+    await expect(canvas.getByTestId('agents-question-2')).toHaveTextContent('Add milk to list.md')
+    await expect(canvas.getByTestId('agents-composer-stop')).toBeVisible()
+    await userEvent.click(canvas.getByTestId('agents-question-2-option-1'))
+    await expect(onanswer).toHaveBeenCalledWith(ASKED.items[1], OPTIONS[1])
   }}
 />
 

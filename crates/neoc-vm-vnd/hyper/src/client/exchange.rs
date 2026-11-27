@@ -114,63 +114,6 @@ async fn head(prepared: Prepared, life: Life) -> Result<Head, HyperError> {
     }
 }
 
-/// A response whose body is read a piece at a time, for a module that reads a stream (`lib:agui`). The connection
-/// is the same one a whole response is read on: it closes when this is dropped, with the engine's `Life`, and after
-/// `idle_timeout` without data. `timeout`, when the request has one, bounds the stream to its end, not only its
-/// head; `max_body` does not apply (the reader bounds what it keeps).
-pub struct Streamed {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    body: Incoming,
-    conn: Connection,
-    deadline: Option<(tokio::time::Instant, Duration)>,
-}
-
-impl Streamed {
-    /// Send the request and read the head of its response.
-    pub async fn open(prepared: Prepared, life: Life) -> Result<Self, HyperError> {
-        let deadline = prepared.limits.total.map(|limit| (tokio::time::Instant::now() + limit, limit));
-        let Head { resp, conn, .. } = within(deadline, head(prepared, life)).await?;
-        Ok(Self {
-            status: resp.status().as_u16(),
-            headers: super::super::collect_headers(resp.headers()),
-            body: resp.into_body(),
-            conn,
-            deadline,
-        })
-    }
-
-    /// The next piece of the body, or `None` at its end. A body cut short is an error, never an end.
-    pub async fn chunk(&mut self) -> Result<Option<Bytes>, HyperError> {
-        loop {
-            let Some(frame) = within(self.deadline, async { Ok(self.body.frame().await) }).await? else {
-                self.conn.ended_early()?;
-                return Ok(None);
-            };
-            let frame = frame.map_err(|e| HyperError::from_hyper(&e, self.conn.fired.after()))?;
-            if let Ok(data) = frame.into_data() {
-                return Ok(Some(data));
-            }
-        }
-    }
-}
-
-/// `work`, given up at the request's `timeout` when it has one.
-async fn within<T>(
-    deadline: Option<(tokio::time::Instant, Duration)>,
-    work: impl Future<Output = Result<T, HyperError>>,
-) -> Result<T, HyperError> {
-    match deadline {
-        None => work.await,
-        Some((at, limit)) => tokio::time::timeout_at(at, work).await.unwrap_or_else(|_| {
-            Err(HyperError::timed_out(
-                TimeLimit::Timeout,
-                format!("the request took longer than {}s", secs(limit)),
-            ))
-        }),
-    }
-}
-
 /// The URL a redirect's `Location` names, which must be an `http` or `https` URL.
 fn next_url(current: &Url, status: u16, location: &HeaderValue) -> Result<Url, HyperError> {
     let invalid = |why: String| HyperError::invalid_url(format!("the {status} response's Location {why}"));

@@ -198,7 +198,9 @@ pub mod toml {
     }
 
     fn document(value: BTreeMap<String, Unknown<PlainData>>) -> serde_json::Value {
-        serde_json::Value::Object(value.into_iter().map(|(key, item)| (key, item.value)).collect())
+        let document =
+            serde_json::Value::Object(value.into_iter().map(|(key, item)| (key, item.value)).collect());
+        neoc_vm_core::json::with_sorted_keys(document)
     }
 
     fn unsupported(error: &::toml::ser::Error) -> EncodeError {

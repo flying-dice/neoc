@@ -1,4 +1,4 @@
-<!-- @organism AgentForm — the form an agent is added or changed in: its name, its AG-UI endpoint and its token, with the way to remove it -->
+<!-- @organism AgentForm — the form an agent is added or changed in: its name, its ACP address, the folder it works in and its token, with the way to remove it -->
 <script lang="ts">
   import type { AgentForm } from '../lib/agents.svelte'
 
@@ -39,7 +39,7 @@
     <ui-list variant="inset" label="The agent">
     <ui-section
       header="Agent"
-      footer={failure ?? 'The endpoint is where the agent takes an AG-UI run: this app posts the conversation to it and reads the events it answers with.'}
+      footer={failure ?? 'The address is where the agent speaks the Agent Client Protocol over a WebSocket (acpd serves one at /acp). The folder is where its sessions work, on its own machine.'}
       footer-tone={failure ? 'error' : 'note'}
       data-testid="agents-form-agent"
     >
@@ -57,10 +57,10 @@
         ></ui-text-field>
       </ui-row>
       <ui-row>
-        <span class="key">Endpoint</span>
+        <span class="key">Address</span>
         <ui-text-field
-          label="Endpoint"
-          placeholder="https://example.com/agent"
+          label="Address"
+          placeholder="ws://example.com:5424/acp"
           type="url"
           inputmode="url"
           autocapitalize="off"
@@ -72,10 +72,24 @@
           data-testid="agents-form-url"
         ></ui-text-field>
       </ui-row>
+      <ui-row>
+        <span class="key">Folder</span>
+        <ui-text-field
+          label="Folder"
+          placeholder="/"
+          autocapitalize="off"
+          autocomplete="off"
+          maxlength={4000}
+          variant="bare"
+          value={form.folder}
+          oninput={(e: Event) => (form.folder = valueOf(e))}
+          data-testid="agents-form-folder"
+        ></ui-text-field>
+      </ui-row>
     </ui-section>
     <ui-section
       header="Token"
-      footer="Sent to the endpoint as a bearer token with every run. It is kept in this machine's keychain, and is never shown again."
+      footer="Sent to the address as a bearer token when this app connects. It is kept in this machine's keychain, and is never shown again."
     >
       <ui-row>
         <span class="key">Token</span>
