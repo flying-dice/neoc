@@ -235,6 +235,40 @@ describe('layouts', () => {
   })
 })
 
+describe('Split View: choosing the second app', () => {
+  test('an app already open, in the strip, leaves it and fills the empty side', () => {
+    wm.open('notes')
+    wm.open('calculator') // notes goes to the strip
+    wm.setLayout(win('calculator').id, 'split-left')
+    expect(wm.activeStage?.awaitingSplit).toBe('split-right')
+    wm.open('notes') // chosen from the empty side's grid, or the Dock
+    expect(wm.onStage.map((w) => w.appId).sort()).toEqual(['calculator', 'notes'])
+    expect([win('calculator').layout, win('notes').layout]).toEqual(['split-left', 'split-right'])
+    expect(wm.activeStage?.awaitingSplit).toBeNull()
+    expect(wm.focused?.appId).toBe('notes')
+    expect(wm.recentStages).toEqual([]) // its own group went with it
+  })
+
+  test('an app in Slide Over chosen for the empty side fills it too', () => {
+    wm.open('notes')
+    wm.setLayout(win('notes').id, 'slideover')
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('notes')
+    expect(wm.slideOver).toBeUndefined()
+    expect(win('notes').layout).toBe('split-right')
+    expect(wm.activeStage?.awaitingSplit).toBeNull()
+  })
+
+  test('the waiting app chosen again is just focused, and the split still waits', () => {
+    wm.open('calculator')
+    wm.setLayout(win('calculator').id, 'split-left')
+    wm.open('calculator')
+    expect(win('calculator').layout).toBe('split-left')
+    expect(wm.activeStage?.awaitingSplit).toBe('split-right')
+  })
+})
+
 describe('Split View sizing', () => {
   const widthOf = (appId: string): number => wm.frameOf(win(appId)).width
 

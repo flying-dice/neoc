@@ -91,6 +91,18 @@ test.describe('Desktop journeys', () => {
     expect(left.x + left.width, 'Files is left of the Calculator').toBeLessThanOrEqual(right.x)
   })
 
+  test('D2b: an app that is already open, chosen for the other half, joins the split', async ({ page }) => {
+    await openDesktop(page, { open: ['settings', 'files'] }) // Settings steps back into the strip
+    await expect(page.getByTestId('stage-strip-settings')).toBeAttached()
+    await chooseLayout(page, 'files', 'split-left')
+    await expect(page.getByTestId('split-placeholder')).toBeVisible()
+    await openFromHome(page, 'settings')
+    await expect(page.getByTestId('split-placeholder')).toHaveCount(0)
+    await expect(windowOf(page, 'files')).toHaveClass(/\bsplit-left\b/)
+    await expect(windowOf(page, 'settings')).toHaveClass(/\bsplit-right\b/)
+    await expect(page.getByTestId('stage-strip-settings')).toHaveCount(0) // it left its own group for the split
+  })
+
   test('D3: make a window bigger, smaller, then move it', async ({ page }) => {
     await openDesktop(page, { open: ['settings'] })
     const win = windowOf(page, 'settings')

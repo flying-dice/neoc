@@ -281,6 +281,16 @@ export class WindowManager {
     if (!app) return
     const existing = this.windows.find((w) => w.appId === appId)
     if (existing) {
+      // An open app chosen for the empty side of a pending Split View leaves where it was and fills it, as a new one
+      // would; where the two do not fit side by side it is shown where it is, as any open app chosen is.
+      const pending = this.activeStage
+      if (pending?.awaitingSplit && !this.compact && existing.stageId !== pending.id) {
+        const waiting = this.onStage.find((w) => w.layout.startsWith('split'))
+        if (waiting && this.#fits([this.#minOf(waiting).minWidth, this.#minOf(existing).minWidth])) {
+          this.#detach(existing)
+          return this.#fillSplit(existing, pending)
+        }
+      }
       if (existing.layout === 'slideover') {
         this.slideOverHidden = false
         return this.focus(existing.id)
@@ -297,13 +307,8 @@ export class WindowManager {
     if (stage?.awaitingSplit && !this.compact) {
       const waiting = this.onStage.find((w) => w.layout.startsWith('split'))
       if (waiting && this.#fits([this.#minOf(waiting).minWidth, app.minWidth])) {
-        win.layout = stage.awaitingSplit
-        win.stageId = stage.id
-        stage.windowIds.push(win.id)
-        stage.awaitingSplit = null
         this.windows.push(win)
-        stage.splitRatio = this.#clampRatio(stage, stage.splitRatio) // the divider may have been left where this app is too narrow
-        return this.focus(win.id)
+        return this.#fillSplit(win, stage)
       }
       // No room for both: the waiting pane gives up, this app opens as anything else would, and the person is told.
       if (waiting) {
@@ -336,6 +341,16 @@ export class WindowManager {
     this.windows.push(win)
     this.stages.push(next)
     this.activeStageId = next.id
+    this.focus(win.id)
+  }
+
+  /** `win` (in no stage) takes the empty side of `stage`'s pending Split View. */
+  #fillSplit(win: WindowState, stage: Stage): void {
+    win.layout = stage.awaitingSplit ?? 'split-right'
+    win.stageId = stage.id
+    stage.windowIds.push(win.id)
+    stage.awaitingSplit = null
+    stage.splitRatio = this.#clampRatio(stage, stage.splitRatio) // the divider may have been left where this app is too narrow
     this.focus(win.id)
   }
 
