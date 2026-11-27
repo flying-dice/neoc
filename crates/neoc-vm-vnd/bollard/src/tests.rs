@@ -16,6 +16,7 @@ use hyper_util::rt::TokioIo;
 use mlua::Lua;
 use parking_lot::Mutex;
 use serde_json::{Value as Json, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -41,6 +42,8 @@ struct Daemon {
     /// What feeds the body of `GET /events` and of a `follow` logs request: the test sends pieces, and dropping the
     /// sender ends the body.
     held_open: Mutex<Option<mpsc::Receiver<Bytes>>>,
+    /// What each attached client wrote to the container's input, once it closed it (or the connection closed).
+    inputs: Mutex<Vec<Vec<u8>>>,
 }
 
 type Body = BoxBody<Bytes, Infallible>;
@@ -78,6 +81,22 @@ fn volume() -> Json {
         "Scope": "local",
         "Options": {},
     })
+}
+
+/// An attached container (`POST /containers/web/attach`) on the connection Docker hijacked: it writes `ready` to
+/// its output, reads its input to the end, keeps it, and answers with what it read on its output and `bye` on its
+/// errors, as multiplexed frames.
+async fn attached(daemon: Arc<Daemon>, upgrade: hyper::upgrade::OnUpgrade) {
+    let Ok(upgraded) = upgrade.await else { return };
+    let mut io = TokioIo::new(upgraded);
+    let _ = io.write_all(&frame(1, "ready\n")).await;
+    let mut input = Vec::new();
+    let _ = io.read_to_end(&mut input).await;
+    daemon.inputs.lock().push(input.clone());
+    let mut answer = frame(1, &format!("got {}", String::from_utf8_lossy(&input)));
+    answer.extend(frame(2, "bye\n"));
+    let _ = io.write_all(&answer).await;
+    let _ = io.shutdown().await;
 }
 
 impl Daemon {
@@ -188,6 +207,19 @@ impl Daemon {
             ("POST", "/networks/create") => answer(201, &json!({ "Id": "n2", "Warning": "" })),
             ("DELETE", "/networks/backend") => full(204, ""),
             ("GET", "/events") => self.held_open_body(),
+            ("POST", "/build") if query.contains("t=broken") => full(
+                200,
+                "{\"stream\":\"Step 1/2 : FROM alpine\\n\"}\n{\"errorDetail\":{\"code\":127,\"message\":\"The command '/bin/sh -c nope' returned a non-zero code: 127\"},\"error\":\"The command '/bin/sh -c nope' returned a non-zero code: 127\"}\n",
+            ),
+            ("POST", "/build") => full(
+                200,
+                "{\"stream\":\"Step 1/2 : FROM alpine\\n\"}\n{\"status\":\"Downloading\",\"id\":\"abc\",\"progressDetail\":{\"current\":5,\"total\":10}}\n{\"aux\":{\"ID\":\"sha256:built\"}}\n{\"stream\":\"Successfully tagged app:1\\n\"}\n",
+            ),
+            ("PUT", "/containers/web/archive") if query.contains("path=%2Fnowhere") => {
+                refusal(404, "Could not find the file /nowhere in container web")
+            }
+            ("PUT", "/containers/web/archive") => full(200, ""),
+            ("POST", "/containers/ghost/attach") => refusal(404, "No such container: ghost"),
             _ => refusal(500, &format!("the fake daemon has no {method} {path}")),
         }
     }
@@ -222,11 +254,19 @@ async fn daemon() -> (Arc<Daemon>, String) {
             };
             let daemon = Arc::clone(&serving);
             tokio::spawn(async move {
-                let service = service_fn(move |request: Request<Incoming>| {
+                let service = service_fn(move |mut request: Request<Incoming>| {
                     let daemon = Arc::clone(&daemon);
                     async move {
                         let method = request.method().clone();
                         let target = request.uri().to_string();
+                        // an attach to a container that is there is answered by switching protocols: the connection
+                        // is the container's streams from then on
+                        let attach = (method == Method::POST
+                            && target
+                                .split('?')
+                                .next()
+                                .is_some_and(|path| path.ends_with("/containers/web/attach")))
+                        .then(|| hyper::upgrade::on(&mut request));
                         let body = request.into_body().collect().await.expect("body").to_bytes();
                         daemon.seen.lock().push(Seen {
                             method: method.to_string(),
@@ -241,11 +281,24 @@ async fn daemon() -> (Arc<Daemon>, String) {
                             .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
                             .and_then(|rest| rest.find('/').map(|slash| &rest[slash..]))
                             .unwrap_or(path);
+                        if let Some(upgrade) = attach {
+                            tokio::spawn(attached(Arc::clone(&daemon), upgrade));
+                            let mut switching = full(101, "");
+                            let headers = switching.headers_mut();
+                            headers.insert("connection", "Upgrade".parse().expect("header"));
+                            headers.insert("upgrade", "tcp".parse().expect("header"));
+                            headers.insert(
+                                "content-type",
+                                "application/vnd.docker.raw-stream".parse().expect("header"),
+                            );
+                            return Ok::<_, Infallible>(switching);
+                        }
                         Ok::<_, Infallible>(daemon.respond(&method, path, query))
                     }
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service)
+                    .with_upgrades()
                     .await;
             });
         }
@@ -653,11 +706,21 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
         refuse(function() return docker:create_volume({ Name = "data", Lables = {} }) end)
         refuse(function() return docker:list_volumes({ filters = { name = "data" } }) end)
         refuse(function() return docker:list_networks({ filter = { name = { "bridge" } } }) end)
+        refuse(function() return docker:build_image({ tag = "app:1" }, "") end)
+        refuse(function() return docker:build_image({ t = "app 1" }, "") end)
+        refuse(function() return docker:build_image({}, 42) end)
+        refuse(function() return docker:build_image({ rm = "yes" }, "") end)
+        refuse(function() return docker:attach_container("../containers/web", {}) end)
+        refuse(function() return docker:attach_container("web", { stdn = true }) end)
+        refuse(function() return docker:upload_to_container("web", {}, "") end)
+        refuse(function() return docker:upload_to_container("web", { path = "/srv", owner = "me" }, "") end)
+        refuse(function() return docker:upload_to_container("web", { path = "/srv" }, {}) end)
+        refuse(function() return docker:upload_to_container("web?x", { path = "/srv" }, "") end)
         return refused
         "#,
     )
     .await;
-    assert_eq!(refused.len(), 31);
+    assert_eq!(refused.len(), 41);
     let place =
         "vnd:bollard.Client:start_container: argument #1 'name': the container must be a name or an id";
     assert!(refused[0].contains(place), "{}", refused[0]);
@@ -675,6 +738,14 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
     assert!(refused[25].contains(place), "{}", refused[25]);
     assert!(refused[28].contains("argument #1 'body': unknown field `Lables`"), "{}", refused[28]);
     assert!(refused[30].contains("argument #1 'opts': unknown field `filter`"), "{}", refused[30]);
+    assert!(refused[31].contains("argument #1 'opts': unknown field `tag`"), "{}", refused[31]);
+    assert!(refused[32].contains("the image must be a reference"), "{}", refused[32]);
+    assert!(refused[33].contains("argument #2 'context': expected a string or a buffer"), "{}", refused[33]);
+    assert!(refused[35].contains("the container must be a name or an id"), "{}", refused[35]);
+    assert!(refused[36].contains("unknown field `stdn`"), "{}", refused[36]);
+    assert!(refused[37].contains("argument #2 'opts'"), "{}", refused[37]);
+    assert!(refused[38].contains("unknown field `owner`"), "{}", refused[38]);
+    assert!(refused[39].contains("argument #3 'archive': expected a string or a buffer"), "{}", refused[39]);
     assert!(daemon.requests().is_empty(), "a refused call reached the daemon: {:?}", daemon.requests());
 }
 
@@ -876,6 +947,194 @@ async fn a_pull_names_latest_reports_progress_and_fails_as_docker_says() {
     assert!(pulls[1].contains("fromImage=nope") && pulls[1].contains("tag=1"), "{pulls:?}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_build_sends_its_context_and_options_and_reports_its_progress() {
+    let (daemon, host) = daemon().await;
+    let (lines, total, image, failure): (String, i64, String, String) = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        local build = docker:build_image({
+            t = "app:1",
+            dockerfile = "build/Dockerfile",
+            labels = { app = "agent" },
+            buildargs = { VERSION = "2" },
+            nocache = true,
+            pull = true,
+        }, "FROM alpine\0")
+        local lines, total, image = {}, 0, nil
+        for progress in build:items() do
+            if progress.stream then table.insert(lines, progress.stream) end
+            if progress.progressDetail then total = progress.progressDetail.total end
+            if progress.aux then image = progress.aux.ID end
+        end
+        -- a buffer is a context too, and the defaults are Docker's
+        assert(docker:build_image({}, buffer.fromstring("tar")):next())
+        local failing = docker:build_image({ t = "broken" }, "")
+        local failure
+        while failure == nil do
+            local progress, err = failing:next()
+            assert(progress ~= nil or err ~= nil, "the failed build ended without an error")
+            failure = err
+        end
+        assert(failure.kind == "api" and failure.status == nil)
+        return table.concat(lines), total, image, tostring(failure)
+        "#,
+    )
+    .await;
+    assert_eq!(lines, "Step 1/2 : FROM alpine\nSuccessfully tagged app:1\n");
+    assert_eq!((total, image.as_str()), (10, "sha256:built"));
+    assert_eq!(
+        failure,
+        "vnd:bollard.Client:build_image: api: The command '/bin/sh -c nope' returned a non-zero code: 127"
+    );
+
+    let builds: Vec<Seen> =
+        daemon.requests().into_iter().filter(|seen| seen.target.contains("/build")).collect();
+    assert_eq!(builds.len(), 3, "{builds:?}");
+    assert_eq!((builds[0].method.as_str(), builds[0].body.as_str()), ("POST", "FROM alpine\0"));
+    let query: Vec<(String, String)> =
+        url::form_urlencoded::parse(builds[0].target.split_once('?').expect("query").1.as_bytes())
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+    let of = |key: &str| query.iter().find(|(k, _)| k == key).map(|(_, value)| value.clone());
+    assert_eq!(of("t").as_deref(), Some("app:1"));
+    assert_eq!(of("dockerfile").as_deref(), Some("build/Dockerfile"));
+    assert_eq!(of("nocache").as_deref(), Some("true"));
+    assert_eq!(of("pull").as_deref(), Some("true"));
+    assert_eq!(of("rm").as_deref(), Some("true"));
+    assert_eq!(of("forcerm").as_deref(), Some("false"));
+    // the classic builder
+    assert_eq!(of("version").as_deref(), Some("1"));
+    let json = |key: &str| serde_json::from_str::<Json>(&of(key).expect(key)).expect("JSON");
+    assert_eq!(json("labels"), json!({ "app": "agent" }));
+    assert_eq!(json("buildargs"), json!({ "VERSION": "2" }));
+    assert_eq!(builds[1].body, "tar");
+    assert!(builds[1].target.contains("dockerfile=Dockerfile"), "{}", builds[1].target);
+    assert!(!builds[1].target.contains("pull="), "{}", builds[1].target);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_upload_puts_its_archive_at_the_path() {
+    let (daemon, host) = daemon().await;
+    let missing: String = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        assert(docker:upload_to_container("web", { path = "/srv", no_overwrite_dir_non_dir = true }, "a.txt\0"))
+        assert(docker:upload_to_container("web", { path = "/srv" }, buffer.fromstring("b")))
+        local none, err = docker:upload_to_container("web", { path = "/nowhere" }, "")
+        assert(none == nil and err.kind == "not_found")
+        return tostring(err)
+        "#,
+    )
+    .await;
+    assert_eq!(
+        missing,
+        "vnd:bollard.Client:upload_to_container: not_found: Could not find the file /nowhere in container web"
+    );
+    let uploads: Vec<Seen> = daemon
+        .requests()
+        .into_iter()
+        .filter(|seen| seen.target.contains("/containers/web/archive"))
+        .collect();
+    assert_eq!(uploads.len(), 3, "{uploads:?}");
+    assert_eq!((uploads[0].method.as_str(), uploads[0].body.as_str()), ("PUT", "a.txt\0"));
+    assert!(uploads[0].target.contains("path=%2Fsrv"), "{}", uploads[0].target);
+    assert!(uploads[0].target.contains("noOverwriteDirNonDir=true"), "{}", uploads[0].target);
+    assert_eq!(uploads[1].body, "b");
+    assert!(!uploads[1].target.contains("noOverwriteDirNonDir"), "{}", uploads[1].target);
+}
+
+// ---------------------------------------------------------------------------
+// attach
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_attach_reads_the_output_and_writes_the_input_until_it_is_closed() {
+    let (daemon, host) = daemon().await;
+    let (first, rest, closed, missing): (String, String, String, String) = run(
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        local attach = assert(docker:attach_container("web", {
+            stream = true, stdin = true, stdout = true, stderr = true, detach_keys = "ctrl-x",
+        }))
+        local first = assert(attach:next())
+        assert(attach:write("hello\n") == true)
+        assert(attach:write(buffer.fromstring("world")))
+        assert(attach:close_input())
+        -- closing again does nothing, and the input is closed
+        assert(attach:close_input())
+        local none, closed = attach:write("late")
+        assert(none == nil)
+        local rest = {}
+        for piece in attach:items() do
+            table.insert(rest, piece.stream .. "=" .. piece.data)
+        end
+        local after, after_err = attach:next()
+        assert(after == nil and after_err == nil)
+        local ghost, missing = docker:attach_container("ghost", { stream = true, stdout = true })
+        assert(ghost == nil)
+        return first.stream .. "=" .. first.data, table.concat(rest, "|"), tostring(closed), tostring(missing)
+        "#,
+    )
+    .await;
+    assert_eq!(first, "stdout=ready\n");
+    assert_eq!(rest, "stdout=got hello\nworld|stderr=bye\n");
+    assert_eq!(closed, "vnd:bollard.Attach:write: closed: the container's input is closed");
+    assert_eq!(missing, "vnd:bollard.Client:attach_container: not_found: No such container: ghost");
+    assert_eq!(*daemon.inputs.lock(), vec![b"hello\nworld".to_vec()]);
+    let attach = daemon.request_to("/containers/web/attach");
+    assert_eq!(attach.method, "POST");
+    for part in ["stream=true", "stdin=true", "stdout=true", "stderr=true", "logs=false", "detachKeys=ctrl-x"]
+    {
+        assert!(attach.target.contains(part), "{part} is not in {}", attach.target);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_attach_closes_with_the_script_that_made_it() {
+    let (daemon, host) = daemon().await;
+    let life = Life::new();
+    let lua = make_engine_in(life.clone()).expect("engine");
+    let first: String = run_in(
+        &lua,
+        &host,
+        r#"
+        local docker = assert(require("vnd:bollard").connect({ host = ... }))
+        attached = assert(docker:attach_container("web", { stream = true, stdin = true, stdout = true }))
+        assert(attached:write("unfinished"))
+        return assert(attached:next()).data
+        "#,
+    )
+    .await;
+    assert_eq!(first, "ready\n");
+    assert!(daemon.inputs.lock().is_empty(), "the input was closed before the script stopped");
+
+    // the script still holds the attach (a global), and is shut down: the connection goes with it
+    life.shutdown();
+    tokio::time::timeout(TIMEOUT, async {
+        while daemon.inputs.lock().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the daemon saw the connection close");
+    assert_eq!(*daemon.inputs.lock(), vec![b"unfinished".to_vec()]);
+    let (none, kind): (mlua::Value, String) = run_in(
+        &lua,
+        &host,
+        r#"
+        local none, err = attached:write("after")
+        return none, err.kind
+        "#,
+    )
+    .await;
+    assert!(none.is_nil());
+    assert_eq!(kind, "closed");
+}
+
 // ---------------------------------------------------------------------------
 // hostile input
 // ---------------------------------------------------------------------------
@@ -924,7 +1183,8 @@ async fn no_call_panics_on_hostile_input() {
                 "unpause_container", "rename_container", "remove_container", "logs", "stats", "exec", "list_images", "pull_image",
                 "remove_image", "prune_images", "list_volumes", "create_volume", "remove_volume", "prune_volumes",
                 "list_networks",
-                "create_network", "remove_network", "events",
+                "create_network", "remove_network", "events", "build_image", "attach_container",
+                "upload_to_container",
             }
             for _, name in methods do
                 local method = docker[name]

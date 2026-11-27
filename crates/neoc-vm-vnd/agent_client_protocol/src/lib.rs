@@ -6,7 +6,9 @@
 //! acts (`session/request_permission`), and answers the prompt when the turn is over. This module connects to an
 //! agent over a WebSocket, one JSON-RPC message per text frame, as `acpd` serves it (`GET /acp`, `initialize` first,
 //! one agent process per socket), and hands the socket to the SDK as its `Lines` transport: the SDK does the
-//! JSON-RPC, the protocol guard and the routing of each session's messages.
+//! JSON-RPC, the protocol guard and the routing of each session's messages. `connect_lines` hands the SDK the
+//! script's own `read` and `write` functions as that transport instead, one message per call (an agent on a
+//! container's standard streams, say), and everything after the transport is the same.
 //!
 //! ```lua
 //! local acp = require("vnd:agent_client_protocol")
@@ -93,7 +95,10 @@ pub mod agent_client_protocol {
     use std::time::Duration;
 
     use mlua::Lua;
-    use mlua_ir::{LuaError, Object, Options, Shape};
+    use mlua_ir::ir::{Field, Ty, TypeBody};
+    use mlua_ir::{
+        Callback, Definition, FromLuaArg, LuaError, Object, Options, Registry, Shape, name_params,
+    };
     use serde::{Deserialize, Serialize};
 
     use super::{Data, lenient, lenient_items};
@@ -835,16 +840,8 @@ pub mod agent_client_protocol {
     /// end
     /// ```
     pub async fn connect(lua: Lua, url: String, opts: ConnectOptions) -> Result<Connection, AcpError> {
-        let invalid = |reason: String| AcpError::InvalidInput { reason };
-        let limit =
-            Duration::try_from_secs_f64(opts.timeout).ok().filter(|limit| !limit.is_zero()).ok_or_else(
-                || invalid(format!("timeout must be a positive number of seconds, got {}", opts.timeout)),
-            )?;
-        let client_info = opts.client_info.unwrap_or_else(|| Implementation {
-            name: "neoc".to_owned(),
-            title: None,
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-        });
+        let limit = time_limit(opts.timeout)?;
+        let client_info = client_info_or_ours(opts.client_info);
         let life = Life::of(&lua);
         let opened = link::connect(&url, opts.headers, &client_info, &life);
         let (link, agent, local_address) =
@@ -852,6 +849,152 @@ pub mod agent_client_protocol {
                 reason: format!("{url} did not connect and initialize within {}s", opts.timeout),
             })??;
         Ok(Connection { link: Arc::new(link), agent: Arc::new(agent), local_address })
+    }
+
+    /// `timeout` as the limit it sets: a positive number of seconds.
+    fn time_limit(timeout: f64) -> Result<Duration, AcpError> {
+        Duration::try_from_secs_f64(timeout).ok().filter(|limit| !limit.is_zero()).ok_or_else(|| {
+            AcpError::InvalidInput {
+                reason: format!("timeout must be a positive number of seconds, got {timeout}"),
+            }
+        })
+    }
+
+    /// Who the client says it is: `client_info`, or `neoc` and its version.
+    fn client_info_or_ours(client_info: Option<Implementation>) -> Implementation {
+        client_info.unwrap_or_else(|| Implementation {
+            name: "neoc".to_owned(),
+            title: None,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        })
+    }
+
+    /// What `connect_lines` speaks ACP over: two functions of the script's own, one JSON-RPC message per call.
+    /// `read()` returns the agent's next message, or `nil` once the agent's side has closed; `write(line)` sends one
+    /// message to the agent. Both may wait (read a container's output, write to its input), and each is called as a
+    /// call of its own while the connection runs. An error either raises ends the connection.
+    pub struct LineTransport {
+        read: mlua::Function,
+        write: mlua::Function,
+    }
+
+    impl Shape for LineTransport {
+        fn shape(reg: &mut Registry) -> Ty {
+            reg.named(
+                "LineTransport",
+                Some("vnd:agent_client_protocol"),
+                "neoc_vm_vnd_agent_client_protocol::agent_client_protocol::LineTransport",
+                |reg| {
+                    let read = Callback::<fn() -> Option<String>>::shape(reg);
+                    let mut write = Callback::<fn(String)>::shape(reg);
+                    name_params(&mut write, &["line"]);
+                    let field = |name: &str, doc: &str, ty: Ty| Field {
+                        name: name.to_owned(),
+                        doc: Some(doc.to_owned()),
+                        ty,
+                        default: None,
+                        readonly: false,
+                    };
+                    Definition {
+                        doc: Some(
+                            "What `connect_lines` speaks ACP over: two functions of the script's own, one JSON-RPC \
+                             message per call. Both may wait."
+                                .to_owned(),
+                        ),
+                        body: TypeBody::Record {
+                            fields: vec![
+                                field(
+                                    "read",
+                                    "The agent's next message, or `nil` once the agent's side has closed.",
+                                    read,
+                                ),
+                                field("write", "Send one message to the agent.", write),
+                            ],
+                        },
+                    }
+                },
+            )
+        }
+    }
+
+    impl FromLuaArg for LineTransport {
+        fn from_lua_arg(value: mlua::Value, _: &Lua) -> Result<Self, String> {
+            let mlua::Value::Table(table) = value else {
+                return Err(mlua_ir::expected("a table of `read` and `write` functions", &value));
+            };
+            let (mut read, mut write) = (None, None);
+            for pair in table.pairs::<mlua::Value, mlua::Value>() {
+                let (key, value) = pair.map_err(|e| e.to_string())?;
+                let name = match &key {
+                    mlua::Value::String(name) => name.to_string_lossy(),
+                    other => return Err(format!("a {} key, expected `read` or `write`", other.type_name())),
+                };
+                let slot = match name.as_str() {
+                    "read" => &mut read,
+                    "write" => &mut write,
+                    other => return Err(format!("unknown field `{other}`, expected `read` or `write`")),
+                };
+                match value {
+                    mlua::Value::Function(function) => *slot = Some(function),
+                    other => return Err(format!("{name}: {}", mlua_ir::expected("a function", &other))),
+                }
+            }
+            match (read, write) {
+                (Some(read), Some(write)) => Ok(Self { read, write }),
+                (None, _) => Err("missing field `read`".to_owned()),
+                (_, None) => Err("missing field `write`".to_owned()),
+            }
+        }
+    }
+
+    /// How `connect_lines` connects: `connect`'s options without the headers, which there is no upgrade for.
+    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct ConnectLinesOptions {
+        /// Seconds the agent's answer to `initialize` may take.
+        pub timeout: f64,
+        /// Who the client says it is in `initialize`; `neoc` and its version when not given.
+        pub client_info: Option<Implementation>,
+    }
+
+    impl Default for ConnectLinesOptions {
+        fn default() -> Self {
+            Self { timeout: DEFAULT_TIMEOUT_SECS, client_info: None }
+        }
+    }
+
+    /// Speak ACP to an agent over the script's own lines (`transport`), and initialize it as `connect` does: the
+    /// script carries each JSON-RPC message (an agent that runs as a container's program, attached with
+    /// `vnd:bollard`, say). Returns the same connection as `connect`, whose `local_address` is `""`. The agent's side
+    /// closing before it answers `initialize` (`read` returns `nil`) is `closed`.
+    ///
+    /// The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
+    /// are collected, and when the script stops. Closing it stops calling `read` and `write`; the script closes what
+    /// they read and write itself.
+    ///
+    /// ```luau
+    /// local sent = {}
+    /// local conn, err = agent_client_protocol.connect_lines({
+    ///     read = function(): string? return nil end, -- the agent's side is closed
+    ///     write = function(line: string) table.insert(sent, line) end,
+    /// })
+    /// assert(conn == nil and err ~= nil and err.kind == "closed")
+    /// ```
+    pub async fn connect_lines(
+        lua: Lua,
+        transport: LineTransport,
+        opts: ConnectLinesOptions,
+    ) -> Result<Connection, AcpError> {
+        let limit = time_limit(opts.timeout)?;
+        let client_info = client_info_or_ours(opts.client_info);
+        let life = Life::of(&lua);
+        let lines = link::script_lines(&lua, transport.read, transport.write);
+        let (link, agent) = tokio::time::timeout(limit, link::run(lines, &client_info, &life))
+            .await
+            .map_err(|_| AcpError::TimedOut {
+                reason: format!("the agent did not initialize within {}s", opts.timeout),
+            })??;
+        Ok(Connection { link: Arc::new(link), agent: Arc::new(agent), local_address: String::new() })
     }
 
     /// A connection to an agent. Copies of the handle are the same connection.
@@ -871,7 +1014,7 @@ pub mod agent_client_protocol {
         }
 
         /// The IP address of this end of the connection: the address this machine has on the way to the agent
-        /// (`127.0.0.1` for an agent on this machine).
+        /// (`127.0.0.1` for an agent on this machine); `""` for a connection over the script's lines.
         #[get]
         pub fn local_address(&self) -> String {
             self.local_address.clone()

@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { connect, type Socket } from 'node:net'
 import { startFakeDocker } from './fakeDocker'
 
 // the fake answers in Docker's shapes, over HTTP, as a client reaches the real one
@@ -266,4 +267,81 @@ test('an event reaches the listeners that asked for its type, its action and its
   expect(volumes.events.map((e) => `${e.Type} ${e.Action}`)).toEqual(['volume create'])
   expect(labelled.events, 'web has no such label').toEqual([])
   for (const stream of [containers, volumes, labelled]) stream.close()
+})
+
+describe('a build', () => {
+  test('reports its steps and the image it made, which is then on the machine', async () => {
+    const res = await fetch(`${base}/build?t=agent%3A1&dockerfile=Dockerfile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-tar' },
+      body: new Uint8Array([1, 2, 3])
+    })
+    expect(res.status).toBe(200)
+    const steps = (await res.text()).trim().split('\n').map((line) => JSON.parse(line) as { stream?: string; aux?: { ID: string } })
+    expect(steps.some((s) => s.aux?.ID.startsWith('sha256:'))).toBe(true)
+    expect(steps.at(-1)?.stream).toBe('Successfully tagged agent:1\n')
+    expect(docker.images().flatMap((i) => i.tags)).toContain('agent:1')
+    const listed = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ reference: ['agent:1'] }))}`)).body
+    expect(listed.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
+  })
+})
+
+test('an archive uploaded into a container is kept with its path', async () => {
+  const res = await fetch(`${base}/containers/web/archive?path=%2Fwork`, { method: 'PUT', body: new Uint8Array([7, 8]) })
+  expect(res.status).toBe(200)
+  expect(docker.uploads('web')).toEqual([{ path: '/work', archive: new Uint8Array([7, 8]) }])
+  expect((await fetch(`${base}/containers/ghost/archive?path=%2Fwork`, { method: 'PUT', body: '' })).status).toBe(404)
+})
+
+/** A client's end of an attach: the connection, its answer's head, and what the container wrote to it since. */
+const attach = async (name: string): Promise<{ socket: Socket; head: string; received: () => Buffer; more: () => Promise<void> }> => {
+  const socket = connect(Number(new URL(base).port), '127.0.0.1')
+  let bytes = Buffer.alloc(0)
+  let wake: (() => void) | undefined
+  socket.on('data', (data: Buffer) => {
+    bytes = Buffer.concat([bytes, data])
+    wake?.()
+  })
+  const more = (): Promise<void> => new Promise((resolve) => (wake = resolve))
+  socket.write(`POST /v1.47/containers/${name}/attach?stream=1&stdin=1&stdout=1 HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n`)
+  while (!bytes.includes('\r\n\r\n')) await more()
+  const end = bytes.indexOf('\r\n\r\n') + 4
+  const head = bytes.subarray(0, end).toString()
+  bytes = bytes.subarray(end)
+  return { socket, head, received: () => bytes, more }
+}
+
+describe('an attached client', () => {
+  test("writes the container's input, which the journey reads, and reads the frames the journey writes", async () => {
+    const container = docker.attached('web')
+    const client = await attach('web')
+    expect(client.head).toStartWith('HTTP/1.1 101')
+    const program = await container
+    expect(program.name).toBe('web')
+
+    client.socket.write('{"id":1}\n')
+    expect(Buffer.from((await program.read()) ?? []).toString()).toBe('{"id":1}\n')
+    program.write('{"result":{}}\n')
+    program.write('oops', 'stderr')
+    // Docker's frames: the stream, three zero bytes, the length, the bytes
+    const expected = Buffer.concat([
+      Buffer.from([1, 0, 0, 0, 0, 0, 0, 14]),
+      Buffer.from('{"result":{}}\n'),
+      Buffer.from([2, 0, 0, 0, 0, 0, 0, 4]),
+      Buffer.from('oops')
+    ])
+    while (client.received().length < expected.length) await client.more()
+    expect(client.received()).toEqual(expected)
+
+    // the client closes the input: the journey reads its end
+    client.socket.end()
+    expect(await program.read()).toBeNull()
+    program.end()
+  })
+
+  test('of a container that is not there is refused', async () => {
+    const client = await attach('ghost')
+    expect(client.head).toStartWith('HTTP/1.1 404')
+    client.socket.destroy()
+  })
 })

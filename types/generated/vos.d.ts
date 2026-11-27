@@ -5046,6 +5046,14 @@ interface vnd_agent_client_protocol_AvailableCommandInput {
   hint: string
 }
 
+/** How `connect_lines` connects: `connect`'s options without the headers, which there is no upgrade for. */
+interface vnd_agent_client_protocol_ConnectLinesOptions {
+  /** Seconds the agent's answer to `initialize` may take. @default 30.0 */
+  timeout?: number
+  /** Who the client says it is in `initialize`; `neoc` and its version when not given. */
+  client_info?: vnd_agent_client_protocol_Implementation
+}
+
 /** How `connect` connects. */
 interface vnd_agent_client_protocol_ConnectOptions {
   /**
@@ -5065,7 +5073,7 @@ interface vnd_agent_client_protocol_Connection {
   readonly agent: vnd_agent_client_protocol_InitializeResponse
   /**
    * The IP address of this end of the connection: the address this machine has on the way to the agent
-   * (`127.0.0.1` for an agent on this machine).
+   * (`127.0.0.1` for an agent on this machine); `""` for a connection over the script's lines.
    */
   readonly local_address: string
   /**
@@ -5163,6 +5171,14 @@ interface vnd_agent_client_protocol_InitializeResponse {
   agent_info?: vnd_agent_client_protocol_Implementation
   /** The ways to sign in to it; none when it needs no sign-in. */
   auth_methods: vnd_agent_client_protocol_AuthMethod[]
+}
+
+/** What `connect_lines` speaks ACP over: two functions of the script's own, one JSON-RPC message per call. Both may wait. */
+interface vnd_agent_client_protocol_LineTransport {
+  /** The agent's next message, or `nil` once the agent's side has closed. */
+  read: (this: void) => string | undefined
+  /** Send one message to the agent. */
+  write: (this: void, line: string) => void
 }
 
 /** What `load_session` is given. */
@@ -5443,11 +5459,34 @@ declare module "vnd:agent_client_protocol" {
    * Yields the calling coroutine while it waits.
    */
   export function connect(this: void, url: string, opts?: vnd_agent_client_protocol_ConnectOptions): LuaMultiReturn<[vnd_agent_client_protocol_Connection, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  /**
+   * Speak ACP to an agent over the script's own lines (`transport`), and initialize it as `connect` does: the
+   * script carries each JSON-RPC message (an agent that runs as a container's program, attached with
+   * `vnd:bollard`, say). Returns the same connection as `connect`, whose `local_address` is `""`. The agent's side
+   * closing before it answers `initialize` (`read` returns `nil`) is `closed`.
+   *
+   * The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
+   * are collected, and when the script stops. Closing it stops calling `read` and `write`; the script closes what
+   * they read and write itself.
+   *
+   * ```luau
+   * local sent = {}
+   * local conn, err = agent_client_protocol.connect_lines({
+   *     read = function(): string? return nil end, -- the agent's side is closed
+   *     write = function(line: string) table.insert(sent, line) end,
+   * })
+   * assert(conn == nil and err ~= nil and err.kind == "closed")
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  export function connect_lines(this: void, transport: vnd_agent_client_protocol_LineTransport, opts?: vnd_agent_client_protocol_ConnectLinesOptions): LuaMultiReturn<[vnd_agent_client_protocol_Connection, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
   export type AcpError = vnd_agent_client_protocol_AcpError
   export type AgentCapabilities = vnd_agent_client_protocol_AgentCapabilities
   export type AuthMethod = vnd_agent_client_protocol_AuthMethod
   export type AvailableCommand = vnd_agent_client_protocol_AvailableCommand
   export type AvailableCommandInput = vnd_agent_client_protocol_AvailableCommandInput
+  export type ConnectLinesOptions = vnd_agent_client_protocol_ConnectLinesOptions
   export type ConnectOptions = vnd_agent_client_protocol_ConnectOptions
   export type Connection = vnd_agent_client_protocol_Connection
   export type ContentBlock = vnd_agent_client_protocol_ContentBlock
@@ -5456,6 +5495,7 @@ declare module "vnd:agent_client_protocol" {
   export type HttpHeader = vnd_agent_client_protocol_HttpHeader
   export type Implementation = vnd_agent_client_protocol_Implementation
   export type InitializeResponse = vnd_agent_client_protocol_InitializeResponse
+  export type LineTransport = vnd_agent_client_protocol_LineTransport
   export type LoadSessionRequest = vnd_agent_client_protocol_LoadSessionRequest
   export type LoadSessionResponse = vnd_agent_client_protocol_LoadSessionResponse
   export type McpCapabilities = vnd_agent_client_protocol_McpCapabilities
@@ -5484,6 +5524,106 @@ declare module "vnd:agent_client_protocol" {
 }
 
 // ===== vnd:bollard =====
+
+/**
+ * A container's streams, attached (`attach_container`). It belongs to the script that made it and closes with
+ * it, or when the script lets go of it.
+ */
+interface vnd_bollard_Attach {
+  /**
+   * The next piece of the container's output: `(piece, nil)`; `(nil, nil)` at the end (the container
+   * stopped, or the connection closed); or `(nil, err)`, after which nothing follows.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  next(): LuaMultiReturn<[vnd_bollard_LogPiece | undefined, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
+   * The output as an iterator, which raises what `next()` returns as an error.
+   *
+   * ```luau
+   * local docker = assert(bollard.connect())
+   * local attach = assert(docker:attach_container("web", { stream = true, stdout = true, stderr = true }))
+   * for piece in attach:items() do
+   *     print(piece.stream, piece.data)
+   * end
+   * ```
+   */
+  items(): (this: void) => vnd_bollard_LogPiece | undefined
+  /**
+   * Write to the container's input (a string of bytes, or a buffer), and wait until it is sent. The
+   * container's input must have been attached (`stdin`), and the container made with its input open
+   * (`OpenStdin`). An input that was closed is `closed`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  write(data: string): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
+   * Close the container's input: the container reads its end. The output can still be read. Closing again
+   * does nothing.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  close_input(): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
+}
+
+/**
+ * The options of `attach_container`: which of the container's streams to attach to. Nothing when not given, as
+ * for Docker.
+ */
+interface vnd_bollard_AttachContainer {
+  /** Stay attached and read what the container writes from now on. @default false */
+  stream?: boolean
+  /** Attach to its standard input, which `write` writes to. @default false */
+  stdin?: boolean
+  /** Read its standard output. @default false */
+  stdout?: boolean
+  /** Read its standard error. @default false */
+  stderr?: boolean
+  /** Read what it wrote before, first. @default false */
+  logs?: boolean
+  /**
+   * The keys that detach from the container when they are written to its input (`ctrl-p,ctrl-q`, Docker's
+   * own, when not given).
+   */
+  detach_keys?: string
+}
+
+/** The options of `build_image`. */
+interface vnd_bollard_Build {
+  /** The name to give the image, with its tag (`app:1`); the image is only known by its id when not given. */
+  t?: vnd_bollard_ImageRef
+  /** Where the Dockerfile is in the archive: `Dockerfile` when not given. @default "Dockerfile" */
+  dockerfile?: string
+  /** Labels to put on the image. */
+  labels?: { [key: string]: string }
+  /** The values of the Dockerfile's `ARG`s, by name. */
+  buildargs?: { [key: string]: string }
+  /** Remove the build's intermediate containers once it succeeds: `true` when not given, as for Docker. @default true */
+  rm?: boolean
+  /** Remove them even when it fails. @default false */
+  forcerm?: boolean
+  /** Use no cached layer. @default false */
+  nocache?: boolean
+  /** Pull the `FROM` images again even when they are on the host. @default false */
+  pull?: boolean
+}
+
+/**
+ * What a build reports as it goes, with Docker's field names: a line of its output (`stream`), the status of a
+ * pull it makes (`status`, `id`, `progressDetail`), or the image it made (`aux.ID`).
+ */
+interface vnd_bollard_BuildInfo {
+  /** What the status is about (a layer). */
+  id?: string
+  /** A piece of the build's output (`Step 1/3 : FROM alpine`), with its line ends. */
+  stream?: string
+  /** A status (`Downloading`). */
+  status?: string
+  /** How far the status has got. */
+  progressDetail?: vnd_bollard_ProgressDetail
+  /** The image the build made. */
+  aux?: vnd_bollard_ImageId
+}
 
 /** A client for one daemon. Cheap to clone: every clone is the same client. */
 interface vnd_bollard_Client {
@@ -5654,6 +5794,37 @@ interface vnd_bollard_Client {
    */
   exec(name: vnd_bollard_ContainerName, cmd: string[], opts?: vnd_bollard_ExecOptions): LuaMultiReturn<[vnd_bollard_Exec, undefined] | [undefined, vnd_bollard_DockerError]>
   /**
+   * Attach to a container's streams, as `docker attach` does: Docker hijacks the connection, which then
+   * carries the container's output one way and its input the other. Returns an `Attach`: its `next()` and
+   * `items()` read the output as `logs` gives it (a container with a TTY sends everything as `"console"`),
+   * `write` writes to the input, `close_input` ends it. A container that does not exist is `not_found`.
+   *
+   * ```luau
+   * local docker = assert(bollard.connect())
+   * local attach = assert(docker:attach_container("agent", { stream = true, stdin = true, stdout = true }))
+   * assert(attach:write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'))
+   * local piece = assert(attach:next())
+   * print(piece.stream, piece.data)
+   * assert(attach:close_input())
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  attach_container(name: vnd_bollard_ContainerName, opts?: vnd_bollard_AttachContainer): LuaMultiReturn<[vnd_bollard_Attach, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
+   * Unpack a tar archive (a string of its bytes, or a buffer) into a directory of a container, which need not
+   * be running. A directory that is not there is `not_found`.
+   *
+   * ```luau
+   * local docker = assert(bollard.connect())
+   * local archive = "..." -- a tar archive
+   * assert(docker:upload_to_container("web", { path = "/usr/share/nginx/html" }, archive))
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  upload_to_container(name: vnd_bollard_ContainerName, opts: vnd_bollard_Upload, archive: string): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
    * The images on the host, as Docker's summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...).
    *
    * Yields the calling coroutine while it waits.
@@ -5673,6 +5844,22 @@ interface vnd_bollard_Client {
    * ```
    */
   pull_image(image: vnd_bollard_ImageRef, opts?: vnd_bollard_Pull): mlua_Stream<vnd_bollard_CreateImageInfo, vnd_bollard_DockerError>
+  /**
+   * Build an image from a build context: a tar archive (a string of its bytes, or a buffer) that holds the
+   * Dockerfile and what it copies. A stream of Docker's progress (`stream`, `status`, `aux.ID`), which ends
+   * when the build is over. It uses Docker's classic builder. The build runs as the stream is read and stops if
+   * the stream is closed; a build that fails (a step that fails, a Dockerfile that is not there) is the error
+   * of a `next()`.
+   *
+   * ```luau
+   * local docker = assert(bollard.connect())
+   * local context = "..." -- a tar archive with a Dockerfile in it
+   * for progress in docker:build_image({ t = "app:1", buildargs = { VERSION = "1" } }, context):items() do
+   *     if progress.stream then print(progress.stream) end
+   * end
+   * ```
+   */
+  build_image(opts?: vnd_bollard_Build, context: string): mlua_Stream<vnd_bollard_BuildInfo, vnd_bollard_DockerError>
   /**
    * Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a
    * container uses is `conflict` unless `force`.
@@ -6118,7 +6305,7 @@ interface vnd_bollard_DeviceRequest {
 }
 
 /** The kinds of `vnd_bollard_DockerError`. */
-type vnd_bollard_DockerErrorKind = "invalid_input" | "connect" | "timed_out" | "not_found" | "conflict" | "api" | "bad_response" | "too_large" | "other"
+type vnd_bollard_DockerErrorKind = "invalid_input" | "connect" | "timed_out" | "not_found" | "conflict" | "api" | "bad_response" | "closed" | "too_large" | "other"
 
 /** Why a Docker call failed. */
 type vnd_bollard_DockerError =
@@ -6142,6 +6329,11 @@ type vnd_bollard_DockerError =
   | { kind: "api"; reason: string; status?: number; message: string; op: string }
   /** Docker answered with something this client could not read. */
   | { kind: "bad_response"; reason: string; message: string; op: string }
+  /**
+   * An attached container's input cannot be written: `close_input()` was called, the connection broke, or the
+   * script stopped.
+   */
+  | { kind: "closed"; reason: string; message: string; op: string }
   /** A result was longer than this module reads into memory. */
   | { kind: "too_large"; limit: number; message: string; op: string }
   /** Anything else, reported and never hidden. */
@@ -6365,6 +6557,12 @@ interface vnd_bollard_HostConfigLogConfig {
 interface vnd_bollard_ImageDeleteResponseItem {
   Untagged?: string
   Deleted?: string
+}
+
+/** The image a build made: Docker's `aux`. */
+interface vnd_bollard_ImageId {
+  /** Its id (`sha256:...`). */
+  ID?: string
 }
 
 interface vnd_bollard_ImageManifestSummary {
@@ -6947,6 +7145,14 @@ interface vnd_bollard_TlsInfo {
   CertIssuerPublicKey?: string
 }
 
+/** Where `upload_to_container` unpacks its archive. */
+interface vnd_bollard_Upload {
+  /** The directory in the container to unpack the archive into; it must exist. */
+  path: string
+  /** Refuse to replace a directory with a file, or a file with a directory. */
+  no_overwrite_dir_non_dir: boolean
+}
+
 /** A volume, with Docker's field names. */
 interface vnd_bollard_Volume {
   /** The volume's name. */
@@ -7020,6 +7226,10 @@ declare module "vnd:bollard" {
    * ```
    */
   export function connect(this: void, opts?: vnd_bollard_ConnectOptions): LuaMultiReturn<[vnd_bollard_Client, undefined] | [undefined, vnd_bollard_DockerError]>
+  export type Attach = vnd_bollard_Attach
+  export type AttachContainer = vnd_bollard_AttachContainer
+  export type Build = vnd_bollard_Build
+  export type BuildInfo = vnd_bollard_BuildInfo
   export type Client = vnd_bollard_Client
   export type ClusterInfo = vnd_bollard_ClusterInfo
   export type ClusterVolumeSpec = vnd_bollard_ClusterVolumeSpec
@@ -7089,6 +7299,7 @@ declare module "vnd:bollard" {
   export type HostConfigIsolationEnum = vnd_bollard_HostConfigIsolationEnum
   export type HostConfigLogConfig = vnd_bollard_HostConfigLogConfig
   export type ImageDeleteResponseItem = vnd_bollard_ImageDeleteResponseItem
+  export type ImageId = vnd_bollard_ImageId
   export type ImageManifestSummary = vnd_bollard_ImageManifestSummary
   export type ImageManifestSummaryAttestationData = vnd_bollard_ImageManifestSummaryAttestationData
   export type ImageManifestSummaryImageData = vnd_bollard_ImageManifestSummaryImageData
@@ -7169,6 +7380,7 @@ declare module "vnd:bollard" {
   export type ThrottleDevice = vnd_bollard_ThrottleDevice
   export type Tls = vnd_bollard_Tls
   export type TlsInfo = vnd_bollard_TlsInfo
+  export type Upload = vnd_bollard_Upload
   export type Volume = vnd_bollard_Volume
   export type VolumeCreateRequest = vnd_bollard_VolumeCreateRequest
   export type VolumeList = vnd_bollard_VolumeList

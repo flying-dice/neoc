@@ -9,11 +9,13 @@
  * and the containers that were made exactly as they were asked for (which is what the journeys look at), changes them
  * as Docker would (refusing what Docker refuses, in its words: an image a container was made from, a volume a
  * container uses, a network a running container is on), and reports each change on `/events`, which is how an app's
- * backend hears of it.
+ * backend hears of it. It builds images (any context makes the image the build names), takes archives uploaded into a
+ * container, and lets a journey stand in for the program a container runs: what a client attached to a container
+ * writes to its input, the journey reads, and what the journey writes is the container's output.
  */
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 
 /** What a container finds at a place of its own: a folder of the machine (`bind`), or a volume (`source` is its name). */
 export interface Mount {
@@ -119,6 +121,31 @@ interface Kept extends Container {
   /** It ran, and stopped. */
   exited: boolean
   log: string[]
+  /** It has a TTY: what it writes is one raw stream, not frames. */
+  tty: boolean
+}
+
+/** An archive uploaded into a container (`PUT /containers/{id}/archive`). */
+export interface Upload {
+  /** The directory it was unpacked into. */
+  path: string
+  /** The tar archive, as it was sent. */
+  archive: Uint8Array
+}
+
+/**
+ * A client attached to a container's streams (`POST /containers/{id}/attach`), from the container's side: the
+ * journey is the program the container runs.
+ */
+export interface Attached {
+  /** The container's name. */
+  readonly name: string
+  /** The next bytes the client wrote to the container's input, as they came; `null` once the client closed it. */
+  read(): Promise<Uint8Array | null>
+  /** Write to the container's output (or its errors), as one frame of Docker's multiplexed stream (raw with a TTY). */
+  write(data: string | Uint8Array, stream?: 'stdout' | 'stderr'): void
+  /** End the connection, as the container's program exiting does. */
+  end(): void
 }
 
 export interface Options {
@@ -157,6 +184,10 @@ export interface FakeDocker {
   volume(name: string): Volume | undefined
   /** The images there are, in the order they came. */
   images(): Image[]
+  /** The archives uploaded into a container since the last reset, in order. */
+  uploads(name: string): Upload[]
+  /** The next client to attach to a container (one that is attached already, first). */
+  attached(name: string): Promise<Attached>
   /** The order the containers were started in since the last reset, by name. */
   started(): string[]
   /** Something else has a container's ports (or lets go of them): Docker refuses to start a container that publishes one. */
@@ -170,10 +201,14 @@ export interface FakeDocker {
   close(): Promise<void>
 }
 
-async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function bytesOf(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
-  const text = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks)
+}
+
+async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const text = (await bytesOf(req)).toString('utf8')
   return text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
 }
 
@@ -236,7 +271,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
   const keep = (c: Container, seeded: boolean, log: string[], chosen: Record<string, string> = {}): Kept => {
     made += 1
     const image = imageBy(c.image)?.image.id ?? `sha256:${digest(c.image)}`
-    return { ...c, id: made.toString(16).padStart(64, '0'), imageId: image, chosen, seeded, exited: false, log }
+    return { ...c, id: made.toString(16).padStart(64, '0'), imageId: image, chosen, seeded, exited: false, log, tty: false }
   }
   /** A whole container from what is known of it: the rest as Docker has it for a container made with nothing more. */
   const container = (c: Partial<Container> & Pick<Container, 'name' | 'image'>): Container => ({
@@ -328,6 +363,11 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
   let volumes = firstVolumes(containers)
   let pulled: string[] = []
   let started: string[] = []
+  let uploads = new Map<string, Upload[]>()
+  // clients attached and not yet taken by a journey, and journeys waiting for one, by container name
+  const unclaimed = new Map<string, Attached[]>()
+  const claiming = new Map<string, ((attached: Attached) => void)[]>()
+  const attachments = new Set<Socket>()
   let portTaken = false
   // the app's backend, reading `/events`, with what it asked for (Docker's `type`, `event` and `label` filters)
   const listeners = new Map<ServerResponse, { type?: string[]; event?: string[]; label?: string[] }>()
@@ -372,13 +412,13 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
   }
 
   /** One frame of Docker's multiplexed output: the stream (1 is its output, 2 its errors), three zero bytes, the length, the bytes. */
-  const frame = (line: string): Buffer => {
-    const data = Buffer.from(`${line}\n`)
+  const framed = (data: Buffer, to: number): Buffer => {
     const head = Buffer.alloc(8)
-    head[0] = stream
+    head[0] = to
     head.writeUInt32BE(data.length, 4)
     return Buffer.concat([head, data])
   }
+  const frame = (line: string): Buffer => framed(Buffer.from(`${line}\n`), stream)
 
   /** An image as Docker lists it: the client reads every one of these fields. Docker counts its containers only for `/system/df`. */
   const listedImage = (image: KeptImage): object => ({
@@ -649,6 +689,23 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       const removed = removeImage(decodeURIComponent(imagePath[1]!), flag('force'))
       return json(res, removed.status, removed.body)
     }
+    if (method === 'POST' && path === '/build') {
+      // the context is read and not looked into: the image is the one the build names
+      await bytesOf(req)
+      const named = url.searchParams.get('t')
+      const image = named === null ? undefined : /:[^/]*$/.test(named) ? named : `${named}:latest`
+      const built = image === undefined ? imageOf([], undefined, `build#${images.length}`) : (imageBy(image)?.image ?? imageOf([image]))
+      const id = built.id
+      res.writeHead(200, { 'content-type': 'application/json' })
+      const say = (line: object): void => void res.write(`${JSON.stringify(line)}\n`)
+      say({ stream: `Step 1/1 : FROM scratch\n` })
+      say({ stream: ' ---> Using cache\n' })
+      say({ aux: { ID: id } })
+      say({ stream: `Successfully built ${id.slice(7, 19)}\n` })
+      if (!images.includes(built)) images.push(built)
+      if (image !== undefined) say({ stream: `Successfully tagged ${image}\n` })
+      return void res.end()
+    }
     if (method === 'GET' && path === '/networks') {
       const filters = filtersOf(url.searchParams)
       const named = filters.name ?? []
@@ -865,6 +922,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         [],
         chosen
       )
+      created.tty = body.Tty === true
       containers.push(created)
       tell('create', created)
       return json(res, 201, { Id: created.id, Warnings: [] })
@@ -876,6 +934,13 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     if (!found) return json(res, 404, { message: `No such container: ${key}` })
 
     if (method === 'GET' && verb === 'json') return json(res, 200, inspectOf(found))
+    if (method === 'PUT' && verb === 'archive') {
+      const at = url.searchParams.get('path') ?? ''
+      if (!at.startsWith('/')) return json(res, 400, { message: `path ${at} is not absolute` })
+      const archive = new Uint8Array(await bytesOf(req))
+      uploads.set(found.name, [...(uploads.get(found.name) ?? []), { path: at, archive }])
+      return void res.writeHead(200).end()
+    }
     if (method === 'GET' && verb === 'logs') {
       const tail = Number(url.searchParams.get('tail') ?? 'all')
       const lines = Number.isNaN(tail) ? found.log : found.log.slice(-tail)
@@ -945,8 +1010,61 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     return json(res, 404, { message: `the fake Docker has no ${method} ${path}` })
   }
 
+  /** A client attached to a container: the connection Docker hijacked, from the container's side. */
+  const attach = (c: Kept, socket: Socket): Attached => {
+    const chunks: (Uint8Array | null)[] = []
+    const readers: ((chunk: Uint8Array | null) => void)[] = []
+    const take = (chunk: Uint8Array | null): void => {
+      const reader = readers.shift()
+      if (reader) reader(chunk)
+      else chunks.push(chunk)
+    }
+    socket.on('data', (data: Buffer) => take(new Uint8Array(data)))
+    // the client closed the input (or the connection went): there is nothing more to read
+    socket.on('end', () => take(null))
+    socket.on('close', () => {
+      attachments.delete(socket)
+      take(null)
+    })
+    let ended = false
+    return {
+      name: c.name,
+      read: () => {
+        const chunk = chunks.shift()
+        if (chunk !== undefined) return Promise.resolve(chunk)
+        if (ended) return Promise.resolve(null)
+        return new Promise((resolve) => readers.push(resolve))
+      },
+      write(data, to = 'stdout') {
+        const bytes = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data)
+        socket.write(c.tty ? bytes : framed(bytes, to === 'stderr' ? 2 : 1))
+      },
+      end() {
+        ended = true
+        socket.end()
+      }
+    }
+  }
+
   const server = createServer((req, res) => {
     answer(req, res).catch((e: unknown) => json(res, 500, { message: String(e) }))
+  })
+  // `POST /containers/{id}/attach` asks for the connection itself (`Upgrade: tcp`): Docker answers 101 and the
+  // connection is the container's streams from then on
+  server.on('upgrade', (req: IncomingMessage, socket: Socket) => {
+    const url = new URL(req.url ?? '/', 'http://docker')
+    const [, key] = /^(?:\/v\d+\.\d+)?\/containers\/([^/]+)\/attach$/.exec(url.pathname) ?? []
+    const found = key === undefined ? undefined : find(key)
+    if (req.method !== 'POST' || found === undefined) {
+      const body = JSON.stringify({ message: key === undefined ? `the fake Docker has no ${req.method} ${url.pathname}` : `No such container: ${key}` })
+      return void socket.end(`HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
+    }
+    attachments.add(socket)
+    socket.write('HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n')
+    const attached = attach(found, socket)
+    const waiting = claiming.get(found.name)?.shift()
+    if (waiting) waiting(attached)
+    else unclaimed.set(found.name, [...(unclaimed.get(found.name) ?? []), attached])
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
@@ -961,6 +1079,9 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       nextPort = 49153
       pulled = []
       started = []
+      uploads = new Map()
+      unclaimed.clear()
+      for (const socket of attachments) socket.destroy()
       portTaken = false
     },
     container(name) {
@@ -1000,6 +1121,12 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return v && { name: v.name, driver: v.driver, labels: { ...v.labels } }
     },
     images: () => images.map((i) => ({ id: i.id, tags: [...i.tags], size: i.size })),
+    uploads: (name) => [...(uploads.get(name) ?? [])],
+    attached(name) {
+      const ready = unclaimed.get(name)?.shift()
+      if (ready) return Promise.resolve(ready)
+      return new Promise((resolve) => claiming.set(name, [...(claiming.get(name) ?? []), resolve]))
+    },
     started: () => [...started],
     takePort(taken) {
       portTaken = taken
@@ -1023,6 +1150,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     close: () =>
       new Promise((resolve) => {
         for (const listener of listeners.keys()) listener.end()
+        for (const socket of attachments) socket.destroy()
         server.closeAllConnections()
         server.close(() => resolve())
       })

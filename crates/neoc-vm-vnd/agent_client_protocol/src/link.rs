@@ -1,7 +1,9 @@
-//! The connection under `vnd:agent_client_protocol`: the WebSocket, and the SDK's v1 client running over it.
+//! The connection under `vnd:agent_client_protocol`: the WebSocket or the script's own lines, and the SDK's v1
+//! client running over either.
 //!
 //! The socket is opened here (the upgrade's status, this end's address and the headers are ours to see and set)
-//! and handed to the SDK as its `Lines` transport, one text frame per JSON-RPC message. The SDK's connection runs on
+//! and handed to the SDK as its `Lines` transport, one text frame per JSON-RPC message; a script's `read` and `write`
+//! functions are handed to it the same way, one call per message. Both go through [`run`]. The SDK's connection runs on
 //! a task of the engine's [`Life`] until the script closes it, every handle to it is gone, or the agent hangs up.
 //! Each session the script starts or loads is an SDK `ActiveSession`, which receives what the agent sends for that
 //! session (its updates, its permission requests, the answer to a prompt) on a stream of its own; a turn reads it.
@@ -13,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use agent_client_protocol::v1::{ActiveSession, ConnectionTo, SessionMessage, schema};
 use agent_client_protocol::{Agent, Client, Dispatch, Lines};
 use futures_util::{FutureExt, SinkExt, StreamExt, TryStreamExt};
+use mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
 use mlua_ir::ir::{Field, Ty, TypeBody};
 use mlua_ir::{Registry, Shape};
 use parking_lot::Mutex;
@@ -31,7 +34,8 @@ use crate::agent_client_protocol::{
     NewSessionResponse, PermissionOption, PermissionOutcome, PromptRequest, SessionUpdate, StopReason,
     ToolCallUpdate, TurnEvent,
 };
-use neoc_vm_core::lifecycle::Life;
+use neoc_vm_core::lifecycle::{self, Life};
+use neoc_vm_core::panics;
 
 /// How much of an error response's body is quoted in the error, in characters.
 const ERROR_BODY: usize = 2048;
@@ -318,6 +322,90 @@ pub(crate) async fn connect(
     life: &Life,
 ) -> Result<(Link, InitializeResponse, String), AcpError> {
     let (transport, local_address) = open(url, headers).await?;
+    let (link, agent) = run(transport, client_info, life).await?;
+    Ok((link, agent, local_address))
+}
+
+/// A call into the VM that nobody called: one of the script's own transport functions, called by the SDK's
+/// connection task. It is a call of its own, which waits for its turn (as a server's handler does), with what it
+/// takes from the call that connected. It holds the engine weakly: a transport does not keep a dropped engine alive.
+struct ScriptCall {
+    entrance: lifecycle::Entrance,
+    inherited: lifecycle::Inherited,
+    lua: mlua::WeakLua,
+}
+
+impl ScriptCall {
+    async fn call<R: FromLuaMulti + Send>(
+        &self,
+        function: &Function,
+        args: impl IntoLuaMulti,
+    ) -> std::io::Result<R> {
+        if self.lua.try_upgrade().is_none() {
+            return Err(std::io::Error::other("the script's engine is gone"));
+        }
+        let called = self
+            .entrance
+            .inbound(self.inherited.clone(), panics::caught(function.call_async::<R>(args)))
+            .await;
+        match called {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(e)) => Err(std::io::Error::other(e.to_string())),
+            Err(panic) => Err(std::io::Error::other(panics::error(&panic).to_string())),
+        }
+    }
+}
+
+/// The script's own transport as the SDK's `Lines`: `read()` gives the agent's next message (`nil` once its side
+/// closed, which ends the transport; an error it raises ends it too), and `write(line)` sends one. Both may wait.
+/// The SDK writes one message at a time, and reads while it writes.
+pub(crate) fn script_lines(
+    lua: &Lua,
+    read: Function,
+    write: Function,
+) -> Lines<
+    impl futures_util::Sink<String, Error = std::io::Error> + Send + 'static,
+    impl futures_util::Stream<Item = std::io::Result<String>> + Send + 'static,
+> {
+    let caller = Arc::new(ScriptCall {
+        entrance: lifecycle::entrance(lua),
+        inherited: lifecycle::inherited(),
+        lua: lua.weak(),
+    });
+    let writer = caller.clone();
+    let outgoing = futures_util::sink::unfold(write, move |write, line: String| {
+        let caller = writer.clone();
+        async move {
+            caller.call::<()>(&write, line).await?;
+            Ok::<_, std::io::Error>(write)
+        }
+    });
+    let incoming = futures_util::stream::unfold(Some(read), move |read| {
+        let caller = caller.clone();
+        async move {
+            let read = read?;
+            match caller.call::<Option<String>>(&read, ()).await {
+                Ok(Some(line)) => Some((Ok(line), Some(read))),
+                Ok(None) => None,
+                // what failed is the last of it
+                Err(e) => Some((Err(e), None)),
+            }
+        }
+    });
+    Lines::new(outgoing, incoming)
+}
+
+/// Run the SDK's v1 client over `transport` on a task of `life`, and initialize the agent: the connection and the
+/// agent's answer. The one way a connection is made, whatever carries its lines.
+pub(crate) async fn run<O, I>(
+    transport: Lines<O, I>,
+    client_info: &Implementation,
+    life: &Life,
+) -> Result<(Link, InitializeResponse), AcpError>
+where
+    O: futures_util::Sink<String, Error = std::io::Error> + Send + 'static,
+    I: futures_util::Stream<Item = std::io::Result<String>> + Send + 'static,
+{
     let (connection_tx, connection_rx) = oneshot::channel();
     let (close_tx, close_rx) = oneshot::channel::<()>();
     life.spawn(Client.v1().connect_with(transport, async move |cx: ConnectionTo<Agent>| {
@@ -339,7 +427,7 @@ pub(crate) async fn connect(
     let answer = link.cx.send_request(initialize).block_task().await.map_err(|e| failure(&link.cx, &e))?;
     // another version is refused by the SDK's protocol guard (-32600)
     let agent: InitializeResponse = from_sdk(&answer, "the answer to initialize")?;
-    Ok((link, agent, local_address))
+    Ok((link, agent))
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-//! What Docker sends over time (a container's logs, the daemon's events, the progress of a pull), as an
-//! `mlua_ir::Stream`.
+//! What Docker sends over time (a container's logs, the daemon's events, the progress of a pull or a build), as an
+//! `mlua_ir::Stream`; and the same reading for an attached container's output, which an `Attach` reads itself.
 //!
 //! A stream is a task that reads Docker's response and a bounded queue between it and the script. The task is
 //! registered with the engine's [`Life`], so it stops when the script is unloaded or shut down; it also stops when
@@ -24,12 +24,23 @@ use neoc_vm_core::lifecycle::Life;
 const QUEUE: usize = 64;
 
 type Queue<T> = mpsc::Receiver<Result<T, DockerError>>;
-type Feed<T> = mpsc::Sender<Result<T, DockerError>>;
+/// The reading task's end of a queue.
+pub(super) type Feed<T> = mpsc::Sender<Result<T, DockerError>>;
+/// What a reading task does with its end of the queue.
+type Read<T> = Box<dyn FnOnce(Feed<T>) -> BoxFuture<'static, ()> + Send>;
 
 /// The script's end of a stream: the queue, and the task that fills it, which ends with this.
-struct Reader<T> {
+pub(super) struct Reader<T> {
     queue: Queue<T>,
     task: AbortHandle,
+}
+
+impl<T> Reader<T> {
+    /// The next item; `None` once the task ended: the source ended, an error was the last item, or the task was
+    /// stopped.
+    pub(super) async fn next(&mut self) -> Option<Result<T, DockerError>> {
+        self.queue.recv().await
+    }
 }
 
 impl<T> Drop for Reader<T> {
@@ -41,14 +52,18 @@ impl<T> Drop for Reader<T> {
 /// A stream that is not read yet, or is.
 enum State<T> {
     /// Made where there was no async runtime to read on: the reading starts with the first `next()`, which has one.
-    Waiting(Life, Box<dyn FnOnce(Feed<T>) -> BoxFuture<'static, ()> + Send>),
+    Waiting(Life, Read<T>),
     Reading(Reader<T>),
 }
 
-fn start<T: Send + 'static>(
-    life: &Life,
-    read: Box<dyn FnOnce(Feed<T>) -> BoxFuture<'static, ()> + Send>,
-) -> Reader<T> {
+/// Start the task that fills a queue (`read`, given the queue's end), on behalf of the script `life` belongs to.
+/// Needs an async runtime.
+pub(super) fn start<T, F, Fut>(life: &Life, read: F) -> Reader<T>
+where
+    T: Send + 'static,
+    F: FnOnce(Feed<T>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
     let (feed, queue) = mpsc::channel(QUEUE);
     Reader { queue, task: life.spawn(read(feed)).abort_handle() }
 }
@@ -58,13 +73,19 @@ async fn feed<T, S>(source: impl Future<Output = Result<S, DockerError>>, feed: 
 where
     S: FutureStream<Item = Result<T, DockerError>>,
 {
-    let stream = match source.await {
-        Ok(stream) => stream,
+    match source.await {
+        Ok(stream) => pump(stream, feed).await,
         Err(error) => {
             let _ = feed.send(Err(error)).await;
-            return;
         }
-    };
+    }
+}
+
+/// Send what `stream` yields into the queue, to its end, its first error, or until nobody takes it.
+pub(super) async fn pump<T, S>(stream: S, feed: Feed<T>)
+where
+    S: FutureStream<Item = Result<T, DockerError>>,
+{
     let mut stream = std::pin::pin!(stream);
     while let Some(item) = stream.next().await {
         // an error ends the stream: Docker sends nothing useful after one
@@ -85,8 +106,18 @@ where
     T: Send + 'static,
     S: FutureStream<Item = Result<T, DockerError>> + Send + 'static,
 {
-    let read: Box<dyn FnOnce(Feed<T>) -> BoxFuture<'static, ()> + Send> =
-        Box::new(move |queue| feed(source, queue).boxed());
+    driven(life, move |queue| feed(source, queue))
+}
+
+/// A stream of what `read` sends into the queue it is given: for a source that borrows what the task holds (a
+/// build's progress borrows its client), which `reading` cannot name. The reading starts now.
+pub(super) fn driven<T, F, Fut>(life: &Life, read: F) -> Stream<T, DockerError>
+where
+    T: Send + 'static,
+    F: FnOnce(Feed<T>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let read: Read<T> = Box::new(move |queue| read(queue).boxed());
     let state = if tokio::runtime::Handle::try_current().is_ok() {
         State::Reading(start(life, read))
     } else {
