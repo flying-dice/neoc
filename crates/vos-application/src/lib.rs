@@ -31,6 +31,8 @@ pub mod testing;
 pub mod tokens;
 #[cfg(test)]
 mod tool_calls_tests;
+#[cfg(test)]
+mod update_tests;
 
 pub use agents::{mint_agent_token, AgentError, AgentPatch, AgentService, McpEndpoint, NewAgent};
 pub use devices::{DeviceService, PairError, PairedDevice, PairingCode, PairingPolicy};

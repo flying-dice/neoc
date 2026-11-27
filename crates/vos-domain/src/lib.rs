@@ -24,8 +24,8 @@ pub mod version;
 pub use actor::{Actor, ActorKind};
 pub use agent::{AgentId, AgentIdentity, ToolGrant};
 pub use app::{
-    resolve_package_url, resolve_url, source_label, AppId, AppRef, FileRef, KitRequirement, Manifest,
-    MigrationSpec, Registry, Requires, GLOBALS_NOT_FOR_APPS, HOST_API, NOT_FOR_APPS,
+    resolve_package_url, resolve_url, source_label, version_order, AppId, AppRef, FileRef, KitRequirement,
+    Manifest, MigrationSpec, Registry, Requires, GLOBALS_NOT_FOR_APPS, HOST_API, NOT_FOR_APPS,
 };
 pub use app_ui::{AppUi, Csp, Permissions, WindowDecl};
 pub use contact::{hash_token, hex_of, same_hash, Agent, Grants};

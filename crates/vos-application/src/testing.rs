@@ -654,44 +654,70 @@ impl Fakes {
     /// Like `add_app`, with extra files (path, source): `.lua` modules, or the page's own (`static/...`). Without a
     /// `static/index.html` among them the page is [`DEFAULT_PAGE`].
     pub fn add_app_with(&self, id: &str, tools: &[(&str, &str)], modules: &[(&str, &str)]) -> String {
+        self.publish(&format!("mem://{id}"), id, "1.0.0", tools, modules, &["CREATE TABLE t(a);"])
+    }
+    /// Publish `version` of app `id` at `mem://<id>/<version>/app-ref.json`, a URL of its own as
+    /// `scripts/build-apps.ts` lays versions out, with these migrations (their SQL, in order).
+    pub fn add_app_version(
+        &self,
+        id: &str,
+        version: &str,
+        tools: &[(&str, &str)],
+        migrations: &[&str],
+    ) -> String {
+        self.publish(&format!("mem://{id}/{version}"), id, version, tools, &[], migrations)
+    }
+    fn publish(
+        &self,
+        base: &str,
+        id: &str,
+        version: &str,
+        tools: &[(&str, &str)],
+        modules: &[(&str, &str)],
+        migrations: &[&str],
+    ) -> String {
         let main = tools.iter().map(|t| t.0).collect::<Vec<_>>().join(",").into_bytes();
-        let sql = b"CREATE TABLE t(a);".to_vec();
         let sha = |b: &[u8]| format!("{:x}", Sha256::digest(b));
-        let mut files = vec![
-            FileRef { path: "main.lua".into(), url: format!("mem://{id}/main.lua"), sha256: sha(&main) },
-            FileRef {
-                path: "001_init.sql".into(),
-                url: format!("mem://{id}/001_init.sql"),
-                sha256: sha(&sql),
-            },
-        ];
+        let mut files =
+            vec![FileRef { path: "main.lua".into(), url: format!("{base}/main.lua"), sha256: sha(&main) }];
+        let mut specs = Vec::new();
+        let mut mem = self.fetcher.0.lock().unwrap();
+        for (i, sql) in migrations.iter().enumerate() {
+            let n = i + 1;
+            let path = format!("{n:03}_m{n}.sql");
+            files.push(FileRef {
+                path: path.clone(),
+                url: format!("{base}/{path}"),
+                sha256: sha(sql.as_bytes()),
+            });
+            specs.push(json!({ "version": n, "name": format!("m{n}"), "file": path }));
+            mem.insert(format!("{base}/{path}"), sql.as_bytes().to_vec());
+        }
         let mut modules = modules.to_vec();
         if !modules.iter().any(|(path, _)| *path == "static/index.html") {
             modules.push(("static/index.html", DEFAULT_PAGE));
         }
-        let mut mem = self.fetcher.0.lock().unwrap();
         for (path, src) in modules {
             files.push(FileRef {
                 path: path.into(),
-                url: format!("mem://{id}/{path}"),
+                url: format!("{base}/{path}"),
                 sha256: sha(src.as_bytes()),
             });
-            mem.insert(format!("mem://{id}/{path}"), src.as_bytes().to_vec());
+            mem.insert(format!("{base}/{path}"), src.as_bytes().to_vec());
         }
         let app_ref = json!({
             "manifest": {
                 "id": id,
                 "name": id,
-                "version": "1.0.0",
+                "version": version,
                 "main": "main.lua",
-                "migrations": [{ "version": 1, "name": "init", "file": "001_init.sql" }],
+                "migrations": specs,
                 "ui": { "root": "static" },
             },
             "files": files,
         });
-        mem.insert(format!("mem://{id}/main.lua"), main);
-        mem.insert(format!("mem://{id}/001_init.sql"), sql);
-        let url = format!("mem://{id}/app-ref.json");
+        mem.insert(format!("{base}/main.lua"), main);
+        let url = format!("{base}/app-ref.json");
         mem.insert(url.clone(), serde_json::to_vec(&app_ref).unwrap());
         url
     }

@@ -44,6 +44,9 @@ const NOTES: AppPreview = {
   tint: 'yellow',
   description: 'Plain notes your agents can read and append to.',
   source: 'this computer',
+  update: false,
+  permissions: [],
+  origins: [],
   sha256: '0'.repeat(64)
 }
 
@@ -57,8 +60,18 @@ const asPreview = (a: AppSummary, url: string): AppPreview => ({
   description: a.description,
   source: a.source,
   installed: { version: a.version, state: a.state },
+  update: false,
+  permissions: a.permissions,
+  origins: [],
   sha256: '0'.repeat(64)
 })
+
+/** A newer version of an installed app the registry offers (`createFakeHost`'s `updates`), by the app's id. */
+export interface FakeUpdate {
+  version: string
+  permissions?: string[]
+  origins?: string[]
+}
 
 function fakeDevices(now = Date.now()): DeviceRow[] {
   return [
@@ -168,9 +181,14 @@ export function createFakeHost(
     filesError?: string
     /** `host.files.list` never answers (the loading state). */
     filesPending?: boolean
+    /** Newer versions of installed apps the registry offers, by app id. */
+    updates?: Record<string, FakeUpdate>
+    /** Every `app.update` fails with this message. */
+    updateError?: string
   } = {}
 ): FakeHost {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
+  const updates: Record<string, FakeUpdate> = { ...options.updates }
   const fake: FakeHost = {
     apps: [...(options.apps ?? [FAKE_CALCULATOR])],
     devices: fakeDevices(),
@@ -215,14 +233,35 @@ export function createFakeHost(
           const offered = [
             NOTES,
             ...fake.apps.map((a) => asPreview(a, `file:///registry/${a.id}/app-ref.json`))
-          ]
-          const apps = offered.map((p) => {
+          ].filter((p, i, all) => all.findIndex((o) => o.id === p.id) === i)
+          const apps = offered.map((p): AppPreview => {
             const installed = fake.apps.find((a) => a.id === p.id)
-            return installed
-              ? { ...p, installed: { version: installed.version, state: installed.state } }
-              : p
+            if (!installed) return p
+            const newer = updates[p.id]
+            return {
+              ...p,
+              ...(newer && {
+                version: newer.version,
+                url: `file:///registry/${p.id}/${newer.version}/app-ref.json`,
+                permissions: newer.permissions ?? installed.permissions,
+                origins: newer.origins ?? [],
+                update: true
+              }),
+              installed: { version: installed.version, state: installed.state }
+            }
           })
           return { apps, errors: options.registryErrors ?? [] } satisfies Catalog
+        }
+        case 'app.update': {
+          const target = app()
+          const newer = updates[target.id]
+          if (options.updateError) throw new HostError(-32003, options.updateError)
+          if (!newer) throw new HostError(-32001, `app \`${target.id}\` has no newer version`)
+          target.version = newer.version
+          target.permissions = newer.permissions ?? target.permissions
+          delete updates[target.id]
+          fake.emit('app.updated', { app: target.id })
+          return null
         }
         case 'app.install': {
           if (fake.apps.some((a) => a.id === NOTES.id))

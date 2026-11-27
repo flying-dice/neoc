@@ -60,7 +60,10 @@ const preview: AppPreview = {
   name: 'Calculator',
   version: '0.1.0',
   source: 'this computer',
-  installed: { version: '0.1.0', state: 'running' }
+  installed: { version: '0.1.0', state: 'running' },
+  update: false,
+  permissions: [],
+  origins: []
 }
 const catalog: Catalog = { apps: [preview], errors: [] }
 const devices: DeviceList = { devices: [{ id: 'd1', name: 'Safari on iPad', createdAt: 1, lastSeenAt: 2, current: true }] }

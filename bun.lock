@@ -15,7 +15,7 @@
     },
     "apps/agents": {
       "name": "@vos-apps/agents",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "micromark": "4.0.3",
         "micromark-extension-gfm": "3.0.0",
@@ -361,6 +361,24 @@
     "crates/vos-lua/tests/fixtures/typescript": {
       "name": "@vos-fixtures/typescript",
       "version": "0.1.0",
+      "devDependencies": {
+        "@vos/vite-plugin": "workspace:*",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "e2e/apps/journal": {
+      "name": "@vos-fixtures/journal",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@vos/vite-plugin": "workspace:*",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "e2e/apps/journal-next": {
+      "name": "@vos-fixtures-next/journal",
+      "version": "0.2.0",
       "devDependencies": {
         "@vos/vite-plugin": "workspace:*",
         "typescript": "^5.9.3",
@@ -932,6 +950,10 @@
     "@vos-apps/terminal": ["@vos-apps/terminal@workspace:apps/terminal"],
 
     "@vos-apps/todos": ["@vos-apps/todos@workspace:apps/todos"],
+
+    "@vos-fixtures-next/journal": ["@vos-fixtures-next/journal@workspace:e2e/apps/journal-next"],
+
+    "@vos-fixtures/journal": ["@vos-fixtures/journal@workspace:e2e/apps/journal"],
 
     "@vos-fixtures/memos": ["@vos-fixtures/memos@workspace:e2e/apps/memos"],
 

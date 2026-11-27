@@ -90,7 +90,20 @@ source: string,
 /**
  * Set when this app id is already installed on this host.
  */
-installed?: InstalledInfo, };
+installed?: InstalledInfo, 
+/**
+ * This is a newer version of the installed app (`installed.version` is lower): hand it to `app.update`.
+ */
+update: boolean, 
+/**
+ * The browser features the app's frame asks for (`camera`, `clipboard-write`, ...), as `AppSummary` has them.
+ */
+permissions: Array<string>, 
+/**
+ * The origins beyond the host that the app's page may load images, media, fonts and styles from (its
+ * `ui.csp.resourceDomains`, which its content security policy lets in), sorted.
+ */
+origins: Array<string>, };
 export type Catalog = { apps: Array<AppPreview>, 
 /**
  * A registry or app ref that could not be read, one line each.

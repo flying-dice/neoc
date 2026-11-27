@@ -10,7 +10,7 @@
  * The app id is the path this page was served on (`/apps/<id>`), never anything a message says.
  */
 import { settings } from '../lib/settings.svelte'
-import { createHostBridge, routeToFrame, type HostBridge } from '../shell/hostBridge'
+import { createHostBridge, isUpdateOf, routeToFrame, type HostBridge } from '../shell/hostBridge'
 import { callWhenConnected, createHostChannel, type CallOptions } from '../shell/channel'
 import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
 import { focusFrame } from '../shell/frameFocus'
@@ -87,7 +87,9 @@ export function start(root: Document = document): void {
   })
   window.addEventListener('message', (e) => bridge.receive(e))
   channel.onNotification((method, params) => {
-    routeToFrame(bridge, appId, method, params)
+    // the app was updated: this page loads again, and with it the new version's
+    if (isUpdateOf(appId, method, params)) location.reload()
+    else routeToFrame(bridge, appId, method, params)
   })
 
   // the connection dropped and came back (a restart, the network): a change made while it was away reached nobody, so the

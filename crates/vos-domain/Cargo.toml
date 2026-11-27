@@ -14,6 +14,7 @@ codegen = ["dep:ts-rs"]
 ts-rs = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+semver = "1"   # pure computation (which of two app versions is the newer)
 sha2 = { workspace = true }   # pure computation (checksum verification)
 thiserror = { workspace = true }
 

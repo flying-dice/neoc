@@ -152,6 +152,8 @@ pub enum ServerEvent {
     AppUninstalled(AppId),
     AppEnabled(AppId),
     AppDisabled(AppId),
+    /// An app runs a new version (`update`): its frames load the new page.
+    AppUpdated(AppId),
     /// An app failed to load (install, restore, enable or reload); other apps are unaffected.
     AppFailed {
         app: AppId,

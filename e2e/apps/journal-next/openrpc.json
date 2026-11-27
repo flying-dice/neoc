@@ -1,0 +1,72 @@
+{
+  "openrpc": "1.4.0",
+  "info": {
+    "title": "Journal",
+    "version": "0.2.0"
+  },
+  "methods": [
+    {
+      "name": "_list",
+      "summary": "Every entry, oldest first.",
+      "params": [],
+      "result": {
+        "name": "entries",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Entry"
+          }
+        }
+      }
+    },
+    {
+      "name": "_add",
+      "summary": "Write an entry, and answer with them all.",
+      "params": [
+        {
+          "name": "body",
+          "description": "What the entry says.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      ],
+      "result": {
+        "name": "entries",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Entry"
+          }
+        }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Entry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "body": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string",
+            "description": "The version of the app that wrote it."
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "edition"
+        ]
+      }
+    }
+  }
+}

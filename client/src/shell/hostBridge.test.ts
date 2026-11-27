@@ -3,6 +3,7 @@ import { HostError } from './channel'
 import {
   createHostBridge,
   eventFor,
+  isUpdateOf,
   jsonDepth,
   otherAppEventFor,
   MAX_ARGS_BYTES,
@@ -540,6 +541,13 @@ describe('what comes from the page and what goes into the frame', () => {
     expect(otherAppEventFor('notes', 'app.event', params)).toEqual(params)
     expect(otherAppEventFor('ledger', 'app.event', params)).toBeNull()
     expect(otherAppEventFor('notes', 'app.installed', params)).toBeNull()
+  })
+
+  test("isUpdateOf: an app.updated of the frame's own app, and of no other", () => {
+    expect(isUpdateOf('notes', 'app.updated', { app: 'notes' })).toBe(true)
+    expect(isUpdateOf('notes', 'app.updated', { app: 'ledger' })).toBe(false)
+    expect(isUpdateOf('notes', 'app.installed', { app: 'notes' })).toBe(false)
+    expect(isUpdateOf('notes', 'app.updated', {})).toBe(false)
   })
 
   test('the first thing the page says, ui/initialize, is its hello, whether or not it was a good one', () => {

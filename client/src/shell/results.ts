@@ -61,7 +61,11 @@ export const appPreviewSchema = z.object({
   description: text.optional(),
   source: text,
   installed: z.object({ version: text, state: appStateSchema }).optional(),
-  /** The app ref's digest as previewed: `app.install` sends it back so only that ref installs. */
+  /** A newer version of the installed app: `app.update` takes it. */
+  update: z.boolean(),
+  permissions: z.array(text),
+  origins: z.array(text),
+  /** The app ref's digest as previewed: `app.install` and `app.update` send it back so only that ref is taken. */
   sha256: z.string().regex(/^[0-9a-f]{64}$/i)
 }) satisfies z.ZodType<AppPreview>
 

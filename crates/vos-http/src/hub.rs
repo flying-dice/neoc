@@ -526,6 +526,15 @@ struct InstallParams {
     url: String,
     sha256: String,
 }
+/// `app.update`: the installed `app` to the app ref at `url`, pinned to the `sha256` its preview showed (the catalog's
+/// or `app.preview`'s), as an install is: a new version may ask for more than the one the person approved.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateParams {
+    app: AppId,
+    url: String,
+    sha256: String,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RevokeParams {
@@ -698,6 +707,11 @@ impl RpcHandler for RpcHub {
                 let id = app.install_previewed(&p.url, &p.sha256).await.map_err(|e| rpc_err(&e))?;
                 Ok(json!({ "app": id }))
             }
+            "app.update" => {
+                let p: UpdateParams = parse(params)?;
+                app.update_previewed(&p.app, &p.url, &p.sha256).await.map_err(|e| rpc_err(&e))?;
+                Ok(Value::Null)
+            }
             "app.uninstall" => {
                 let p: UninstallParams = parse(params)?;
                 app.uninstall(&p.app, p.purge).await.map_err(|e| rpc_err(&e))?;
@@ -777,6 +791,7 @@ impl EventSink for RpcHub {
             ServerEvent::AppUninstalled(app) => self.broadcast("app.uninstalled", &json!({ "app": app })),
             ServerEvent::AppEnabled(app) => self.broadcast("app.enabled", &json!({ "app": app })),
             ServerEvent::AppDisabled(app) => self.broadcast("app.disabled", &json!({ "app": app })),
+            ServerEvent::AppUpdated(app) => self.broadcast("app.updated", &json!({ "app": app })),
             ServerEvent::AppFailed { app, message } => {
                 self.broadcast("app.failed", &json!({ "app": app, "message": message }));
             }

@@ -91,7 +91,8 @@ pub struct Settings {
     /// What Discover offers: registry files (`{"apps": [...]}`) or app refs, by URL. Empty = the built
     /// registry of this checkout, if there is one (see [`Settings::catalog`]).
     pub registries: Vec<String>,
-    /// App-ref URLs the host makes sure are installed at every start.
+    /// App-ref URLs the host makes sure are installed at every start: an app installed from another URL is updated to
+    /// this one, unless this one is an older version.
     pub install: Vec<String>,
     /// Extra `Host` names accepted (a reverse proxy, a DNS name), on any port.
     pub allowed_hosts: Vec<String>,

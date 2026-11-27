@@ -73,6 +73,9 @@ async fn a_malformed_params_object_is_32602_for_the_app_and_device_methods() {
         ("app.install", json!({"url": "x"})), // the digest of what was previewed is required
         ("app.install", json!({"url": "x", "sha256": null})),
         ("app.install", json!({"url": 3})),
+        ("app.update", json!({"app": "notes", "url": "x"})), // an update is of what was previewed too
+        ("app.update", json!({"url": "x", "sha256": "0"})),
+        ("app.update", json!({"app": "notes", "url": "x", "sha256": "0", "force": true})),
         ("app.preview", json!({"url": "x", "extra": 1})),
         ("app.preview", json!([])),
         ("app.uninstall", json!({"app": "notes", "purge": "yes"})),

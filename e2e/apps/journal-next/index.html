@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Journal</title>
+  </head>
+  <body>
+    <main data-testid="journal-app">
+      <h1 data-testid="journal-version"></h1>
+      <form data-testid="journal-form">
+        <input aria-label="New entry" data-testid="journal-body" />
+        <button type="submit" data-testid="journal-add">Add</button>
+      </form>
+      <ul data-testid="journal-entries"></ul>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

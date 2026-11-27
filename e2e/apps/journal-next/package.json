@@ -1,0 +1,28 @@
+{
+  "name": "@vos-fixtures-next/journal",
+  "private": true,
+  "type": "module",
+  "version": "0.2.0",
+  "description": "A fixture: the next version of the journal, with a migration of its own.",
+  "vos": {
+    "title": "Journal",
+    "icon": "square.and.pencil",
+    "tint": "green",
+    "window": {
+      "w": 420,
+      "h": 480,
+      "minW": 320,
+      "minH": 320
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vite build && tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@vos/vite-plugin": "workspace:*",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

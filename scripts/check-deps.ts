@@ -5,7 +5,7 @@
  * Reads `cargo metadata` and checks every workspace crate's normal dependencies against an explicit allow-list
  * (and, for the framework crates in FRAMEWORK_HOMES, its build dependencies too; a dev-dependency is exempt):
  *
- *   domain      -> nothing internal; external: serde, serde_json, sha2, thiserror (+ ts-rs)
+ *   domain      -> nothing internal; external: semver, serde, serde_json, sha2, thiserror (+ ts-rs)
  *   application -> domain; external: async-trait, futures-util (its runtime-free `FutureExt::catch_unwind`), jsonschema (the
  *                  bus holds every message to the app's contract), parking_lot, serde_json, sha2, thiserror, tracing
  *   adapters    -> application, domain; never each other (but codegen, below)
@@ -65,7 +65,7 @@ const VM_ALLOWED: string[] = []
 
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
-  'vos-domain': new Set(['serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs']),
+  'vos-domain': new Set(['semver', 'serde', 'serde_json', 'sha2', 'thiserror', 'ts-rs']),
   'vos-application': new Set(['async-trait', 'futures-util', 'jsonschema', 'parking_lot', 'serde_json', 'sha2', 'thiserror', 'tracing'])
 }
 

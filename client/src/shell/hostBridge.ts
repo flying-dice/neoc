@@ -626,6 +626,13 @@ export function otherAppEventFor(
   return parsed.success && parsed.data.app !== appId ? parsed.data : null
 }
 
+/** Whether a host notification says `appId` now runs a new version (`app.updated`): its page is loaded again. */
+export const isUpdateOf = (
+  appId: string,
+  method: string,
+  params: Record<string, unknown>
+): boolean => method === 'app.updated' && params.app === appId
+
 /**
  * Hand a host notification to the frame's bridge when it is the frame's: its app's events and the public events of the
  * apps it subscribed to, the requests of the bus for its app (`app.request`) and their settling (`app.requestSettled`).

@@ -26,6 +26,8 @@ pub enum DomainError {
     InvalidAgent(String),
     #[error("the app ref now serves app `{served}`, it was installed as `{installed}`")]
     AppIdChanged { installed: String, served: String },
+    #[error("app `{app}` is installed at {installed}, and {offered} is older: an update never goes back a version")]
+    OlderVersion { app: String, installed: String, offered: String },
     #[error("the app ref changed since it was previewed (sha256 {actual}, previewed {expected}); preview it again")]
     RefChanged { expected: String, actual: String },
     #[error("package file url `{url}` is refused: {reason}")]

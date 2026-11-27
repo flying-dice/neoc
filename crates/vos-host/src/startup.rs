@@ -57,8 +57,9 @@ pub fn prepare_data_dir(data_dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Bring the apps up: load every app the system database remembers (an app that cannot load is marked
-/// failed, the rest start), then install the configured `install` URLs that are not installed yet. A
-/// failure is logged and skipped: one broken app or URL must not keep the host from starting.
+/// failed, the rest start), then install the configured `install` URLs that are not installed yet, and update an
+/// app to its URL there when it was installed from another (an older version's URL is skipped). A failure is
+/// logged and skipped: one broken app or URL must not keep the host from starting.
 pub async fn start_apps(service: &AppService, install: &[String]) {
     match service.restore_installed().await {
         Ok(apps) => {

@@ -267,6 +267,7 @@ describe('refresh coalescing', () => {
       'app.uninstalled',
       'app.enabled',
       'app.disabled',
+      'app.updated',
       'app.failed'
     ]) {
       const before = s.wire.calls.filter((m) => m === 'app.list').length

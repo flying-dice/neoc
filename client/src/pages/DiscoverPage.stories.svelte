@@ -1,11 +1,11 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
-  import { expect } from 'storybook/test'
+  import { expect, waitFor } from 'storybook/test'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
   import DiscoverPage from './DiscoverPage.svelte'
   import { apps } from '../lib/apps.svelte'
   import { host } from '../lib/host.svelte'
-  import { createFakeHost, FAKE_CALCULATOR } from '../shell/fakeHost'
+  import { createFakeHost, FAKE_CALCULATOR, type FakeUpdate } from '../shell/fakeHost'
   import type { AppSummary, HostApi } from '../shell/hostApi'
 
   const app = apps.discover
@@ -15,6 +15,15 @@
     (installed: AppSummary[] = [FAKE_CALCULATOR], registryErrors: string[] = []) =>
     () =>
       host.useFake(createFakeHost({ apps: installed, registryErrors }), installed)
+
+  /** The Calculator installed at 0.1.0 and offered at 0.2.0, which asks for the camera. */
+  const withUpdate = (updateError?: string) => (): void => {
+    const updates: Record<string, FakeUpdate> = {
+      calculator: { version: '0.2.0', permissions: ['camera'] }
+    }
+    const installed = [{ ...FAKE_CALCULATOR }]
+    host.useFake(createFakeHost({ apps: installed, updates, updateError }), installed)
+  }
 
   /** A host from another version: its answers to the shell's own calls are not the shapes this client knows. */
   const withUnknownShapes = async (): Promise<void> => {
@@ -178,5 +187,50 @@
   play={async ({ canvas }) => {
     await canvas.findAllByTestId('discover-registry-error')
     await expect(canvas.getAllByTestId('discover-registry-error')).toHaveLength(2)
+  }}
+/>
+
+<!-- An installed app with a newer version: UPDATE says the version change and asks first, with what the new version wants. -->
+<Story
+  name="Update an app"
+  beforeEach={withUpdate()}
+  play={async ({ canvas, userEvent }) => {
+    const listing = await canvas.findByTestId('discover-app-calculator')
+    await expect(listing).toHaveTextContent('0.1.0 → 0.2.0')
+    await userEvent.click(canvas.getByTestId('discover-app-calculator-update'))
+    const alert = await canvas.findByTestId('discover-update-alert')
+    await expect(alert).toHaveTextContent('Update Calculator?')
+    await expect(alert).toHaveTextContent('camera (new)')
+    await userEvent.click(canvas.getByTestId('discover-update-alert-action-update'))
+    // the listing says the version it now has (the text is in it more than once: its row and its name for a reader)
+    await waitFor(() => expect(canvas.getByTestId('discover-app-calculator')).toHaveTextContent('0.2.0 · this computer'))
+    await expect(canvas.getByTestId('discover-app-calculator')).not.toHaveTextContent('→')
+    await expect(canvas.queryByTestId('discover-app-calculator-update')).toBeNull()
+  }}
+/>
+
+<!-- Cancel changes nothing. -->
+<Story
+  name="Update declined"
+  beforeEach={withUpdate()}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByTestId('discover-app-calculator-update'))
+    await userEvent.click(await canvas.findByTestId('discover-update-alert-action-cancel'))
+    await expect(canvas.queryByTestId('discover-update-alert')).toBeNull()
+    await expect(canvas.getByTestId('discover-app-calculator')).toHaveTextContent('0.1.0 → 0.2.0')
+  }}
+/>
+
+<!-- An update the host refuses says why, in words, and the installed version stays. -->
+<Story
+  name="Update fails"
+  beforeEach={withUpdate('the app ref changed since it was previewed; preview it again')}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByTestId('discover-app-calculator-update'))
+    await userEvent.click(await canvas.findByTestId('discover-update-alert-action-update'))
+    await expect(await canvas.findByTestId('discover-apps-error')).toHaveTextContent(
+      'the app ref changed since it was previewed'
+    )
+    await expect(canvas.getByTestId('discover-app-calculator')).toHaveTextContent('0.1.0 → 0.2.0')
   }}
 />

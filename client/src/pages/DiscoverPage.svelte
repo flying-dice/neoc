@@ -5,13 +5,14 @@
 <script lang="ts">
   import type { IconName } from '@vos/ui'
   import { Icon, IconTile, Text } from '@vos/ui/atoms'
-  import { ListRow, SearchField } from '@vos/ui/molecules'
+  import { Alert, ListRow, SearchField } from '@vos/ui/molecules'
   import { ListSection, NavigationBar } from '@vos/ui/organisms'
   import { ScreenTemplate, SplitViewTemplate } from '@vos/ui/templates'
   import AppListing from '../molecules/AppListing.svelte'
   import { windowManager as wm } from '../lib/windowManager.svelte'
   import { host } from '../lib/host.svelte'
   import { messageOf } from '../shell/errors'
+  import { ACCESS_NOTE, updateApproval, updateFor, versionChange } from '../lib/updates'
   import {
     iconOf,
     tintBackground,
@@ -35,6 +36,8 @@
     url?: string
     /** Its digest as the catalog listed it, so the install is exactly the ref that was shown. */
     sha256?: string
+    /** Installed, and the catalog offers a newer version. */
+    offered?: Offered
   }
 
   let catalog = $state<Catalog>({ apps: [], errors: [] })
@@ -54,16 +57,20 @@
     void loadCatalog()
   })
 
-  const fromInstalled = (a: AppSummary): Listing => ({
-    id: a.id,
-    name: a.name,
-    detail: `${a.version} · ${a.source}`,
-    description: a.description,
-    icon: a.icon,
-    tint: a.tint,
-    state: a.state,
-    message: a.message
-  })
+  const fromInstalled = (a: AppSummary): Listing => {
+    const update = updateFor(catalog, a.id)
+    return {
+      id: a.id,
+      name: a.name,
+      detail: `${update ? versionChange(a.version, update.version) : a.version} · ${a.source}`,
+      description: a.description,
+      icon: a.icon,
+      tint: a.tint,
+      state: a.state,
+      message: a.message,
+      offered: update && { installed: a, update }
+    }
+  }
   const fromCatalog = (a: AppPreview): Listing => ({
     id: a.id,
     name: a.name,
@@ -116,9 +123,26 @@
   const remove = (l: Listing): Promise<boolean> =>
     run(l.id, () => host.api.call('app.uninstall', { app: l.id }))
 
-  /** What an installed app can do, said before one is installed: an app is the person's own code on their own host. */
-  const accessNote =
-    'Apps can read and write files, use the network and run processes on this machine.'
+  /** An installed app and the newer version the catalog offers of it. */
+  interface Offered {
+    installed: AppSummary
+    update: AppPreview
+  }
+
+  /** The update the person is asked to approve: nothing changes until they do. */
+  let asked = $state<Offered | null>(null)
+  const approval = $derived(asked && updateApproval(asked.installed, asked.update))
+
+  const runUpdate = ({ installed, update }: Offered): Promise<boolean> =>
+    run(installed.id, () =>
+      host.api.call('app.update', { app: installed.id, url: update.url, sha256: update.sha256 })
+    )
+
+  /** The UPDATE of a listing, which asks before anything changes. A disabled app has none: it is enabled first. */
+  const askUpdate = (l: Listing): (() => void) | undefined => {
+    const offered = l.offered
+    return offered && l.state !== 'disabled' ? () => (asked = offered) : undefined
+  }
 
   /** The sidebar's rows: the front page, or the apps alone. */
   type Section = 'discover' | 'apps'
@@ -148,132 +172,162 @@
   ])
 </script>
 
-<SplitViewTemplate sidebarWidth={280}>
-  {#snippet sidebar()}
-    <NavigationBar testid="discover-sidebar-nav" title="Discover" large>
-      {#snippet accessory()}
-        <SearchField testid="discover-search" bind:value={query} />
-      {/snippet}
-    </NavigationBar>
-    <ListSection sidebar>
-      {#each sections as s (s.id)}
-        <ListRow
-          testid="discover-section-{s.id}"
-          title={s.label}
-          icon={s.icon}
-          iconColor="var(--tint)"
-          selected={section === s.id}
-          onclick={() => (section = s.id)}
-        />
-      {/each}
-    </ListSection>
-  {/snippet}
+<div class="discover">
+  <SplitViewTemplate sidebarWidth={280}>
+    {#snippet sidebar()}
+      <NavigationBar testid="discover-sidebar-nav" title="Discover" large>
+        {#snippet accessory()}
+          <SearchField testid="discover-search" bind:value={query} />
+        {/snippet}
+      </NavigationBar>
+      <ListSection sidebar>
+        {#each sections as s (s.id)}
+          <ListRow
+            testid="discover-section-{s.id}"
+            title={s.label}
+            icon={s.icon}
+            iconColor="var(--tint)"
+            selected={section === s.id}
+            onclick={() => (section = s.id)}
+          />
+        {/each}
+      </ListSection>
+    {/snippet}
 
-  {#snippet detail()}
-    <ScreenTemplate background="plain">
-      {#snippet navigationBar()}
-        <NavigationBar
-          testid="discover-nav"
-          title={sections.find((s) => s.id === section)?.label ?? 'Discover'}
-        />
-      {/snippet}
+    {#snippet detail()}
+      <ScreenTemplate background="plain">
+        {#snippet navigationBar()}
+          <NavigationBar
+            testid="discover-nav"
+            title={sections.find((s) => s.id === section)?.label ?? 'Discover'}
+          />
+        {/snippet}
 
-      {#snippet content()}
-        <div class="page">
-          {#if section === 'discover'}
-            <section class="hero" data-testid="discover-hero">
-              <div class="hero-copy">
-                <h1>Find and install apps</h1>
-                <p>
-                  Customise your system with the apps you want, and remove them whenever you like.
+        {#snippet content()}
+          <div class="page">
+            {#if section === 'discover'}
+              <section class="hero" data-testid="discover-hero">
+                <div class="hero-copy">
+                  <h1>Find and install apps</h1>
+                  <p>
+                    Customise your system with the apps you want, and remove them whenever you like.
+                  </p>
+                </div>
+                <div class="hero-art" aria-hidden="true">
+                  {#each heroTiles as tile, i (tile.icon)}
+                    <span class="float f{i}">
+                      <IconTile size={84 - i * 8} background={tile.background} shadow>
+                        <Icon name={tile.icon} size={44 - i * 4} weight={1.7} color="#fff" />
+                      </IconTile>
+                    </span>
+                  {/each}
+                </div>
+              </section>
+            {/if}
+
+            <section data-testid="discover-apps">
+              <header class="section-head">
+                <Text style="title3" weight="bold" as="h2">Apps</Text>
+              </header>
+              {#if storeError}
+                <p class="store-error" role="alert" data-testid="discover-apps-error">
+                  {storeError}
                 </p>
-              </div>
-              <div class="hero-art" aria-hidden="true">
-                {#each heroTiles as tile, i (tile.icon)}
-                  <span class="float f{i}">
-                    <IconTile size={84 - i * 8} background={tile.background} shadow>
-                      <Icon name={tile.icon} size={44 - i * 4} weight={1.7} color="#fff" />
-                    </IconTile>
-                  </span>
+              {/if}
+              <div class="listings">
+                {#each listings as l (l.id)}
+                  <AppListing
+                    testid="discover-app-{l.id}"
+                    name={l.name}
+                    detail={l.detail}
+                    description={l.description}
+                    icon={iconOf(l.icon)}
+                    background={tintBackground(l.tint)}
+                    state={l.state}
+                    message={l.message}
+                    busy={!!busy[l.id]}
+                    onget={() => void primary(l)}
+                    onupdate={askUpdate(l)}
+                    ontoggle={() => void toggle(l)}
+                    onremove={() => void remove(l)}
+                  />
+                {:else}
+                  <Text style="subheadline" color="secondary">
+                    {query
+                      ? `No apps match “${query}”.`
+                      : 'No apps are available yet. Build the bundled apps with `bun run build:apps`.'}
+                  </Text>
                 {/each}
               </div>
-            </section>
-          {/if}
-
-          <section data-testid="discover-apps">
-            <header class="section-head">
-              <Text style="title3" weight="bold" as="h2">Apps</Text>
-            </header>
-            {#if storeError}
-              <p class="store-error" role="alert" data-testid="discover-apps-error">
-                {storeError}
-              </p>
-            {/if}
-            <div class="listings">
-              {#each listings as l (l.id)}
-                <AppListing
-                  testid="discover-app-{l.id}"
-                  name={l.name}
-                  detail={l.detail}
-                  description={l.description}
-                  icon={iconOf(l.icon)}
-                  background={tintBackground(l.tint)}
-                  state={l.state}
-                  message={l.message}
-                  busy={!!busy[l.id]}
-                  onget={() => void primary(l)}
-                  ontoggle={() => void toggle(l)}
-                  onremove={() => void remove(l)}
-                />
-              {:else}
-                <Text style="subheadline" color="secondary">
-                  {query
-                    ? `No apps match “${query}”.`
-                    : 'No apps are available yet. Build the bundled apps with `bun run build:apps`.'}
-                </Text>
+              {#if listings.some((l) => l.url)}
+                <p class="access-note" data-testid="discover-apps-access-note">
+                  <Text style="footnote" color="secondary"
+                    >{ACCESS_NOTE} Only install apps you trust.</Text
+                  >
+                </p>
+              {/if}
+              {#if host.appsError}
+                <p class="store-error" role="alert" data-testid="discover-apps-list-error">
+                  {host.appsError}
+                </p>
+              {/if}
+              {#each catalog.errors as problem (problem)}
+                <p class="store-error" role="status" data-testid="discover-registry-error">
+                  {problem}
+                </p>
               {/each}
-            </div>
-            {#if listings.some((l) => l.url)}
-              <p class="access-note" data-testid="discover-apps-access-note">
-                <Text style="footnote" color="secondary"
-                  >{accessNote} Only install apps you trust.</Text
-                >
-              </p>
-            {/if}
-            {#if host.appsError}
-              <p class="store-error" role="alert" data-testid="discover-apps-list-error">
-                {host.appsError}
-              </p>
-            {/if}
-            {#each catalog.errors as problem (problem)}
-              <p class="store-error" role="status" data-testid="discover-registry-error">
-                {problem}
-              </p>
-            {/each}
-          </section>
-
-          {#if section === 'discover'}
-            <hr />
-
-            <section data-testid="discover-information">
-              <Text style="title3" weight="bold" as="h2">Information</Text>
-              <dl class="info">
-                {#each information as [k, v] (k)}
-                  <div>
-                    <dt><Text style="caption1" color="secondary">{k}</Text></dt>
-                    <dd><Text style="footnote">{v}</Text></dd>
-                  </div>
-                {/each}
-              </dl>
             </section>
-          {/if}
-        </div>
-      {/snippet}
-    </ScreenTemplate>
-  {/snippet}
-</SplitViewTemplate>
+
+            {#if section === 'discover'}
+              <hr />
+
+              <section data-testid="discover-information">
+                <Text style="title3" weight="bold" as="h2">Information</Text>
+                <dl class="info">
+                  {#each information as [k, v] (k)}
+                    <div>
+                      <dt><Text style="caption1" color="secondary">{k}</Text></dt>
+                      <dd><Text style="footnote">{v}</Text></dd>
+                    </div>
+                  {/each}
+                </dl>
+              </section>
+            {/if}
+          </div>
+        {/snippet}
+      </ScreenTemplate>
+    {/snippet}
+  </SplitViewTemplate>
+
+  {#if asked && approval}
+    {@const current = asked}
+    <Alert
+      testid="discover-update-alert"
+      bind:open={
+        () => asked !== null,
+        (open) => {
+          if (!open) asked = null
+        }
+      }
+      title={approval.title}
+      message={approval.message}
+      actions={[
+        { label: 'Cancel', style: 'cancel' },
+        { label: 'Update', preferred: true, onclick: () => void runUpdate(current) }
+      ]}
+    />
+  {/if}
+</div>
 
 <style>
+  /* the page is its window's content, and what the alert covers */
+  .discover {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+  }
   .page {
     container-type: inline-size;
     display: flex;

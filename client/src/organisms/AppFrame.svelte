@@ -15,7 +15,7 @@
   import { settings } from '../lib/settings.svelte'
   import { windowManager } from '../lib/windowManager.svelte'
   import { focusFrame } from '../shell/frameFocus'
-  import { createHostBridge, routeToFrame, type HostBridge } from '../shell/hostBridge'
+  import { createHostBridge, isUpdateOf, routeToFrame, type HostBridge } from '../shell/hostBridge'
   import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
   import { baseServices } from '../shell/hostServices'
 
@@ -142,6 +142,14 @@
       bridge = undefined
     }
   })
+
+  // The app was updated: the frame loads the new version's page, as Try again does (the old page's calls would meet a
+  // backend that is not the one it was built for).
+  $effect(() =>
+    host.api.onNotification((method, params) => {
+      if (isUpdateOf(appId, method, params)) attempt++
+    })
+  )
 
   // The host context, live: the shell's appearance and the window's display mode, as what changed.
   $effect(() => {

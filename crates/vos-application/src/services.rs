@@ -1,7 +1,7 @@
 //! Use cases. They depend only on ports and the domain.
 //!
 //! Lifecycle of an app: install, enable, disable (data kept, agent access blocked), delete data,
-//! reload (dev: rebuild the VM, keep the DB), uninstall. Installs are recorded in the system database and
+//! reload (dev: rebuild the VM, keep the DB), update (a newer version on the same DB), uninstall. Installs are recorded in the system database and
 //! restored at start; an app that cannot load is marked failed and isolated, the others carry on.
 
 use crate::{
@@ -16,6 +16,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
+    cmp::Ordering as VersionOrder,
     collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -25,8 +26,8 @@ use std::{
 use vos_domain::{
     api::{AppPreview, Catalog, InstalledInfo},
     protocol::codes,
-    resolve_url, source_label, Actor, AgentIdentity, AppId, AppRef, Csp, DomainError, Manifest,
-    PackageBudget, Permissions, QualifiedToolName, Registry, ToolSpec, WindowDecl,
+    resolve_url, source_label, version_order, Actor, AgentIdentity, AppId, AppRef, Csp, DomainError,
+    Manifest, PackageBudget, Permissions, QualifiedToolName, Registry, ToolSpec, WindowDecl,
 };
 
 /// Every collaborator of [`AppService`].
@@ -224,16 +225,32 @@ pub struct AppService {
     pages: std::sync::OnceLock<std::sync::Weak<dyn PageHandlers>>,
 }
 
-/// An app ref as fetched: the parsed document and the SHA-256 (hex) of the bytes it came from, which is what
-/// a preview shows and an install must match.
+/// An app ref as fetched: where from, the parsed document and the SHA-256 (hex) of the bytes it came from, which
+/// is what a preview shows and an install must match.
 struct FetchedRef {
+    url: String,
     app_ref: AppRef,
     sha256: String,
 }
 
-/// What an install record keeps of a load: the version and the digest of the app ref.
-// TODO: clean-code - 0.4 - NAMING: no approval is left in it, only the version and digest a load records; rename (`LoadedRevision`).
+impl FetchedRef {
+    /// The ref itself when it still has the digest a preview showed (the person approved that one, not this).
+    fn pinned(self, sha256: &str) -> Result<Self, AppError> {
+        if !self.sha256.eq_ignore_ascii_case(sha256) {
+            return Err(DomainError::RefChanged {
+                expected: sha256.to_ascii_lowercase(),
+                actual: self.sha256,
+            }
+            .into());
+        }
+        Ok(self)
+    }
+}
+
+/// What an install record keeps of a load: where the app ref came from, its version and its digest.
+// TODO: clean-code - 0.4 - NAMING: no approval is left in it, only what a load records; rename (`LoadedRevision`).
 struct Approval {
+    source_url: String,
     version: String,
     ref_sha256: String,
 }
@@ -241,16 +258,31 @@ struct Approval {
 impl Approval {
     fn of(fetched: &FetchedRef) -> Self {
         let m = &fetched.app_ref.manifest;
-        Self { version: m.version.clone(), ref_sha256: fetched.sha256.clone() }
+        Self {
+            source_url: fetched.url.clone(),
+            version: m.version.clone(),
+            ref_sha256: fetched.sha256.clone(),
+        }
     }
 
     /// Record this approval; whether the record changed.
     fn apply(self, record: &mut InstalledApp) -> bool {
-        let changed = record.version != self.version || record.ref_sha256 != self.ref_sha256;
+        let changed = record.source_url != self.source_url
+            || record.version != self.version
+            || record.ref_sha256 != self.ref_sha256;
+        record.source_url = self.source_url;
         record.version = self.version;
         record.ref_sha256 = self.ref_sha256;
         changed
     }
+}
+
+/// What a reload or an update of an installed app starts from: its record, its database while it runs, and whether
+/// it runs.
+struct Reloadable {
+    record: InstalledApp,
+    data: Option<Arc<dyn AppData>>,
+    running: bool,
 }
 
 /// A reloaded app ref must still be the app that was installed: the id is what names the app's database.
@@ -259,6 +291,20 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
         return Err(DomainError::AppIdChanged {
             installed: record.id.to_string(),
             served: manifest.id.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// An update must be the installed app, at its version or a newer one. The same version is a rebuilt bundle, and a
+/// version that is not a semantic version cannot be ordered, so neither is refused.
+fn check_update(record: &InstalledApp, manifest: &Manifest) -> Result<(), DomainError> {
+    check_against_record(record, manifest)?;
+    if version_order(&manifest.version, &record.version) == Some(VersionOrder::Less) {
+        return Err(DomainError::OlderVersion {
+            app: record.id.to_string(),
+            installed: record.version.clone(),
+            offered: manifest.version.clone(),
         });
     }
     Ok(())
@@ -336,26 +382,18 @@ impl AppService {
     /// Install from an app-ref URL (file://, http://, https://: the Fetcher adapter decides how).
     pub async fn install_from_url(&self, app_ref_url: &str) -> Result<AppId, AppError> {
         let fetched = self.fetch_app_ref(app_ref_url).await?;
-        self.install(fetched, app_ref_url).await
+        self.install(fetched).await
     }
 
     /// Install what [`AppService::preview`] showed: the app ref at `app_ref_url` must still have the
     /// `sha256` the preview reported, else nothing is installed (the person approved that one, not this).
     pub async fn install_previewed(&self, app_ref_url: &str, sha256: &str) -> Result<AppId, AppError> {
-        let fetched = self.fetch_app_ref(app_ref_url).await?;
-        if !fetched.sha256.eq_ignore_ascii_case(sha256) {
-            return Err(DomainError::RefChanged {
-                expected: sha256.to_ascii_lowercase(),
-                actual: fetched.sha256,
-            }
-            .into());
-        }
-        self.install(fetched, app_ref_url).await
+        let fetched = self.fetch_app_ref(app_ref_url).await?.pinned(sha256)?;
+        self.install(fetched).await
     }
 
-    /// Install an app ref obtained from `source_url`, recording what was approved, and remember it across
-    /// restarts.
-    async fn install(&self, fetched: FetchedRef, source_url: &str) -> Result<AppId, AppError> {
+    /// Install a fetched app ref, recording what was approved, and remember it across restarts.
+    async fn install(&self, fetched: FetchedRef) -> Result<AppId, AppError> {
         let app_ref = &fetched.app_ref;
         let m = &app_ref.manifest;
         m.validate()?;
@@ -368,7 +406,7 @@ impl AppService {
         let active = self.activate(app_ref, None).await?;
         let record = InstalledApp {
             id: m.id.clone(),
-            source_url: source_url.to_owned(),
+            source_url: fetched.url.clone(),
             version: m.version.clone(),
             enabled: true,
             installed_at_ms: self.p.clock.now_unix_ms(),
@@ -442,8 +480,10 @@ impl AppService {
         Ok(self.apps())
     }
 
-    /// Make sure every one of these app-ref URLs is installed: install the missing ones, retry the failed ones.
-    /// A failure is logged and skipped so one broken URL cannot keep the host from starting.
+    /// Make sure every one of these app-ref URLs is installed: install the missing ones, retry the failed ones, and
+    /// update an app installed from another URL to this one (the config is the deployer's approval). A URL of an
+    /// older version than the installed one is skipped. A failure is logged and skipped so one broken URL cannot
+    /// keep the host from starting.
     pub async fn ensure_installed(&self, urls: &[String]) {
         for url in urls {
             let known = self
@@ -455,12 +495,27 @@ impl AppService {
             let outcome = match known {
                 Some((id, AppStatus::Failed(_))) => self.reload(&id).await.map(|()| id),
                 Some(_) => continue,
-                None => self.install_from_url(url).await,
+                None => self.install_or_update(url).await,
             };
             match outcome {
                 Ok(app) => tracing::info!(%app, %url, "app ready"),
+                Err(AppError::Domain(e @ DomainError::OlderVersion { .. })) => {
+                    tracing::info!(%url, "not installed: {e}");
+                }
                 Err(e) => tracing::warn!(%url, error = %e, "could not install app from registry"),
             }
+        }
+    }
+
+    /// An app-ref URL no install came from: the app it serves is installed, or updated when it is installed from
+    /// another URL.
+    async fn install_or_update(&self, url: &str) -> Result<AppId, AppError> {
+        let fetched = self.fetch_app_ref(url).await?;
+        let id = fetched.app_ref.manifest.id.clone();
+        if self.is_installed(&id) {
+            self.update_to(&id, fetched).await.map(|()| id)
+        } else {
+            self.install(fetched).await
         }
     }
 
@@ -560,19 +615,67 @@ impl AppService {
     /// Dev hot reload: rebuild the app from its source, keeping its database. If the new code does not
     /// load, the running version keeps serving and the error is returned.
     pub async fn reload(&self, app: &AppId) -> Result<(), AppError> {
-        let (record, data, running) = {
-            let apps = self.apps.lock();
-            let entry = apps.get(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
-            if entry.status == AppStatus::Disabled {
-                return Err(AppError::NotRunning { app: app.to_string(), state: entry.status.describe() });
-            }
-            (
-                entry.record.clone(),
-                entry.active.as_ref().map(|a| a.data.clone()),
-                entry.status == AppStatus::Running,
-            )
-        };
-        match self.load_from_record(&record, data).await {
+        let from = self.reloadable(app)?;
+        let loaded = self.load_from_record(&from.record, from.data).await;
+        self.take_over(app, loaded, from.running).await
+    }
+
+    /// Update an installed app to the app ref at `app_ref_url`: the same app (its id) at its version or a newer one,
+    /// loaded on the app's own database so the new version's migrations run. Only once it loaded does it take over
+    /// from the running version, as a reload does, and the install record follows it to the new URL. If it does not
+    /// fetch, verify or load, the running version keeps serving, nothing is recorded, and the error is returned (a
+    /// migration of the new version that ran before its load failed stays: the database cannot step back).
+    pub async fn update(&self, app: &AppId, app_ref_url: &str) -> Result<(), AppError> {
+        let fetched = self.fetch_app_ref(app_ref_url).await?;
+        self.update_to(app, fetched).await
+    }
+
+    /// Update to what [`AppService::preview`] showed: the app ref at `app_ref_url` must still have the `sha256` the
+    /// preview reported, else nothing changes (a new version may ask for more, and the person approved that one).
+    pub async fn update_previewed(
+        &self,
+        app: &AppId,
+        app_ref_url: &str,
+        sha256: &str,
+    ) -> Result<(), AppError> {
+        let fetched = self.fetch_app_ref(app_ref_url).await?.pinned(sha256)?;
+        self.update_to(app, fetched).await
+    }
+
+    async fn update_to(&self, app: &AppId, fetched: FetchedRef) -> Result<(), AppError> {
+        let from = self.reloadable(app)?;
+        check_update(&from.record, &fetched.app_ref.manifest)?;
+        let loaded = self.load(&fetched, from.data).await;
+        self.take_over(app, loaded, from.running).await?;
+        // its frames load the new page, and the shell reads its listing again
+        self.p.events.emit(ServerEvent::AppUpdated(app.clone())).await;
+        Ok(())
+    }
+
+    /// What a reload or an update starts from. A disabled app is enabled first.
+    fn reloadable(&self, app: &AppId) -> Result<Reloadable, AppError> {
+        let apps = self.apps.lock();
+        let entry = apps.get(app).ok_or_else(|| AppError::NotInstalled(app.to_string()))?;
+        if entry.status == AppStatus::Disabled {
+            return Err(AppError::NotRunning { app: app.to_string(), state: entry.status.describe() });
+        }
+        Ok(Reloadable {
+            record: entry.record.clone(),
+            data: entry.active.as_ref().map(|a| a.data.clone()),
+            running: entry.status == AppStatus::Running,
+        })
+    }
+
+    /// A new load of a running (or failed) app takes over from the one it replaces: the record keeps what loaded and
+    /// the app serves it, its tools already published. A load that failed leaves a running app serving as it was, and
+    /// marks one that was not running failed.
+    async fn take_over(
+        &self,
+        app: &AppId,
+        loaded: Result<(Active, Approval), AppError>,
+        running: bool,
+    ) -> Result<(), AppError> {
+        match loaded {
             Ok((active, approval)) => {
                 self.remember(app, approval).await;
                 let mut apps = self.apps.lock();
@@ -864,10 +967,14 @@ impl AppService {
         let bytes = self.fetch_capped(url).await?;
         let app_ref: AppRef = serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Port(PortError::Rejected(format!("bad app ref at {url}: {e}"))))?;
-        Ok(FetchedRef { app_ref: app_ref.resolved(url)?, sha256: format!("{:x}", Sha256::digest(&bytes)) })
+        Ok(FetchedRef {
+            url: url.to_owned(),
+            app_ref: app_ref.resolved(url)?,
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+        })
     }
 
-    /// Keep the version and digest of the app ref that just loaded in the app's install record.
+    /// Keep where the app ref that just loaded came from, its version and its digest in the app's install record.
     async fn remember(&self, app: &AppId, approval: Approval) {
         let updated = {
             let mut apps = self.apps.lock();
@@ -896,18 +1003,24 @@ impl AppService {
     pub async fn preview(&self, app_ref_url: &str) -> Result<AppPreview, AppError> {
         let fetched = self.fetch_app_ref(app_ref_url).await?;
         fetched.app_ref.manifest.validate()?;
-        Ok(self.preview_of(&fetched, app_ref_url))
+        Ok(self.preview_of(&fetched))
     }
 
-    fn preview_of(&self, fetched: &FetchedRef, url: &str) -> AppPreview {
+    fn preview_of(&self, fetched: &FetchedRef) -> AppPreview {
         let m = &fetched.app_ref.manifest;
         let installed = self
             .apps
             .lock()
             .get(&m.id)
             .map(|e| InstalledInfo { version: e.record.version.clone(), state: e.status.to_wire() });
+        let update = installed
+            .as_ref()
+            .is_some_and(|i| version_order(&m.version, &i.version) == Some(VersionOrder::Greater));
+        let mut origins = m.ui.csp.resource_domains.clone();
+        origins.sort();
+        origins.dedup();
         AppPreview {
-            url: url.to_owned(),
+            url: fetched.url.clone(),
             sha256: fetched.sha256.clone(),
             id: m.id.to_string(),
             name: m.name.clone(),
@@ -915,8 +1028,11 @@ impl AppService {
             icon: m.icon.clone(),
             tint: m.tint.clone(),
             description: m.description.clone(),
-            source: source_label(url),
+            source: source_label(&fetched.url),
             installed,
+            update,
+            permissions: m.ui.permissions.features().into_iter().map(str::to_owned).collect(),
+            origins,
         }
     }
 
@@ -934,8 +1050,17 @@ impl AppService {
         for url in urls {
             match self.fetch_app_ref(&url).await {
                 Ok(fetched) if fetched.app_ref.manifest.validate().is_ok() => {
-                    if !catalog.apps.iter().any(|a| a.id == fetched.app_ref.manifest.id.as_str()) {
-                        catalog.apps.push(self.preview_of(&fetched, &url));
+                    let offered = self.preview_of(&fetched);
+                    match catalog.apps.iter_mut().find(|a| a.id == offered.id) {
+                        None => catalog.apps.push(offered),
+                        // an app listed at several versions is offered at the highest
+                        Some(listed)
+                            if version_order(&offered.version, &listed.version)
+                                == Some(VersionOrder::Greater) =>
+                        {
+                            *listed = offered;
+                        }
+                        Some(_) => {}
                     }
                 }
                 Ok(fetched) => {
@@ -971,8 +1096,18 @@ impl AppService {
     ) -> Result<(Active, Approval), AppError> {
         let fetched = self.fetch_app_ref(&record.source_url).await?;
         check_against_record(record, &fetched.app_ref.manifest)?;
+        self.load(&fetched, reuse).await
+    }
+
+    /// Load a fetched app ref (on `reuse`, the database of the load it replaces, when there is one); the approval is
+    /// what the record keeps of this load.
+    async fn load(
+        &self,
+        fetched: &FetchedRef,
+        reuse: Option<Arc<dyn AppData>>,
+    ) -> Result<(Active, Approval), AppError> {
         let active = self.activate(&fetched.app_ref, reuse).await?;
-        Ok((active, Approval::of(&fetched)))
+        Ok((active, Approval::of(fetched)))
     }
 
     /// Fetch and verify the package (the backend, the page's files, the migrations), open the database, run the
@@ -1023,8 +1158,13 @@ impl AppService {
             migrations.push(SqlMigration { version: spec.version, name: spec.name.clone(), sql });
         }
 
+        // the database the running load has, or the app's own opened; either way the package's migrations are applied
+        // (they are recorded, so what ran already does not run again): a new version's run before it loads
         let data = match reuse {
-            Some(d) => d,
+            Some(d) => {
+                d.migrate(migrations).await?;
+                d
+            }
             None => self.p.data.open(&m.id, migrations).await?,
         };
         // a failed load leaves the data in place (it is the user's) and the previous VM, if any, untouched

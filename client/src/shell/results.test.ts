@@ -81,9 +81,17 @@ describe('the catalog', () => {
       name: 'Notes',
       version: '1.0.0',
       source: 'this computer',
+      update: false,
+      permissions: [],
+      origins: [],
       sha256: 'ab'.repeat(32)
     }
     expect(catalogSchema.parse({ apps: [entry], errors: [] }).apps[0].sha256).toBe('ab'.repeat(32))
+    // whether it is an update of the installed app, and what it asks for, are always said
+    for (const field of ['update', 'permissions', 'origins'])
+      expect(() =>
+        catalogSchema.parse({ apps: [{ ...entry, [field]: undefined }], errors: [] })
+      ).toThrow()
     expect(() =>
       catalogSchema.parse({ apps: [{ ...entry, sha256: undefined }], errors: [] })
     ).toThrow()

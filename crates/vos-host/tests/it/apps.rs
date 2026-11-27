@@ -297,3 +297,95 @@ async fn an_app_without_a_page_is_refused_at_install_and_failed_not_fatal_at_sta
     second.stop().await;
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+// ---- updating an app ----------------------------------------------------------------------------------------
+
+/// A memo app at 0.1.0: one table, written through `add`.
+const MEMO_V1: &str = r#"
+app.db:migrate { [1] = "create table memos (body text not null)" }
+RPC.on_request("add", function(params) app.db:exec("insert into memos (body) values (:body)", { body = params.body }) return true end)
+RPC.on_request("list", function()
+  local out = {}
+  for _, row in app.db:all("select body from memos") do table.insert(out, { body = row.body }) end
+  return out
+end)
+"#;
+
+/// The same app at 0.2.0: a second migration adds a column, which `list` reads.
+const MEMO_V2: &str = r#"
+app.db:migrate {
+  [1] = "create table memos (body text not null)",
+  [2] = "alter table memos add column pinned integer not null default 0",
+}
+RPC.on_request("list", function()
+  local out = {}
+  for _, row in app.db:all("select body, pinned from memos") do table.insert(out, { body = row.body, pinned = row.pinned }) end
+  return out
+end)
+"#;
+
+/// The app ref of `version` of the memo app, under a folder of its own as `bun run build:apps` lays versions out.
+fn publish_memo(tmp: &Path, version: &str, backend: &str) -> String {
+    let manifest = json!({ "id": "memo", "name": "Memo", "version": version, "main": "app.luau", "ui": { "root": "static" } });
+    publish_app_ref(
+        &tmp.join("pkg-memo").join(version),
+        manifest,
+        &[("app.luau", backend.as_bytes().to_vec())],
+    )
+}
+
+#[tokio::test]
+async fn an_app_is_updated_over_rpc_on_its_own_database_and_the_shell_is_told() {
+    let tmp = temp("update");
+    let configure = |c: &mut vos_host::HostConfig| c.data_dir = Some(tmp.join("data"));
+    prepare_data_dir(&tmp.join("data")).unwrap();
+    let r = start(configure).await;
+    let (v1, v2) = (publish_memo(&tmp, "0.1.0", MEMO_V1), publish_memo(&tmp, "0.2.0", MEMO_V2));
+    r.host.service.install_from_url(&v1).await.unwrap();
+    let mut ws = browser(&r).await;
+    let added =
+        rpc(&mut ws, 1, "app.call", json!({"app": "memo", "method": "add", "args": {"body": "kept"}})).await;
+    assert_eq!(added["result"], true, "{added}");
+
+    // the preview of the new version says it is an update of the installed one
+    let preview = rpc(&mut ws, 2, "app.preview", json!({"url": v2})).await;
+    assert_eq!(
+        (&preview["result"]["installed"]["version"], &preview["result"]["update"]),
+        (&json!("0.1.0"), &json!(true))
+    );
+    let sha = preview["result"]["sha256"].as_str().unwrap().to_owned();
+
+    // pinned to what was previewed, as an install is
+    let stale =
+        rpc(&mut ws, 3, "app.update", json!({"app": "memo", "url": v2, "sha256": "0".repeat(64)})).await;
+    assert!(stale["error"]["message"].as_str().unwrap_or_default().contains("changed"), "{stale}");
+
+    let updated = rpc(&mut ws, 4, "app.update", json!({"app": "memo", "url": v2, "sha256": sha})).await;
+    assert!(updated.get("error").is_none(), "{updated}");
+    assert_eq!(next_notification(&mut ws, "app.updated").await, json!({"app": "memo"}));
+    // the data is kept and the new version's migration ran on it
+    let listed = rpc(&mut ws, 5, "app.call", json!({"app": "memo", "method": "list"})).await;
+    assert_eq!(listed["result"], json!([{"body": "kept", "pinned": 0}]), "{listed}");
+    let apps = rpc(&mut ws, 6, "app.list", json!({})).await;
+    assert_eq!(apps["result"]["apps"][0]["version"], "0.2.0", "{apps}");
+
+    // back to the old version: refused, with the reason
+    let old = rpc(&mut ws, 7, "app.preview", json!({"url": v1})).await;
+    assert_eq!(old["result"]["update"], false);
+    let sha = old["result"]["sha256"].as_str().unwrap().to_owned();
+    let back = rpc(&mut ws, 8, "app.update", json!({"app": "memo", "url": v1, "sha256": sha})).await;
+    assert!(back["error"]["message"].as_str().unwrap_or_default().contains("older"), "{back}");
+    r.host.service.shutdown().await;
+    r.stop().await;
+
+    // the next start runs the new version, and a config that still lists the old one does not take it back
+    let second = start(configure).await;
+    start_apps(&second.host.service, &[v1]).await;
+    let memo = &second.host.service.apps()[0];
+    assert_eq!(
+        (&memo.status, memo.version.as_str(), memo.source_url.as_str()),
+        (&AppStatus::Running, "0.2.0", v2.as_str())
+    );
+    second.stop().await;
+    let _ = std::fs::remove_dir_all(tmp);
+}

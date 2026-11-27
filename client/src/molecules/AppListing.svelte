@@ -1,9 +1,9 @@
 <!--
   @molecule AppListing — an installable app in Discover: icon, name, version and where it comes from, its
-  state, and what you can do (GET / OPEN / ENABLE, Disable while it runs, Remove). Atoms: IconTile, Icon, Text, Button,
-  ActivityIndicator.
-  Test ids: `testid` on the listing, `${testid}-get` (the main button), `${testid}-toggle` (Disable, only while the app runs),
-  `${testid}-remove`, `${testid}-state`.
+  state, and what you can do (GET / OPEN / ENABLE, UPDATE when a newer version is offered, Disable while it runs, Remove).
+  Atoms: IconTile, Icon, Text, Button, ActivityIndicator.
+  Test ids: `testid` on the listing, `${testid}-get` (the main button), `${testid}-update` (only with `onupdate`),
+  `${testid}-toggle` (Disable, only while the app runs), `${testid}-remove`, `${testid}-state`.
 -->
 <script lang="ts">
   import type { IconName } from '@vos/ui'
@@ -24,6 +24,8 @@
     message?: string
     busy?: boolean
     onget: () => void
+    /** A newer version is offered: the UPDATE button, which asks before anything changes. */
+    onupdate?: () => void
     ontoggle?: () => void
     onremove?: () => void
   }
@@ -39,6 +41,7 @@
     message,
     busy = false,
     onget,
+    onupdate,
     ontoggle,
     onremove
   }: Props = $props()
@@ -86,6 +89,17 @@
           aria-label="{label.toLowerCase()} {name}"
           onclick={onget}>{label}</Button
         >
+        {#if onupdate}
+          <Button
+            testid="{testid}-update"
+            variant="gray"
+            size="small"
+            capsule
+            hit
+            aria-label="update {name}"
+            onclick={onupdate}>UPDATE</Button
+          >
+        {/if}
         {#if ontoggle && state === 'running'}
           <Button
             testid="{testid}-toggle"

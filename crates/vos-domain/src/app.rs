@@ -261,6 +261,16 @@ pub fn source_label(url: &str) -> String {
     }
 }
 
+/// How app version `a` stands to `b` by semantic versioning: `0.10.0` comes after `0.9.0`, a pre-release before its
+/// release, and build metadata does not count. `None` when either is not a semantic version (`1`, `1.0`): then
+/// neither can be said to be the newer.
+#[must_use]
+pub fn version_order(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let a = semver::Version::parse(a.trim()).ok()?;
+    let b = semver::Version::parse(b.trim()).ok()?;
+    Some(a.cmp_precedence(&b))
+}
+
 /// `file` resolved against the URL of the document that names it: absolute URLs stay as they are, a
 /// relative one is looked up next to the document (`dir/app-ref.json` + `app.luau` = `dir/app.luau`).
 ///
@@ -476,6 +486,20 @@ mod tests {
         assert_eq!(resolve_url("file:///r/ref.json", "https://y.org/z"), "https://y.org/z");
         assert_eq!(source_label("https://apps.example.org:8443/x/ref.json"), "apps.example.org:8443");
         assert_eq!(source_label("file:///r/ref.json"), "this computer");
+    }
+
+    #[test]
+    fn versions_compare_by_semantic_versioning() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(version_order("0.10.0", "0.9.0"), Some(Greater), "numbers, not text");
+        assert_eq!(version_order("0.4.0", "0.5.0"), Some(Less));
+        assert_eq!(
+            version_order("1.0.0-rc.1", "1.0.0"),
+            Some(Less),
+            "a pre-release comes before its release"
+        );
+        assert_eq!(version_order("1.0.0+build.2", "1.0.0"), Some(Equal), "build metadata does not count");
+        assert_eq!(version_order("1", "1.0.0"), None, "not a semantic version: no order");
     }
 
     fn ref_listing(urls: &[&str]) -> AppRef {

@@ -30,6 +30,7 @@ const LIST_CHANGED = new Set([
   'app.uninstalled',
   'app.enabled',
   'app.disabled',
+  'app.updated',
   'app.failed'
 ])
 

@@ -118,6 +118,16 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub installed: Option<InstalledInfo>,
+        /// This is a newer version of the installed app (`installed.version` is lower): hand it to `app.update`.
+        #[serde(default)]
+        pub update: bool,
+        /// The browser features the app's frame asks for (`camera`, `clipboard-write`, ...), as `AppSummary` has them.
+        #[serde(default)]
+        pub permissions: Vec<String>,
+        /// The origins beyond the host that the app's page may load images, media, fonts and styles from (its
+        /// `ui.csp.resourceDomains`, which its content security policy lets in), sorted.
+        #[serde(default)]
+        pub origins: Vec<String>,
     }
 
     /// `app.available` result: everything the configured registries offer.

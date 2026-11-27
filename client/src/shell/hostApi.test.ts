@@ -44,6 +44,9 @@ describe('the generated wire types the shell reads', () => {
       'description',
       'source',
       'installed',
+      'update',
+      'permissions',
+      'origins',
       'sha256'
     ],
     InstalledInfo: ['version', 'state'],

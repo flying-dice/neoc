@@ -6,8 +6,8 @@
  *      into a test registry, with Memos (e2e/apps/memos), a second app the Discover journeys install and remove so they
  *      never disturb the Calculator the other specs use; and the rest of e2e/apps into a folder no registry lists: the two
  *      framework fixtures (a task list with a Svelte client and one with a React client, each on a Luau backend),
- *      installed at start like the Calculator, and the Ticker (background work) and the Notifier (the notification
- *      journeys' sender), which only their journeys install;
+ *      installed at start like the Calculator, and the Ticker (background work), the Notifier (the notification
+ *      journeys' sender) and the Journal at two versions (the update journey's), which only their journeys install;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator,
  *      Agents, Todos, Notes, Containers, DNS, Pages and Processes are installed at start, Memos is only offered);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully. The host's own Docker is
@@ -46,7 +46,7 @@ run('bun', ['scripts/build-apps.ts', ...repoApps, ...REGISTRY_APPS, '--out', joi
 
 // The other apps of e2e/apps: each is built with its own package (its client is a Vite build), into a folder of its own
 // that no registry lists, so Discover does not offer them. The framework fixtures are installed at start (below); the
-// Ticker and the Notifier are installed by their journeys
+// Ticker, the Notifier and the Journal are installed by their journeys
 run('bun', ['scripts/build-apps.ts', ...FIXTURE_APPS, ...HIDDEN_APPS, '--out', join(DIR, 'fixtures'), '--root', join(ROOT, 'e2e/apps')])
 
 mkdirSync(DATA, { recursive: true })

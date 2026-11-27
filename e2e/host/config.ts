@@ -35,10 +35,12 @@ export const FIXTURE_APPS = ['tasks-svelte', 'tasks-react'] as const
 export type FixtureApp = (typeof FIXTURE_APPS)[number]
 /**
  * The apps of e2e/apps that are built like the fixtures but not installed at start, and kept out of the registry so Discover
- * does not offer them: the Ticker (background work, `e2e/background.journeys.spec.ts`) and the Notifier (a sender of
- * notifications, `e2e/notifications.journeys.spec.ts`). Their specs install them from their app refs.
+ * does not offer them: the Ticker (background work, `e2e/background.journeys.spec.ts`), the Notifier (a sender of
+ * notifications, `e2e/notifications.journeys.spec.ts`), and the Journal at 0.1.0 and its next version, 0.2.0
+ * (`journal-next`, the same app id), which the update journey installs and updates to (`e2e/updates.journeys.spec.ts`).
+ * Their specs install them from their app refs.
  */
-export const HIDDEN_APPS = ['ticker', 'notifier'] as const
+export const HIDDEN_APPS = ['ticker', 'notifier', 'journal', 'journal-next'] as const
 /** The app of e2e/apps the test registry offers and nothing installs at start: the Discover journeys install and remove it. */
 export const REGISTRY_APPS = ['memos'] as const
 
@@ -69,6 +71,9 @@ const appRef = (folder: 'fixtures' | 'registry', dir: string): string => {
 export const fixtureAppRef = (id: FixtureApp): string => appRef('fixtures', id)
 export const TICKER_APP_REF = appRef('fixtures', 'ticker')
 export const NOTIFIER_APP_REF = appRef('fixtures', 'notifier')
+/** The Journal at 0.1.0, and at 0.2.0: the update journey installs the first and publishes the second in the test registry. */
+export const JOURNAL_APP_REF = appRef('fixtures', 'journal')
+export const JOURNAL_NEXT_APP_REF = appRef('fixtures', 'journal-next')
 /** Memos, as the test registry lists it: what the Discover journeys paste to add an app by URL. */
 export const MEMOS_APP_REF = appRef('registry', 'memos')
 /**
