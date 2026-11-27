@@ -35,4 +35,4 @@
   const agents = new Agents(rpc, events)
 </script>
 
-<AgentsPage {agents} />
+<AgentsPage {agents} onlink={(url) => void vos.host.open_link(url).catch(() => {})} />

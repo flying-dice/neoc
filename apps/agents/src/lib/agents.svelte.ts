@@ -50,6 +50,8 @@ export interface AgentForm {
   token: string
   /** Remove the token the agent has. */
   forget: boolean
+  /** Its picture as it will be saved: the one it has, a new one (a `data:` URL), or empty for none. */
+  avatar: string
 }
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -207,7 +209,20 @@ export class Agents {
   /** Open the form: to add an agent, or to change the one given. */
   edit(agent: Agent | null): void {
     this.#failure = null
-    this.form = { agent, name: agent?.name ?? '', url: agent?.url ?? '', folder: agent?.folder ?? '/', token: '', forget: false }
+    this.form = {
+      agent,
+      name: agent?.name ?? '',
+      url: agent?.url ?? '',
+      folder: agent?.folder ?? '/',
+      token: '',
+      forget: false,
+      avatar: agent?.avatar ?? ''
+    }
+  }
+
+  /** The picture of the agent a chat is with; empty when it has none, or was removed. */
+  avatarOf(chat: Chat): string {
+    return this.#agents.find((a) => a.id === chat.agent_id)?.avatar ?? ''
   }
 
   /** Whether the form can be saved: it has a name and an address. What is wrong with them is the backend's to say. */
@@ -220,11 +235,21 @@ export class Agents {
     const form = this.form
     if (form === null || !this.savable) return
     const token = form.token === '' ? {} : { token: form.token }
+    // a picture that did not change is not sent again
+    const avatar = form.avatar === (form.agent?.avatar ?? '') ? {} : form.avatar === '' ? { remove_avatar: true } : { avatar: form.avatar }
     try {
       this.#agents =
         form.agent === null
-          ? await this.#rpc.addAgent({ name: form.name, url: form.url, folder: form.folder, ...token })
-          : await this.#rpc.updateAgent({ agent: form.agent.id, name: form.name, url: form.url, folder: form.folder, forget: form.forget, ...token })
+          ? await this.#rpc.addAgent({ name: form.name, url: form.url, folder: form.folder, ...token, ...avatar })
+          : await this.#rpc.updateAgent({
+              agent: form.agent.id,
+              name: form.name,
+              url: form.url,
+              folder: form.folder,
+              forget: form.forget,
+              ...token,
+              ...avatar
+            })
       this.#chats = await this.#rpc.chats()
       this.#failure = null
       this.form = null

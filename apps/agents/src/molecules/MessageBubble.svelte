@@ -1,25 +1,40 @@
-<!-- @molecule MessageBubble — one thing said in a chat: the person's on the right, the agent's on the left (text, or an image, a link or a resource it gave), with a spinner while it is still coming -->
+<!-- @molecule MessageBubble — one thing said in a chat: the person's in a bubble on the right, the agent's across the column with no bubble (its text drawn as Markdown, or an image, a link or a resource it gave) -->
 <script lang="ts">
   type Item = VosApp.Agents.Item
+  import Markdown from '../atoms/Markdown.svelte'
   import { dataOf, opens, pieceOf } from '../lib/items'
 
   interface Props {
     /** A `user` or an `assistant` item. */
     item: Item
+    /** Open a web address the agent gave outside the app. */
+    onlink: (url: string) => void
   }
 
-  let { item }: Props = $props()
+  let { item, onlink }: Props = $props()
 
   // the agent's text has no name; anything else it said is a piece in the item's data
   const piece = $derived(item.name === '' ? undefined : pieceOf(dataOf(item)))
 </script>
 
 <div class="message {item.kind}" data-testid="agents-message-{item.kind}-{item.id}">
-  {#if piece?.type === 'image'}
+  {#if item.kind === 'user'}
+    <span class="text">{item.text}</span>
+  {:else if piece?.type === 'image'}
     <img src="data:{piece.mime_type};base64,{piece.data}" alt="From the agent ({piece.mime_type})" />
   {:else if piece?.type === 'link'}
     {#if opens(piece.uri)}
-      <a href={piece.uri} target="_blank" rel="noreferrer" data-testid="agents-message-{item.id}-link">{piece.name}</a>
+      <a
+        href={piece.uri}
+        target="_blank"
+        rel="noopener noreferrer"
+        onclick={(e) => {
+          // the frame cannot open a tab of its own: the host opens it
+          e.preventDefault()
+          onlink(piece.uri)
+        }}
+        data-testid="agents-message-{item.id}-link">{piece.name}</a
+      >
     {:else}
       <span class="text">{piece.name}</span>
     {/if}
@@ -28,29 +43,30 @@
     <span class="uri">{piece.uri}</span>
     <pre>{piece.text}</pre>
   {:else}
-    <span class="text">{item.text}</span>{#if !item.done}<ui-spinner label="The agent is answering"></ui-spinner>{/if}
+    <Markdown text={item.text} {onlink} />
   {/if}
 </div>
 
 <style>
   .message {
     margin: 0;
-    max-width: min(85%, 60ch);
-    padding: 8px 12px;
-    border-radius: var(--radius-lg);
+    min-width: 0;
     overflow-wrap: anywhere;
   }
+  /* the person's: a bubble on the right, a neutral fill that reads in both appearances */
   .user {
     align-self: flex-end;
-    /* the accent as a fill behind white text: darker than the accent itself in the dark appearance */
-    background: var(--tint-fill);
-    color: #fff;
-  }
-  .assistant {
-    align-self: flex-start;
+    max-width: min(85%, 60ch);
+    padding: 8px 14px;
+    border-radius: 20px;
     background: var(--fill-tertiary);
+    color: var(--label);
   }
-  /* the agent's line breaks are kept; the markup's own are not */
+  /* the agent's: the column's whole width, as a page reads */
+  .assistant {
+    align-self: stretch;
+  }
+  /* the person's line breaks are kept; the markup's own are not */
   .text {
     white-space: pre-wrap;
   }
@@ -60,8 +76,9 @@
     color: var(--label-secondary);
   }
   a {
-    color: inherit;
+    color: var(--link);
     text-decoration: underline;
+    text-underline-offset: 2px;
   }
   img {
     display: block;
@@ -73,14 +90,7 @@
     max-height: 240px;
     overflow: auto;
     white-space: pre-wrap;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-  }
-  ui-spinner {
-    display: inline-block;
-    vertical-align: middle;
-  }
-  .text:not(:empty) + ui-spinner {
-    margin-inline-start: 6px;
   }
 </style>

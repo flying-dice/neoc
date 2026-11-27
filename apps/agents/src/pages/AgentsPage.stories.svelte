@@ -70,7 +70,7 @@
     minWidth={app.window.minW}
     minHeight={app.window.minH}
   >
-    <AgentsPage {agents} />
+    <AgentsPage {agents} onlink={() => {}} />
   </AppWindow>
 {/snippet}
 
@@ -174,13 +174,14 @@
   }}
 />
 
-<!-- The agent is answering: what it has said so far, and the button stops it. -->
+<!-- The agent is answering: what it has said so far, the line over the composer says it is at work, and the button stops it. -->
 <Story
   name="An answer on its way"
   play={async ({ canvas, userEvent }) => {
     await startChat(canvas, userEvent)
     await say(canvas, userEvent, 'slow')
     await said(canvas, 'Thinking')
+    await expect(canvas.getByTestId('agents-status')).toHaveTextContent('Thinking…')
     await expect(canvas.getByTestId('agents-composer-stop')).toBeVisible()
   }}
 />
@@ -196,6 +197,7 @@
     await userEvent.click(canvas.getByTestId('agents-composer-stop'))
     await appears(canvas, 'agents-composer-send')
     await said(canvas, 'Thinking')
+    await waitFor(() => expect(canvas.getByTestId('agents-status').textContent?.trim()).toBe(''))
     await say(canvas, userEvent, 'hello')
     await said(canvas, 'Hi there')
   }}

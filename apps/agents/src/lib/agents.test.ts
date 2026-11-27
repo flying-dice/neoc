@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Agents } from './agents.svelte'
-import { SCRIPTED, conversation, createFailingBackend, createFakeBackend, type FakeBackend } from './fakeApi'
+import { PICTURE, PICTURED, SCRIPTED, conversation, createFailingBackend, createFakeBackend, type FakeBackend } from './fakeApi'
 
 /** A window on a fake backend, loaded and listening. */
 async function opened(backend: FakeBackend = createFakeBackend({ pace: 1 })): Promise<Agents> {
@@ -232,6 +232,88 @@ describe('the agents', () => {
     await agents.remove()
     expect(agents.agents).toEqual([])
     expect(agents.form).toBeNull()
+  })
+})
+
+describe("an agent's picture", () => {
+  /** A backend whose calls to add and change an agent are kept, to see what was sent. */
+  function recording(options: Parameters<typeof createFakeBackend>[0] = {}): { backend: FakeBackend; sent: Record<string, unknown>[] } {
+    const backend = createFakeBackend(options)
+    const sent: Record<string, unknown>[] = []
+    const { addAgent, updateAgent } = backend.rpc
+    backend.rpc.addAgent = (params) => (sent.push({ ...params }), addAgent(params))
+    backend.rpc.updateAgent = (params) => (sent.push({ ...params }), updateAgent(params))
+    return { backend, sent }
+  }
+
+  test('one is added with its picture', async () => {
+    const agents = await opened(createFakeBackend({ agents: [] }))
+    agents.edit(null)
+    expect(agents.form?.avatar).toBe('')
+    Object.assign(agents.form!, { name: 'Ada', url: 'ws://example.com/acp', avatar: PICTURE })
+    await agents.save()
+    expect(agents.agents).toMatchObject([{ name: 'Ada', avatar: PICTURE }])
+  })
+
+  test('one added without a picture has none, and none is sent', async () => {
+    const { backend, sent } = recording({ agents: [] })
+    const agents = await opened(backend)
+    agents.edit(null)
+    Object.assign(agents.form!, { name: 'Ada', url: 'ws://example.com/acp' })
+    await agents.save()
+    expect(sent[0]).not.toHaveProperty('avatar')
+    expect(agents.agents[0]?.avatar).toBe('')
+  })
+
+  test('the form starts with the picture the agent has, and a change that leaves it does not send it again', async () => {
+    const { backend, sent } = recording({ agents: [PICTURED] })
+    const agents = await opened(backend)
+    agents.edit(agents.agents[0]!)
+    expect(agents.form?.avatar).toBe(PICTURE)
+    agents.form!.name = 'Renamed'
+    await agents.save()
+    expect(sent[0]).not.toHaveProperty('avatar')
+    expect(sent[0]).not.toHaveProperty('remove_avatar')
+    expect(agents.agents[0]).toMatchObject({ name: 'Renamed', avatar: PICTURE })
+  })
+
+  test('a new picture replaces the one it has', async () => {
+    const agents = await opened(createFakeBackend({ agents: [PICTURED] }))
+    const other = PICTURE.replace('png', 'webp')
+    agents.edit(agents.agents[0]!)
+    agents.form!.avatar = other
+    await agents.save()
+    expect(agents.agents[0]?.avatar).toBe(other)
+  })
+
+  test('a picture removed is removed', async () => {
+    const { backend, sent } = recording({ agents: [PICTURED] })
+    const agents = await opened(backend)
+    agents.edit(agents.agents[0]!)
+    agents.form!.avatar = ''
+    await agents.save()
+    expect(sent[0]).toMatchObject({ remove_avatar: true })
+    expect(agents.agents[0]?.avatar).toBe('')
+  })
+
+  test('a picture that is not a PNG, JPEG or WebP is refused, and the form stays', async () => {
+    const agents = await opened()
+    agents.edit(agents.agents[0]!)
+    agents.form!.avatar = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+    await agents.save()
+    expect(agents.form).not.toBeNull()
+    expect(agents.failure).toBe('The picture must be a PNG, JPEG or WebP image.')
+  })
+
+  test('a chat shows the picture of its agent, and none once the agent is removed', async () => {
+    const agents = await opened(createFakeBackend({ agents: [PICTURED, SCRIPTED] }))
+    await agents.startChat(PICTURED)
+    const chat = agents.chats[0]!
+    expect(chat.agent_id).toBe(PICTURED.id)
+    expect(agents.avatarOf(chat)).toBe(PICTURE)
+    agents.edit(agents.agents.find((a) => a.id === PICTURED.id)!)
+    await agents.remove()
+    expect(agents.avatarOf(chat)).toBe('')
   })
 })
 

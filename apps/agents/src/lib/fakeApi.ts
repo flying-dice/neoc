@@ -11,7 +11,14 @@ type Conversation = VosApp.Agents.Conversation
 type Item = VosApp.Agents.Item
 import type { AgentsEvents, AgentsRpc } from './agents.svelte'
 
-export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'ws://localhost:5424/acp', token: false, folder: '/home/ada/project' }
+export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'ws://localhost:5424/acp', token: false, folder: '/home/ada/project', avatar: '' }
+
+/** A picture an agent can have: a sun over the sea, 24 pixels across. */
+export const PICTURE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAARUlEQVR42mOIOvGLKohh1CDqGPT/DANFBgH1YyKSDcJqCh6zhopBeEzBZdaICyNy0hFD1X+CCKifsDJiDCIKjRo0kg0CANYoHLfSsIESAAAAAElFTkSuQmCC'
+
+/** An agent with a picture. */
+export const PICTURED: Agent = { id: 'writer', name: 'Writer', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing', avatar: PICTURE }
 
 /** The options an agent offers when it asks before it changes a file. */
 export const OPTIONS = [
@@ -93,7 +100,7 @@ function script(text: string): Step[] {
 export function conversation(id: string, title: string, said: readonly (Said | readonly [kind: 'user' | 'assistant', text: string])[]): Conversation {
   const items = said.map((entry, i) => itemOf(id, i + 1, Array.isArray(entry) ? { kind: entry[0], text: entry[1] } : (entry as Said)))
   return {
-    chat: { id, title, agent: SCRIPTED.name, updated: '2026-06-09T08:41:00.000Z' },
+    chat: { id, title, agent: SCRIPTED.name, agent_id: SCRIPTED.id, updated: '2026-06-09T08:41:00.000Z' },
     items,
     busy: false,
     waiting: items.some((item) => item.kind === 'permission' && !item.done)
@@ -105,9 +112,8 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   let agents: Agent[] = (options.agents ?? [SCRIPTED]).map((a) => ({ ...a }))
   const pace = options.pace ?? 10
   // the most recently used first
-  let chats: { chat: Chat; agent: string; items: Item[] }[] = (options.chats ?? []).map((c) => ({
+  let chats: { chat: Chat; items: Item[] }[] = (options.chats ?? []).map((c) => ({
     chat: { ...c.chat },
-    agent: SCRIPTED.id,
     items: c.items.map((item) => ({ ...item }))
   }))
   // the turn in progress in each chat: how to stop it, and how it goes on after a pause
@@ -133,10 +139,12 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       waiting: found.items.some((item) => item.kind === 'permission' && !item.done)
     }
   }
-  const check = (name: string, url: string, folder: string): void => {
+  const check = (name: string, url: string, folder: string, avatar: string): void => {
     if (name.trim() === '') throw new Refused('Give the agent a name.')
     if (!/^wss?:\/\/[^/]/.test(url.trim())) throw new Refused('The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
     if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(folder.trim() || '/')) throw new Refused("The folder must be an absolute path on the agent's machine, like /home/me/project.")
+    if (avatar.length > 200_000) throw new Refused('The picture is too big. Choose a smaller one.')
+    if (avatar !== '' && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar)) throw new Refused('The picture must be a PNG, JPEG or WebP image.')
   }
 
   function finish(id: string): void {
@@ -182,22 +190,26 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
 
   const rpc: AgentsRpc = {
     agents: async () => agents.map((a) => ({ ...a })),
-    addAgent: async ({ name, url, token, folder }) => {
-      check(name, url, folder ?? '')
-      agents = [...agents, { id: `agent-${nextAgent++}`, name: name.trim(), url: url.trim(), token: (token ?? '') !== '', folder: folder?.trim() || '/' }]
+    addAgent: async ({ name, url, token, folder, avatar }) => {
+      check(name, url, folder ?? '', avatar ?? '')
+      agents = [
+        ...agents,
+        { id: `agent-${nextAgent++}`, name: name.trim(), url: url.trim(), token: (token ?? '') !== '', folder: folder?.trim() || '/', avatar: avatar ?? '' }
+      ]
       return agents.map((a) => ({ ...a }))
     },
-    updateAgent: async ({ agent, name, url, token, forget, folder }) => {
+    updateAgent: async ({ agent, name, url, token, forget, folder, avatar, remove_avatar }) => {
       const who = agents.find((a) => a.id === agent)
       if (!who) throw new Refused('There is no such agent.')
-      check(name, url, folder ?? '')
+      check(name, url, folder ?? '', avatar ?? '')
       Object.assign(who, {
         name: name.trim(),
         url: url.trim(),
         folder: folder?.trim() || '/',
-        token: (token ?? '') !== '' ? true : forget === true ? false : who.token
+        token: (token ?? '') !== '' ? true : forget === true ? false : who.token,
+        avatar: (avatar ?? '') !== '' ? avatar : remove_avatar === true ? '' : who.avatar
       })
-      for (const c of chats) if (c.agent === who.id) c.chat.agent = who.name
+      for (const c of chats) if (c.chat.agent_id === who.id) c.chat.agent = who.name
       return agents.map((a) => ({ ...a }))
     },
     removeAgent: async ({ agent }) => {
@@ -209,7 +221,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       const who = agents.find((a) => a.id === agent)
       if (!who) throw new Refused('There is no such agent.')
       const id = `chat-${nextChat++}`
-      chats = [{ chat: { id, title: 'New chat', agent: who.name, updated: new Date().toISOString() }, agent: who.id, items: [] }, ...chats]
+      chats = [{ chat: { id, title: 'New chat', agent: who.name, agent_id: who.id, updated: new Date().toISOString() }, items: [] }, ...chats]
       return view(id)
     },
     open: async ({ chat }) => view(chat),

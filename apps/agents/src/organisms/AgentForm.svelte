@@ -1,6 +1,8 @@
-<!-- @organism AgentForm — the form an agent is added or changed in: its name, its ACP address, the folder it works in and its token, with the way to remove it -->
+<!-- @organism AgentForm — the form an agent is added or changed in: its name, its ACP address, the folder it works in, its token and its picture, with the way to remove it -->
 <script lang="ts">
+  import Avatar from '../atoms/Avatar.svelte'
   import type { AgentForm } from '../lib/agents.svelte'
+  import { PICTURE_TYPES, pictureOf } from '../lib/avatar'
 
   interface Props {
     form: AgentForm
@@ -17,6 +19,25 @@
   const valueOf = (e: Event): string => (e.currentTarget as unknown as { value: string }).value
   const adding = $derived(form.agent === null)
   const hasToken = $derived(form.agent?.token === true)
+
+  let picker = $state<HTMLInputElement>()
+  // the file chosen last is not a picture the browser can read
+  let unreadable = $state(false)
+
+  /** Make the picture kept from the file chosen: a square from its middle, small. */
+  async function choose(e: Event): Promise<void> {
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    // the same file can be chosen again
+    input.value = ''
+    if (!file) return
+    try {
+      form.avatar = await pictureOf(file)
+      unreadable = false
+    } catch {
+      unreadable = true
+    }
+  }
 </script>
 
 <form
@@ -118,12 +139,38 @@
         </ui-row>
       {/if}
     </ui-section>
+    <ui-section
+      header="Picture"
+      footer={unreadable
+        ? 'That file is not a picture this app can read. Choose a PNG, JPEG, WebP or GIF image.'
+        : "A square from the middle of the picture is kept. Without one, the agent's initials are shown."}
+      footer-tone={unreadable ? 'error' : 'note'}
+      data-testid="agents-form-picture"
+    >
+      <!-- no space between what goes in the row's slots: a space would be its content, in place of its heading -->
+      <ui-row heading={form.avatar === '' ? 'Its initials' : 'Its picture'}>
+        <span slot="leading" class="preview">
+          <Avatar id={form.agent?.id ?? ''} name={form.name.trim() || 'New agent'} picture={form.avatar} size={44} />
+        </span><span slot="trailing" class="actions">
+          {#if form.avatar !== ''}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <ui-button variant="plain" size="small" destructive hit onclick={() => (form.avatar = '')} data-testid="agents-form-remove-picture">Remove</ui-button>
+          {/if}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <ui-button variant="plain" size="small" hit onclick={() => picker?.click()} data-testid="agents-form-choose-picture">
+            {form.avatar === '' ? 'Choose…' : 'Change…'}
+          </ui-button>
+        </span>
+      </ui-row>
+    </ui-section>
     {#if !adding}
       <ui-section footer="Its chats stay, and can be read.">
         <ui-row heading="Remove this agent" action destructive tappable onpress={onremove} data-testid="agents-form-remove"></ui-row>
       </ui-section>
     {/if}
     </ui-list>
+    <!-- the picker the Choose button opens; what it gives is drawn small in the page, never sent as it is -->
+    <input bind:this={picker} type="file" accept={PICTURE_TYPES} hidden onchange={choose} data-testid="agents-form-picture-file" />
   </div>
 </form>
 
@@ -165,5 +212,13 @@
   ui-text-field {
     flex: 1;
     min-width: 0;
+  }
+  .preview {
+    display: flex;
+    padding: 6px 0;
+  }
+  .actions {
+    display: flex;
+    gap: 4px;
   }
 </style>

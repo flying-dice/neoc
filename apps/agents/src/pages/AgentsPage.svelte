@@ -8,9 +8,11 @@
   interface Props {
     /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
     agents: Agents
+    /** Open a web address the agent gave outside the app (the host's `open_link`). */
+    onlink: (url: string) => void
   }
 
-  let { agents }: Props = $props()
+  let { agents, onlink }: Props = $props()
 
   // in a window too narrow for both, the split view shows one column: the kit says when, the same for every app
   let narrow = $state(false)
@@ -48,6 +50,7 @@
       {:else if open}
         <ChatThread
           conversation={open}
+          avatar={agents.avatarOf(open.chat)}
           draft={agents.draft}
           failure={agents.failure}
           back={narrow}
@@ -57,6 +60,7 @@
           onanswer={(item, option) => void agents.answer(item, option.option_id)}
           onremove={() => (agents.asking = 'chat')}
           onback={() => agents.back()}
+          {onlink}
         />
       {:else}
         <div class="nothing">

@@ -69,7 +69,7 @@ const agent = new FakeAgent([
       // what the app does not show
       turn.update({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review the changes' }] })
       turn.update({ sessionUpdate: 'usage_update', used: 412 })
-      turn.say('Milk is on the list.')
+      turn.say('Milk is on the **list**.')
       turn.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'resource_link', uri: 'https://example.com/list', name: 'The list' } })
     }
   ],
@@ -98,6 +98,19 @@ const agent = new FakeAgent([
       const result = await callToolAt({ url: vos.url, headers: { Authorization: authorization } }, 'calculator__calculate', { expression: '12 * 7' })
       turn.update({ sessionUpdate: 'tool_call_update', toolCallId: 'calc1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: result } }] })
       turn.say(`The Calculator says: ${result}`)
+    }
+  ],
+  // several tools one after another, one of which fails, between two things the agent says
+  [
+    (text) => text === 'tidy up',
+    async (turn) => {
+      turn.say('Looking.')
+      turn.update({ sessionUpdate: 'tool_call', toolCallId: 'r1', title: 'Read a.md', kind: 'read', status: 'completed' })
+      turn.update({ sessionUpdate: 'tool_call', toolCallId: 'r2', title: 'Read b.md', kind: 'read', status: 'completed' })
+      turn.update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'b.md is stale.' } })
+      turn.update({ sessionUpdate: 'tool_call', toolCallId: 'x1', title: 'rm b.md', kind: 'execute', status: 'in_progress', rawInput: { command: 'rm b.md' } })
+      turn.update({ sessionUpdate: 'tool_call_update', toolCallId: 'x1', status: 'failed', rawOutput: { exit: 1 } })
+      turn.say('b.md could not be removed.')
     }
   ],
   [
@@ -172,6 +185,21 @@ async function chatting(page: Page, url = endpoint): Promise<string> {
 
 const turnOver = (page: Page): Promise<void> => expect(part(page, 'composer-send')).toBeVisible()
 
+/** A PNG, wider than it is tall, drawn by the browser: orange, with a blue band down the middle. */
+async function png(page: Page): Promise<Buffer> {
+  const bytes = await page.evaluate(async () => {
+    const canvas = new OffscreenCanvas(60, 40)
+    const context = canvas.getContext('2d')!
+    context.fillStyle = '#ff9500'
+    context.fillRect(0, 0, 60, 40)
+    context.fillStyle = '#007aff'
+    context.fillRect(20, 0, 20, 40)
+    const blob = await canvas.convertToBlob({ type: 'image/png' })
+    return Array.from(new Uint8Array(await blob.arrayBuffer()))
+  })
+  return Buffer.from(bytes)
+}
+
 test.describe('Agents journeys', () => {
   test('AG1: open Agents from the Home Screen, add an agent by its name, address and folder, and see it', async ({ page }) => {
     await openDesktop(page)
@@ -224,9 +252,12 @@ test.describe('Agents journeys', () => {
     await say(page, 'slow')
     await expect(part(page, 'composer-stop')).toBeVisible()
     await expect(thread(page)).toContainText('1 ')
+    // the line over the composer says the agent is at work, until its turn ends
+    await expect(part(page, 'status')).toHaveText('Thinking…')
     await part(page, 'composer-stop').click()
     await expect(part(page, 'composer-stop')).toHaveCount(0)
     await turnOver(page)
+    await expect(part(page, 'status')).toHaveText('')
     await expect(thread(page)).toContainText('1 ')
     await expect(frame(page).getByTestId(/^agents-item-error-/)).toHaveCount(0)
     expect(sent('session/cancel').map((m) => m.params.sessionId)).toContain(agent.sessionOf('slow')!.id)
@@ -266,10 +297,11 @@ test.describe('Agents journeys', () => {
     await expect(part(page, 'chats')).toContainText('hello')
   })
 
-  test('AG6: see what the agent did: what it thought, its plan, the file it changed and a link it gave', async ({ page }) => {
+  test('AG6: see what the agent did: what it thought, its plan, the file it changed and a link it gave, its answer as Markdown', async ({ page }) => {
     await chatting(page)
     await say(page, 'show your work')
     await expect(thread(page)).toContainText('Milk is on the list.')
+    await expect(frame(page).getByTestId(/^agents-message-assistant-/).locator('strong')).toHaveText('list')
     await turnOver(page)
     await item(page, 'reasoning').locator('summary').click()
     await expect(item(page, 'reasoning')).toContainText('The list is in list.md.')
@@ -277,10 +309,11 @@ test.describe('Agents journeys', () => {
     await expect(item(page, 'plan')).toHaveCount(1)
     await expect(item(page, 'plan')).toContainText('Done Read list.md')
     await expect(item(page, 'plan')).toContainText('Done Add milk')
+    // a quiet line: the icon of its kind and its title
     const tool = item(page, 'tool')
     await expect(tool).toContainText('Add milk to list.md')
-    await expect(tool).toContainText('edit')
-    await expect(tool).toContainText('done')
+    await expect(tool.locator('summary ui-icon').first()).toHaveAttribute('name', 'square.and.pencil')
+    await expect(tool).not.toContainText(/\((failed|running)\)/)
     await tool.locator('summary').click()
     await expect(tool).toContainText('/home/ada/list.md:2')
     await expect(tool.getByTestId(/-diff-0$/)).toContainText('+Milk')
@@ -311,21 +344,23 @@ test.describe('Agents journeys', () => {
     await say(page, 'delete old.md')
     const question = frame(page).getByTestId(/^agents-question-\d+$/)
     await expect(question).toContainText('Delete old.md')
-    await expect(question).toContainText('delete')
-    // the turn waits for the answer: nothing else is sent until then, and it can be stopped
+    await expect(question.locator('ui-icon')).toHaveAttribute('name', 'trash')
+    // the turn waits for the answer: nothing else is sent until then, and it can be stopped; the question says what
+    // the turn waits for, not the line over the composer
     await expect(input(page)).toBeDisabled()
     await expect(part(page, 'composer-stop')).toBeVisible()
+    await expect(part(page, 'status')).toHaveText('')
     await question.getByTestId(/-option-0$/).click()
     await expect(thread(page)).toContainText('Deleted.')
     await expect(question).toContainText('Answered: Allow')
-    await expect(item(page, 'tool')).toContainText('done')
+    await expect(item(page, 'tool')).not.toContainText(/\((failed|running)\)/)
     await turnOver(page)
     await say(page, 'delete old.md')
     const second = frame(page).getByTestId(/^agents-question-\d+$/).nth(1)
     await second.getByTestId(/-option-1$/).click()
     await expect(thread(page)).toContainText('I left it.')
     await expect(second).toContainText('Answered: Reject')
-    await expect(item(page, 'tool').nth(1)).toContainText('failed')
+    await expect(item(page, 'tool').nth(1)).toContainText('· failed')
     // a stop while it waits answers it cancelled, and the turn ends
     await turnOver(page)
     await say(page, 'delete old.md')
@@ -414,5 +449,74 @@ test.describe('Agents journeys', () => {
     await part(page, 'confirm-confirm').click()
     await expect(part(page, 'no-chat')).toBeVisible()
     await expect(frame(page).getByTestId(/^agents-chat-/).filter({ hasText: `${name} renamed` })).toHaveCount(0)
+  })
+
+  test('AG12: give an agent a picture, see it in the list, the chats and the chat; remove it, and see its initials', async ({ page }) => {
+    await openAgents(page)
+    const name = `Agent ${Date.now()}-${Math.floor(Math.random() * 1000)}`
+    const initials = `A${name.split(' ')[1]![0]}`
+    await part(page, 'add').click()
+    await field(page, 'form-name').fill(name)
+    await field(page, 'form-url').fill(endpoint)
+    await part(page, 'form-picture-file').setInputFiles({ name: 'face.png', mimeType: 'image/png', buffer: await png(page) })
+    // drawn in the page: the square from its middle, 256 pixels across, as WebP
+    const preview = part(page, 'form-picture').getByRole('img', { name })
+    await expect(preview).toHaveAttribute('src', /^data:image\/webp;base64,/)
+    expect(await preview.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([256, 256])
+    await part(page, 'form-save').click()
+    await expect(part(page, 'form')).toHaveCount(0)
+    const picture = await agentRow(page, name).getByRole('img', { name }).getAttribute('src')
+    expect(picture).toMatch(/^data:image\/webp;base64,/)
+
+    // in a chat: beside its name over the chat, and in the list of chats
+    await newChat(page, name)
+    await expect(part(page, 'avatar-thread').getByRole('img', { name })).toHaveAttribute('src', picture!)
+    // a chat's row is an option, whose content is its name: the picture is found by what it is
+    const chatAvatar = frame(page).getByTestId(/^agents-chat-/).filter({ hasText: name }).getByTestId(/^agents-avatar-chat-/)
+    await expect(chatAvatar.locator('img')).toHaveAttribute('src', picture!)
+
+    // change the agent: remove its picture, and its initials are shown everywhere it was
+    await agentRow(page, name).getByTestId(/^agents-edit-/).click()
+    await part(page, 'form-remove-picture').click()
+    await expect(part(page, 'form-picture').getByRole('img', { name })).toHaveAttribute('data-initials', initials)
+    await part(page, 'form-save').click()
+    await expect(part(page, 'form')).toHaveCount(0)
+    await expect(agentRow(page, name).getByRole('img', { name })).toHaveAttribute('data-initials', initials)
+    await expect(agentRow(page, name).locator('img')).toHaveCount(0)
+    await expect(chatAvatar.locator('[data-initials]')).toHaveAttribute('data-initials', initials)
+    await expect(chatAvatar.locator('img')).toHaveCount(0)
+    await expect(part(page, 'avatar-thread').getByRole('img', { name })).toHaveAttribute('data-initials', initials)
+
+    // the backend keeps only a PNG, JPEG or WebP picture: an SVG one is refused, in words
+    const refused = await part(page, 'app').evaluate(async (_, url) => {
+      try {
+        const rpc = (globalThis as unknown as { RPC: { send_request(app: string, method: string, params: unknown): Promise<unknown> } }).RPC
+        await rpc.send_request('agents', '_add_agent', { name: 'Drawn', url, avatar: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' })
+        return 'added'
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e)
+      }
+    }, endpoint)
+    expect(refused).toContain('The picture must be a PNG, JPEG or WebP image.')
+  })
+
+  test('AG13: tools the agent runs one after another are one quiet row, which opens to each tool, and each tool to what it did', async ({ page }) => {
+    await chatting(page)
+    await say(page, 'tidy up')
+    await expect(thread(page)).toContainText('b.md could not be removed.')
+    await turnOver(page)
+    const row = frame(page).getByTestId(/^agents-steps-\d+$/)
+    await expect(row).toHaveCount(1)
+    const summary = row.locator('summary').first()
+    await expect(summary).toHaveText(/Read 2 files · Thought once · Ran 1 command\s*· 1 failed/)
+    await expect(summary.locator('ui-icon').first()).toHaveAttribute('name', 'doc')
+    await expect(item(page, 'tool').first()).toBeHidden()
+    await summary.click()
+    await expect(item(page, 'tool')).toHaveCount(3)
+    await expect(item(page, 'tool').nth(2)).toContainText('rm b.md')
+    await expect(item(page, 'tool').nth(2)).toContainText('· failed')
+    await item(page, 'tool').nth(2).locator('summary').click()
+    await expect(item(page, 'tool').nth(2)).toContainText('"command": "rm b.md"')
+    await expect(item(page, 'tool').nth(2)).toContainText('"exit": 1')
   })
 })

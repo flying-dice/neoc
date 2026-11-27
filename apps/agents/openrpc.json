@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Agents",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "methods": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "name": "_add_agent",
-      "summary": "Add an agent. Its token, when it has one, is kept in this machine's keychain.",
+      "summary": "Add an agent. Its token, when it has one, is kept in this machine's keychain; its picture, when it has one, in the app's database.",
       "params": [
         {
           "name": "name",
@@ -56,6 +56,14 @@
             "type": "string",
             "maxLength": 4000
           }
+        },
+        {
+          "name": "avatar",
+          "description": "Its picture: a `data:image/png;base64,`, `data:image/jpeg;base64,` or `data:image/webp;base64,` URL (no SVG), as the page makes it from a chosen file. Blank or absent: none, and the page shows its initials.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
         }
       ],
       "result": {
@@ -70,13 +78,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "The name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, or the keychain did not take the token."
+          "message": "The name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, the picture is not a PNG, JPEG or WebP data: URL or is too big, or the keychain did not take the token."
         }
       ]
     },
     {
       "name": "_update_agent",
-      "summary": "Change an agent's name, address, token or folder. A chat's next turn connects to it as it is now.",
+      "summary": "Change an agent's name, address, token, folder or picture. A chat's next turn connects to it as it is now.",
       "params": [
         {
           "name": "agent",
@@ -127,6 +135,21 @@
             "type": "string",
             "maxLength": 4000
           }
+        },
+        {
+          "name": "avatar",
+          "description": "A new picture, as `_add_agent` takes it. Absent: the picture stays as it is.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        {
+          "name": "remove_avatar",
+          "description": "Remove the picture the agent has.",
+          "schema": {
+            "type": "boolean"
+          }
         }
       ],
       "result": {
@@ -141,7 +164,7 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such agent, the name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, or the keychain refused."
+          "message": "There is no such agent, the name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, the picture is not a PNG, JPEG or WebP data: URL or is too big, or the keychain refused."
         }
       ]
     },
@@ -460,6 +483,10 @@
           "folder": {
             "type": "string",
             "description": "The folder its sessions work in, on its machine."
+          },
+          "avatar": {
+            "type": "string",
+            "description": "Its picture, a PNG, JPEG or WebP `data:` URL; empty when it has none."
           }
         },
         "required": [
@@ -467,7 +494,8 @@
           "name",
           "url",
           "token",
-          "folder"
+          "folder",
+          "avatar"
         ]
       },
       "Chat": {
@@ -484,6 +512,10 @@
             "type": "string",
             "description": "The name of the agent it is with."
           },
+          "agent_id": {
+            "type": "string",
+            "description": "The id of the agent it is with (one of `agents`, unless that agent was removed)."
+          },
           "updated": {
             "type": "string",
             "description": "When it was last used, ISO 8601 in UTC."
@@ -493,6 +525,7 @@
           "id",
           "title",
           "agent",
+          "agent_id",
           "updated"
         ]
       },

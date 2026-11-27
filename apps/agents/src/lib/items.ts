@@ -117,3 +117,119 @@ export function permissionOf(item: Pick<Item, 'data'>): Permission {
   const chosen = options.find((o) => o.option_id === data.chosen)
   return { kind: text(data.kind), options, ...(chosen ? { chosen } : {}) }
 }
+
+/** The kit's icon for what a tool call does (ACP's tool kinds); a tool of no kind it names has the generic one. */
+export function iconOf(kind: string | undefined): string {
+  switch (kind) {
+    case 'execute':
+      return 'terminal'
+    case 'search':
+    case 'fetch':
+      return 'magnifyingglass'
+    case 'edit':
+      return 'square.and.pencil'
+    case 'read':
+      return 'doc'
+    case 'delete':
+      return 'trash'
+    case 'move':
+      return 'folder'
+    case 'think':
+      return 'sparkles'
+    default:
+      return 'gear'
+  }
+}
+
+/**
+ * What the line over the composer says while the agent's turn runs: that it is at work, and the tool it is running
+ * (or how many). Nothing when no turn runs, or while the turn waits for the person to answer a permission (the
+ * question is in the chat, and the composer says so).
+ */
+export function statusOf(conversation: Pick<VosApp.Agents.Conversation, 'busy' | 'waiting' | 'items'>): string | null {
+  if (!conversation.busy || conversation.waiting) return null
+  // a turn that ended left nothing undone: a tool call not done is one of this turn's, still running
+  const running = conversation.items.filter((item) => item.kind === 'tool' && !item.done)
+  if (running.length === 0) return 'Thinking…'
+  if (running.length === 1) return `Thinking… · ${running[0]!.name || 'A tool'}`
+  return `Thinking… · ${running.length} tools running`
+}
+
+/** A step of the agent's turn that is not its words: a tool call, or what it thought. */
+export const isStep = (item: Pick<Item, 'kind'>): boolean => item.kind === 'tool' || item.kind === 'reasoning'
+
+/** What the chat shows, in order: an item of its own, or a run of steps one after another as one row. */
+export type Entry = { item: Item; steps?: undefined } | { item?: undefined; steps: Item[] }
+
+/** The items as the chat shows them: each run of steps (two or more) is one row; what the agent says, a permission,
+ *  a plan, a note or the person's words ends a run. */
+export function entriesOf(items: readonly Item[]): Entry[] {
+  const entries: Entry[] = []
+  let run: Item[] = []
+  const end = (): void => {
+    if (run.length === 1) entries.push({ item: run[0]! })
+    else if (run.length > 1) entries.push({ steps: run })
+    run = []
+  }
+  for (const item of items) {
+    if (isStep(item)) run.push(item)
+    else {
+      end()
+      entries.push({ item })
+    }
+  }
+  end()
+  return entries
+}
+
+/** What a step did, as its row says it: the verb, and what it counts. */
+type Did = 'created' | 'edit' | 'delete' | 'read' | 'execute' | 'search' | 'fetch' | 'move' | 'think' | 'other'
+const DONE: Record<Did, (n: number) => string> = {
+  created: (n) => `Created ${n} ${n === 1 ? 'file' : 'files'}`,
+  edit: (n) => `Edited ${n} ${n === 1 ? 'file' : 'files'}`,
+  delete: (n) => `Deleted ${n} ${n === 1 ? 'file' : 'files'}`,
+  read: (n) => `Read ${n} ${n === 1 ? 'file' : 'files'}`,
+  execute: (n) => `Ran ${n} ${n === 1 ? 'command' : 'commands'}`,
+  search: (n) => `Searched ${n === 1 ? 'once' : `${n} times`}`,
+  fetch: (n) => `Fetched ${n} ${n === 1 ? 'page' : 'pages'}`,
+  move: (n) => `Moved ${n} ${n === 1 ? 'file' : 'files'}`,
+  think: (n) => `Thought ${n === 1 ? 'once' : `${n} times`}`,
+  other: (n) => `Used ${n} ${n === 1 ? 'tool' : 'tools'}`
+}
+
+function didOf(item: Item): Did {
+  if (item.kind === 'reasoning') return 'think'
+  const tool = toolOf(item)
+  // an edit that made a file the agent had not got is a file created
+  if (tool.kind === 'edit' && tool.content.some((p) => p.type === 'diff' && p.new_file)) return 'created'
+  return tool.kind !== undefined && tool.kind in DONE && tool.kind !== 'created' ? (tool.kind as Did) : 'other'
+}
+
+/** The title of a step: a tool call's own, or `Thought`. */
+export const titleOf = (item: Item): string => (item.kind === 'reasoning' ? 'Thought' : item.name || 'A tool')
+
+/** The icon of a step: its tool kind's, or the one for thinking. */
+export const stepIconOf = (item: Item): string => (item.kind === 'reasoning' ? iconOf('think') : iconOf(toolOf(item).kind))
+
+/**
+ * A run of steps as one row says it: one step by its title; more counted by what they did, in the order each first
+ * came (`Ran 3 commands · Read 2 files`). Its icon is the kind most of them are (the latest of those that tie), and
+ * `failed` counts the tool calls that failed.
+ */
+export function summaryOf(steps: readonly Item[]): { text: string; icon: string; failed: number } {
+  const failed = steps.filter((s) => s.kind === 'tool' && toolOf(s).status === 'failed').length
+  if (steps.length === 1) return { text: titleOf(steps[0]!), icon: stepIconOf(steps[0]!), failed }
+  const counts = new Map<Did, number>()
+  const latest = new Map<Did, number>()
+  steps.forEach((step, i) => {
+    const did = didOf(step)
+    counts.set(did, (counts.get(did) ?? 0) + 1)
+    latest.set(did, i)
+  })
+  const most = [...counts.keys()].reduce((a, b) => {
+    const [ca, cb] = [counts.get(a)!, counts.get(b)!]
+    return cb > ca || (cb === ca && latest.get(b)! > latest.get(a)!) ? b : a
+  })
+  const icon = most === 'created' ? iconOf('edit') : iconOf(most)
+  return { text: [...counts].map(([did, n]) => DONE[did](n)).join(' · '), icon, failed }
+}

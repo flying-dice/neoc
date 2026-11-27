@@ -4,7 +4,7 @@
   type Agent = VosApp.Agents.Agent
   type Chat = VosApp.Agents.Chat
   import ChatSidebar from './ChatSidebar.svelte'
-  import { SCRIPTED } from '../lib/fakeApi'
+  import { PICTURE, PICTURED, SCRIPTED } from '../lib/fakeApi'
 
   interface Args {
     agents: readonly Agent[]
@@ -19,7 +19,7 @@
   const onedit = fn<(agent: Agent | null) => void>()
   const onopen = fn<(chat: Chat) => void>()
 
-  const chat = (id: string, title: string): Chat => ({ id, title, agent: SCRIPTED.name, updated: '2026-06-09T08:41:00.000Z' })
+  const chat = (id: string, title: string, agent: Agent = SCRIPTED): Chat => ({ id, title, agent: agent.name, agent_id: agent.id, updated: '2026-06-09T08:41:00.000Z' })
   const CHATS = [chat('a', 'Plan the week'), chat('b', 'What is 12 times 7?'), chat('c', 'A title long enough that it has to be cut short in the list')]
 
   /** The agents and the chats. It keeps nothing: an agent tapped and a chat tapped go out. */
@@ -70,13 +70,20 @@
   }}
 />
 
+<!-- An agent with a picture shows it, in its row and in its chats'; one without shows its initials on a tint of its own. -->
 <Story
   name="Several agents"
-  args={{
-    agents: [SCRIPTED, { id: 'writer', name: 'Writer', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing' }],
-    chats: CHATS.slice(0, 1)
+  args={{ agents: [SCRIPTED, PICTURED], chats: [chat('w', 'Write a poem', PICTURED), CHATS[0]!] }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-avatar-agent-writer').querySelector('img')).toHaveAttribute('src', PICTURE)
+    await expect(canvas.getByTestId('agents-avatar-chat-w').querySelector('img')).toHaveAttribute('src', PICTURE)
+    await expect(canvas.getByTestId('agents-avatar-agent-scripted').querySelector('[role="img"]')).toHaveAttribute('data-initials', 'SA')
+    await expect(canvas.getByTestId('agents-avatar-chat-a').querySelector('[role="img"]')).toHaveAttribute('data-initials', 'SA')
   }}
 />
+
+<!-- A chat with an agent that was removed: its initials, from the name it had. -->
+<Story name="A removed agent's chat" args={{ chats: [chat('r', 'An old chat', { ...PICTURED, id: 'gone', name: 'Gone away' })] }} />
 
 <Story
   name="Tapping"

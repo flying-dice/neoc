@@ -1,15 +1,21 @@
-<!-- @organism ChatThread — one chat: its title, what was said and done in it (kept scrolled to the newest), and the composer under it -->
+<!-- @organism ChatThread — one chat: its title, what was said and done in it (kept scrolled to the newest, each run of the agent's output led by its avatar, each run of its steps one row), what the agent is at while its turn runs, and the composer under it -->
 <script lang="ts">
   type Conversation = VosApp.Agents.Conversation
   type Item = VosApp.Agents.Item
-  import type { PermissionOption } from '../lib/items'
-  import ActivityCard from '../molecules/ActivityCard.svelte'
+  import { entriesOf, statusOf, type Entry, type PermissionOption } from '../lib/items'
+  import Avatar from '../atoms/Avatar.svelte'
+  import StatusLine from '../atoms/StatusLine.svelte'
+  import ToolStep from '../atoms/ToolStep.svelte'
   import Composer from '../molecules/Composer.svelte'
   import MessageBubble from '../molecules/MessageBubble.svelte'
+  import PlanSteps from '../molecules/PlanSteps.svelte'
   import QuestionCard from '../molecules/QuestionCard.svelte'
+  import StepGroup from '../molecules/StepGroup.svelte'
 
   interface Props {
     conversation: Conversation
+    /** The picture of the agent the chat is with; empty when it has none, or was removed. */
+    avatar?: string
     /** What is typed so far. */
     draft: string
     /** Why the last call failed, shown over the composer. */
@@ -23,9 +29,21 @@
     onanswer: (item: Item, option: PermissionOption) => void
     onremove: () => void
     onback?: () => void
+    /** Open a web address the agent gave outside the app. */
+    onlink: (url: string) => void
   }
 
-  let { conversation, draft, failure = null, back = false, ondraft, onsend, onstop, onanswer, onremove, onback }: Props = $props()
+  let { conversation, avatar = '', draft, failure = null, back = false, ondraft, onsend, onstop, onanswer, onremove, onback, onlink }: Props = $props()
+
+  // what the agent says and does, as against what the person said and what the app notes about the chat
+  const AGENT: readonly string[] = ['assistant', 'reasoning', 'tool', 'plan', 'permission']
+  const agents = (entry: Entry | undefined): boolean => entry !== undefined && (entry.steps !== undefined || AGENT.includes(entry.item.kind))
+  // a run of steps between the agent's words is one row
+  const entries = $derived(entriesOf(conversation.items))
+  // the agent's avatar leads each run of what it said and did
+  const leads = (i: number): boolean => agents(entries[i]) && !agents(entries[i - 1])
+  const idOf = (entry: Entry): number => entry.item?.id ?? entry.steps![0]!.id
+  const status = $derived(statusOf(conversation))
 
   let thread = $state<HTMLElement>()
   // everything the agent says or does moves the newest line: keep it in view
@@ -51,7 +69,10 @@
       </ui-button>
     {/if}
     <h1 data-testid="agents-title">{conversation.chat.title}</h1>
-    <p class="with">{conversation.chat.agent}</p>
+    <p class="with">
+      <span data-testid="agents-avatar-thread"><Avatar id={conversation.chat.agent_id} name={conversation.chat.agent} picture={avatar} size={24} /></span>
+      {conversation.chat.agent}
+    </p>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button variant="plain" size="small" square destructive hit label="Delete this chat" onclick={onremove} data-testid="agents-remove-chat">
       <ui-icon slot="icon" name="trash"></ui-icon>
@@ -60,23 +81,36 @@
   <!-- a keyboard reaches the log to scroll it -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div class="thread" bind:this={thread} role="log" tabindex="0" aria-label="Conversation" data-testid="agents-thread">
-    {#each conversation.items as item (item.id)}
-      {#if item.kind === 'user' || item.kind === 'assistant'}
-        <MessageBubble {item} />
-      {:else if item.kind === 'permission'}
-        <QuestionCard {item} onanswer={(option) => onanswer(item, option)} />
-      {:else if item.kind === 'error'}
-        <ui-banner tone="error" data-testid="agents-item-error-{item.id}">{item.text}</ui-banner>
-      {:else if item.kind === 'note'}
-        <ui-banner tone="info" data-testid="agents-item-note-{item.id}">{item.text}</ui-banner>
+    {#each entries as entry, i (entry.steps ? `steps-${idOf(entry)}` : idOf(entry))}
+      {#if leads(i)}
+        <div class="who" data-testid="agents-run-{idOf(entry)}">
+          <Avatar id={conversation.chat.agent_id} name={conversation.chat.agent} picture={avatar} size={22} />
+        </div>
+      {/if}
+      {#if entry.steps}
+        <StepGroup steps={entry.steps} {onlink} />
       {:else}
-        <ActivityCard {item} />
+        {@const item = entry.item}
+        {#if item.kind === 'user' || item.kind === 'assistant'}
+          <MessageBubble {item} {onlink} />
+        {:else if item.kind === 'plan'}
+          <PlanSteps {item} />
+        {:else if item.kind === 'permission'}
+          <QuestionCard {item} onanswer={(option) => onanswer(item, option)} />
+        {:else if item.kind === 'error'}
+          <ui-banner tone="error" data-testid="agents-item-error-{item.id}">{item.text}</ui-banner>
+        {:else if item.kind === 'note'}
+          <ui-banner tone="info" data-testid="agents-item-note-{item.id}">{item.text}</ui-banner>
+        {:else}
+          <ToolStep {item} {onlink} />
+        {/if}
       {/if}
     {:else}
       <ui-empty-state icon="sparkles" heading="Chat with {conversation.chat.agent}" message="Write a message below."
       ></ui-empty-state>
     {/each}
   </div>
+  <StatusLine text={status} />
   {#if failure}
     <ui-banner tone="error" data-testid="agents-failure">{failure}</ui-banner>
   {/if}
@@ -109,6 +143,9 @@
     text-overflow: ellipsis;
   }
   .with {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin: 0 0 0 auto;
     font: var(--type-footnote);
     color: var(--label-secondary);
@@ -120,7 +157,16 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     padding: 16px;
+  }
+  /* the agent's avatar sits close over what it leads */
+  .who {
+    display: flex;
+    margin: 4px 0 -6px;
+  }
+  /* steps one after another (tools, thoughts, a plan) stack as one list */
+  .thread > :global(.step + .step) {
+    margin-top: -10px;
   }
 </style>

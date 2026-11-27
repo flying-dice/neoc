@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import AgentForm from './AgentForm.svelte'
   import type { AgentForm as Form } from '../lib/agents.svelte'
-  import { SCRIPTED } from '../lib/fakeApi'
+  import { PICTURE, PICTURED, SCRIPTED } from '../lib/fakeApi'
 
   interface Args {
     form: Form
@@ -19,8 +19,9 @@
   const oncancel = fn<() => void>()
   const onremove = fn<() => void>()
 
-  const EMPTY: Form = { agent: null, name: '', url: '', folder: '/', token: '', forget: false }
-  const KNOWN: Form = { agent: { ...SCRIPTED, token: true }, name: SCRIPTED.name, url: SCRIPTED.url, folder: SCRIPTED.folder, token: '', forget: false }
+  const EMPTY: Form = { agent: null, name: '', url: '', folder: '/', token: '', forget: false, avatar: '' }
+  const KNOWN: Form = { agent: { ...SCRIPTED, token: true }, name: SCRIPTED.name, url: SCRIPTED.url, folder: SCRIPTED.folder, token: '', forget: false, avatar: '' }
+  const formOf = (agent: typeof PICTURED): Form => ({ agent, name: agent.name, url: agent.url, folder: agent.folder, token: '', forget: false, avatar: agent.avatar })
 
   /** The form an agent is added or changed in. It keeps nothing: what is typed goes into the form it was given. */
   const { Story } = defineMeta({
@@ -49,6 +50,22 @@
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('agents-form-save')).toHaveProperty('disabled', true)
     await expect(canvas.queryByTestId('agents-form-remove')).toBeNull()
+    // no picture yet: the way to choose one, and nothing to remove
+    await expect(canvas.getByTestId('agents-form-choose-picture')).toHaveTextContent('Choose…')
+    await expect(canvas.queryByTestId('agents-form-remove-picture')).toBeNull()
+  }}
+/>
+
+<!-- An agent with a picture: it is shown, with the ways to change it and to remove it; removed, the initials are. -->
+<Story
+  name="An agent with a picture"
+  args={{ form: formOf(PICTURED), savable: true }}
+  play={async ({ canvas, userEvent }) => {
+    await expect(canvas.getByRole('img', { name: PICTURED.name })).toHaveAttribute('src', PICTURE)
+    await expect(canvas.getByTestId('agents-form-choose-picture')).toHaveTextContent('Change…')
+    await userEvent.click(canvas.getByTestId('agents-form-remove-picture'))
+    await expect(canvas.getByRole('img', { name: PICTURED.name })).toHaveAttribute('data-initials', 'W')
+    await expect(canvas.queryByTestId('agents-form-remove-picture')).toBeNull()
   }}
 />
 

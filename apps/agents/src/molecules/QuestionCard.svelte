@@ -1,7 +1,7 @@
 <!-- @molecule QuestionCard — a permission an agent asks for during its turn: what it wants to do, and the answers it offers, one of which the person picks -->
 <script lang="ts">
   type Item = VosApp.Agents.Item
-  import { permissionOf, type PermissionOption } from '../lib/items'
+  import { iconOf, permissionOf, type PermissionOption } from '../lib/items'
 
   interface Props {
     /** A `permission` item. */
@@ -26,8 +26,8 @@
 <div class="question" role="group" aria-label="The agent asks: {item.text}" data-testid="agents-question-{item.id}">
   <p class="lead">The agent asks before it goes on</p>
   <p class="asks">
+    <ui-icon name={iconOf(permission.kind)} size={17}></ui-icon>
     <span class="what">{item.text}</span>
-    {#if permission.kind}<span class="kind">{permission.kind}</span>{/if}
   </p>
   {#if !item.done}
     <div class="choices">
@@ -57,31 +57,30 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--tint);
+    padding: 12px 14px;
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--separator);
     background: var(--bg-secondary);
   }
   .asks {
     margin: 0;
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .asks ui-icon {
+    color: var(--label-secondary);
   }
   .lead {
     margin: 0;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }
-  .kind {
-    font: var(--type-footnote);
-    padding: 0 6px;
-    border-radius: var(--radius-sm, 4px);
-    background: var(--fill-tertiary);
-  }
   .what {
+    min-width: 0;
+    font: var(--type-subheadline);
     font-weight: 600;
   }
   .choices {

@@ -79,6 +79,10 @@ db:migrate {
     alter table threads drop column state;
     alter table threads add column session text not null default '';
   ]],
+  -- an agent's picture: a `data:` URL, or empty for none
+  [5] = [[
+    alter table agents add column avatar text not null default '';
+  ]],
 }
 
 -- the tokens of the agents migration 4 removed
@@ -109,13 +113,15 @@ local function titleOf(text: string): string
 end
 
 local function chatOf(row: { [string]: any }): agents_Chat
-  return { id = row.id, title = row.title, agent = row.agent_name, updated = row.updated_at }
+  return { id = row.id, title = row.title, agent = row.agent_name, agent_id = row.agent_id, updated = row.updated_at }
 end
 
 local function chats(): { agents_Chat }
   local list: { agents_Chat } = {}
   for _, row in
-    db:all("select id, title, agent_name, updated_at from threads order by updated_at desc, id desc limit 200")
+    db:all(
+      "select id, title, agent_id, agent_name, updated_at from threads order by updated_at desc, id desc limit 200"
+    )
   do
     table.insert(list, chatOf(row))
   end
@@ -131,7 +137,7 @@ local function asking(chat: string): boolean
 end
 
 local function conversation(id: string): agents_Conversation?
-  local row = db:one("select id, title, agent_name, updated_at from threads where id = :id", { id = id })
+  local row = db:one("select id, title, agent_id, agent_name, updated_at from threads where id = :id", { id = id })
   if not row then
     return nil
   end
@@ -228,7 +234,7 @@ RPC.on_request("_agents", function(): agents_AgentsResult
 end)
 
 RPC.on_request("_add_agent", function(params: agents_AddAgentParams, ctx: vos_app_Context): agents_AddAgentResult
-  local problem = roster.add(params.name, params.url, params.token, params.folder)
+  local problem = roster.add(params.name, params.url, params.token, params.folder, params.avatar)
   if problem then
     return ctx:fail(problem)
   end
@@ -242,7 +248,16 @@ RPC.on_request(
     if not agent then
       return ctx:fail("There is no such agent.")
     end
-    local problem = roster.update(agent, params.name, params.url, params.token, params.forget == true, params.folder)
+    local problem = roster.update(
+      agent,
+      params.name,
+      params.url,
+      params.token,
+      params.forget == true,
+      params.folder,
+      params.avatar,
+      params.remove_avatar == true
+    )
     if problem then
       return ctx:fail(problem)
     end
