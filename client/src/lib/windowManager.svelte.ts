@@ -26,8 +26,9 @@ import { randomId } from './randomId'
  * Compact screens (a phone): floating windows, Split View and Slide Over are what iPadOS does on a regular-size screen;
  * on a compact one iOS shows one app at a time, full screen. A workspace narrower or shorter than the size-class
  * breakpoint (`COMPACT_BELOW`) is `compact`, and there every window is
- * presented full screen above the Dock (`layoutOf`, `frameOf`), whatever layout it has; the Dock stays up (a touch
- * screen has no pointer to bring it back) and the recent-apps strip steps back to the screen's edge (`stripObscured`).
+ * presented full screen (`layoutOf`, `frameOf`), whatever layout it has, with the Dock put away: as on iOS, an app has
+ * the whole screen, and the Dock is on the home screen, which the window's ··· menu goes back to (Minimise or Close)
+ * (`dockHidden`). The recent-apps strip steps back to the screen's edge (`stripObscured`).
  * An app's minimum size is a regular-size window's: on a compact screen the window is the screen's size. Nothing a
  * window remembers is used or changed while the screen is compact: its layout, its floating frame, a split and its
  * divider wait, untouched, and come back when the screen has room again (`setLayout` and `setFrame` do nothing, and a
@@ -152,9 +153,13 @@ export class WindowManager {
     return this.onStage.some((w) => this.layoutOf(w) !== 'floating')
   }
 
-  /** The dock hides when immersive — except while a split waits for its second app, and on a compact screen. */
+  /**
+   * The dock hides when immersive, except while a split waits for its second app. On a compact screen it is only on the
+   * home screen: an app there has the whole screen.
+   */
   get dockHidden(): boolean {
-    return this.immersive && !this.activeStage?.awaitingSplit && !this.compact
+    if (this.compact) return !this.atHome
+    return this.immersive && !this.activeStage?.awaitingSplit
   }
 
   /** Strip auto-hides when immersive, on a compact screen (iOS has no Stage Manager), or a floating window overlaps it. */
@@ -213,12 +218,12 @@ export class WindowManager {
     }
   }
 
-  /** Full screen above the Dock, at the screen's size whatever the app's minimum (a hidden Slide Over stays off screen). */
+  /** The whole screen (the Dock is put away), whatever the app's minimum (a hidden Slide Over stays off screen). */
   #compactFrame(win: WindowState): Frame {
-    const { width: W } = this.bounds
+    const { width: W, height: H } = this.bounds
     const width = Math.max(0, W - INSET * 2)
     const x = win.layout === 'slideover' && this.slideOverHidden ? W + 20 : INSET
-    return { x, y: INSET, width, height: Math.max(0, this.#heightAboveDock) }
+    return { x, y: INSET, width, height: Math.max(0, H - INSET * 2) }
   }
 
   /** One side of a split at the divider's position. */

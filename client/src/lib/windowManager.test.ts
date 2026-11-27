@@ -537,20 +537,21 @@ describe('a compact screen (a phone): one app at a time, full screen', () => {
     expect(wm.compact).toBe(compact)
     expect(wm.layoutOf(w)).toBe(compact ? 'fullscreen' : 'floating')
     const f = wm.frameOf(w)
-    if (compact) expect(f).toEqual({ x: 8, y: 8, width: width - 16, height: height - 8 - 104 })
+    if (compact) expect(f).toEqual({ x: 8, y: 8, width: width - 16, height: height - 16 })
     else expect(f).toEqual(w.frame) // floating, where it was placed
     expect(f.x).toBeGreaterThanOrEqual(8)
     expect(f.x + f.width).toBeLessThanOrEqual(width - 8) // never past the right edge
-    expect(wm.dockHidden).toBe(false) // the Dock is up: on a compact screen to open the next app, on a regular one beside a window
+    // a compact screen gives the app the whole screen, the Dock is on the home screen; a regular one keeps it beside a window
+    expect(wm.dockHidden).toBe(compact)
   })
 
-  test('the window is the screen’s width even for an app whose minimum is wider, and stops above the Dock', () => {
+  test('the window is the screen’s size even for an app whose minimum is bigger', () => {
     setInstalledApps([summary('wide', { window: { w: 960, h: 640, minW: 480, minH: 420 } })])
     wm.bounds = { width: 844, height: 356 }
     wm.open('wide')
-    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 828, height: 244 })
+    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 828, height: 340 })
     wm.bounds = { width: 390, height: 810 }
-    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 374, height: 698 })
+    expect(wm.frameOf(win('wide'))).toEqual({ x: 8, y: 8, width: 374, height: 794 })
   })
 
   test('open one app, go back home, open another: each in turn has the screen to itself', () => {
@@ -558,8 +559,10 @@ describe('a compact screen (a phone): one app at a time, full screen', () => {
     wm.open('calculator')
     expect(wm.onStage.map((w) => w.appId)).toEqual(['calculator'])
     expect(wm.stripObscured).toBe(true) // the recent-apps strip steps back while an app has the screen
+    expect(wm.dockHidden).toBe(true) // and the Dock is put away
     wm.minimize(win('calculator').id) // the ··· menu's Minimise: back to the home screen
     expect(wm.onStage).toEqual([])
+    expect(wm.dockHidden).toBe(false) // where the Dock is
     expect(wm.stripObscured).toBe(true) // the home screen too: iOS has no Stage Manager strip, the Dock is the way back
     expect(wm.recentStages.map((s) => s.apps.map((a) => a.id))).toEqual([['calculator']])
     wm.open('notes')
@@ -645,8 +648,10 @@ describe('a compact screen (a phone): one app at a time, full screen', () => {
     wm.minimize(win('notes').id) // hides it
     wm.bounds = { width: 390, height: 810 }
     expect(wm.frameOf(win('notes')).x).toBeGreaterThanOrEqual(390)
+    expect(wm.dockHidden).toBe(false) // nothing has the screen: the home screen and its Dock
     wm.open('notes')
-    expect(wm.frameOf(win('notes'))).toEqual({ x: 8, y: 8, width: 374, height: 698 })
+    expect(wm.frameOf(win('notes'))).toEqual({ x: 8, y: 8, width: 374, height: 794 })
+    expect(wm.dockHidden).toBe(true)
   })
 })
 

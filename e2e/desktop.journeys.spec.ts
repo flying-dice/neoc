@@ -45,16 +45,18 @@ async function clickStripItem(page: Page, testid: string): Promise<void> {
 }
 
 /**
- * A window wholly on a screen `width` wide, stopping above the Dock, on a page that does not scroll sideways: nothing of
- * it is cut off.
+ * A window wholly on a screen `width` wide, stopping above the Dock when the Dock is up, on a page that does not scroll
+ * sideways: nothing of it is cut off.
  */
 async function expectWithin(page: Page, appId: string, width: number): Promise<void> {
   await settle(page)
   const box = (await windowOf(page, appId).boundingBox())!
   const dock = (await page.getByTestId('dock').boundingBox())!
+  const height = page.viewportSize()!.height
   expect(box.x, 'not off the left edge').toBeGreaterThanOrEqual(0)
   expect(box.x + box.width, 'not off the right edge').toBeLessThanOrEqual(width)
-  expect(box.y + box.height, 'clear of the Dock').toBeLessThanOrEqual(dock.y)
+  expect(box.y + box.height, 'not off the bottom edge').toBeLessThanOrEqual(height)
+  if (dock.y < height) expect(box.y + box.height, 'clear of the Dock').toBeLessThanOrEqual(dock.y)
   const scrollWidth = await page.evaluate(() => document.scrollingElement?.scrollWidth ?? 0)
   expect(scrollWidth, 'the page does not scroll sideways').toBeLessThanOrEqual(width)
 }
@@ -264,22 +266,28 @@ test.describe('Desktop journeys', () => {
     await expect(windowOf(page, 'agents')).toHaveClass(/\bslideover\b/) // remembered, not dropped for the phone
   })
 
-  test('D13: on a phone, open an app from the Dock, use it, go back home and open another', async ({ page }) => {
+  test('D13: on a phone, an app has the whole screen; go back home, open one from the Dock, use it, open another', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await openDesktop(page)
-    // the home screen: Discover, the first window, has the screen to itself above the Dock
+    // Discover, the first window, has the whole screen: the Dock is put away
     await expect(windowOf(page, 'discover')).toHaveClass(/\bfullscreen\b/)
     await expectWithin(page, 'discover', 390)
+    await expect(page.getByTestId('dock')).not.toBeInViewport()
+    const box = (await windowOf(page, 'discover').boundingBox())!
+    expect(box.y + box.height, 'down to the bottom of the screen').toBeGreaterThan(844 - 20)
+    // back to the home screen with the window's ··· menu, where the Dock is
+    await chooseLayout(page, 'discover', 'minimize')
+    await expect(page.getByTestId('dock')).toBeInViewport()
     // an app from the Dock takes the screen, and can be used
     await page.getByTestId('dock-files').click()
     await expect(windowOf(page, 'files')).toHaveClass(/\bfullscreen\b/)
     await expectWithin(page, 'files', 390)
+    await expect(page.getByTestId('dock')).not.toBeInViewport()
     await page.getByTestId('files-search').fill('report')
     await expect(page.getByTestId('files-search')).toHaveValue('report')
-    // back to the home screen with the window's ··· menu
     await chooseLayout(page, 'files', 'minimize')
     await expect(windowOf(page, 'files')).toHaveCount(0)
-    await expect(page.getByTestId('dock')).toBeVisible()
+    await expect(page.getByTestId('dock')).toBeInViewport()
     // and another app
     await page.getByTestId('dock-settings').click()
     await expect(windowOf(page, 'settings')).toHaveClass(/\bfullscreen\b/)

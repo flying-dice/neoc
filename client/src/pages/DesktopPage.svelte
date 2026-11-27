@@ -1,8 +1,8 @@
 <!--
   @page DesktopPage — the vos desktop, iPadOS Stage Manager style: status
   bar, recent-apps strip, the current stage (floating / full screen / split
-  windows), Slide Over, widgets and the dock. On a compact screen (a phone) every window is shown full screen above
-  the Dock, one app at a time (`WindowManager.compact`). Window contents are supplied by
+  windows), Slide Over, widgets and the dock. On a compact screen (a phone) every window is shown full screen, one app
+  at a time, with the Dock put away until the home screen (`WindowManager.compact`). Window contents are supplied by
   the composition root through the `windowContent` snippet.
 
   The Home Screen: while no window is on stage (`WindowManager.atHome`) the wallpaper shows every app that can be
