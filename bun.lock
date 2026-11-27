@@ -83,7 +83,7 @@
     },
     "apps/containers": {
       "name": "@vos-apps/containers",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -96,6 +96,19 @@
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/copilot": {
+      "name": "@vos-apps/copilot",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/vite-plugin": "workspace:*",
         "svelte": "^5.57.2",
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
@@ -928,6 +941,8 @@
     "@vos-apps/calculator": ["@vos-apps/calculator@workspace:apps/calculator"],
 
     "@vos-apps/containers": ["@vos-apps/containers@workspace:apps/containers"],
+
+    "@vos-apps/copilot": ["@vos-apps/copilot@workspace:apps/copilot"],
 
     "@vos-apps/dns": ["@vos-apps/dns@workspace:apps/dns"],
 
