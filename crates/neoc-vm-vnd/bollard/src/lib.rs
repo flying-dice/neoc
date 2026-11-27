@@ -521,6 +521,17 @@ pub mod bollard {
             Ok(())
         }
 
+        /// Give a container a new name. A name another container has is `conflict`.
+        pub async fn rename_container(
+            &self,
+            name: ContainerName,
+            new_name: ContainerName,
+        ) -> Result<(), DockerError> {
+            let options = query::RenameContainerOptions { name: new_name.0 };
+            self.api().await?.rename_container(&name.0, options).await?;
+            Ok(())
+        }
+
         /// Send a signal to a running container (`SIGKILL` unless `signal`; `SIGHUP` to make a server reload). A
         /// container that is not running is `conflict`.
         pub async fn kill_container(&self, name: ContainerName, opts: Kill) -> Result<(), DockerError> {

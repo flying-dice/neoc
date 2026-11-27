@@ -518,13 +518,4 @@ function spec.of(found: vnd_bollard_ContainerInspectResponse): Spec
   }
 end
 
--- Docker's create body that makes a container again as it was, from its inspection: its own settings, as Docker
--- gave them, for when one that was to replace it could not be made.
-function spec.restored(found: vnd_bollard_ContainerInspectResponse): vnd_bollard_ContainerCreateBody
-  local config: vnd_bollard_ContainerConfig = found.Config or {}
-  local body = table.clone(config) :: vnd_bollard_ContainerCreateBody
-  body.HostConfig = found.HostConfig
-  return body
-end
-
 return spec

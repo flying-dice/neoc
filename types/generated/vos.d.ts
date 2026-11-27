@@ -5583,6 +5583,12 @@ interface vnd_bollard_Client {
    */
   restart_container(name: vnd_bollard_ContainerName, opts?: vnd_bollard_Stop): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
   /**
+   * Give a container a new name. A name another container has is `conflict`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  rename_container(name: vnd_bollard_ContainerName, new_name: vnd_bollard_ContainerName): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_bollard_DockerError]>
+  /**
    * Send a signal to a running container (`SIGKILL` unless `signal`; `SIGHUP` to make a server reload). A
    * container that is not running is `conflict`.
    *

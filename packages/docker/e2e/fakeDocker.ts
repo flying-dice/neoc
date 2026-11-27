@@ -553,6 +553,19 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       tell('start', found)
       return void res.writeHead(204).end()
     }
+    if (method === 'POST' && verb === 'rename') {
+      const asked = (url.searchParams.get('name') ?? '').replace(/^\//, '')
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(asked)) {
+        return json(res, 400, { message: `Invalid container name (${asked}), only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed` })
+      }
+      const taken = find(asked)
+      if (taken && taken !== found) {
+        return json(res, 409, { message: `Conflict. The container name "/${asked}" is already in use by container "${taken.id}". You have to remove (or rename) that container to be able to reuse that name.` })
+      }
+      found.name = asked
+      tell('rename', found)
+      return void res.writeHead(204).end()
+    }
     if (method === 'POST' && verb === 'stop') {
       found.running = false
       found.exited = true

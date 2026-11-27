@@ -4675,6 +4675,10 @@ declare extern type vnd_bollard_Client with
 	---
 	--- Yields the calling coroutine while it waits.
 	restart_container: (self: vnd_bollard_Client, name: vnd_bollard_ContainerName, opts: vnd_bollard_Stop?) -> (boolean?, vnd_bollard_DockerError?)
+	--- Give a container a new name. A name another container has is `conflict`.
+	---
+	--- Yields the calling coroutine while it waits.
+	rename_container: (self: vnd_bollard_Client, name: vnd_bollard_ContainerName, new_name: vnd_bollard_ContainerName) -> (boolean?, vnd_bollard_DockerError?)
 	--- Send a signal to a running container (`SIGKILL` unless `signal`; `SIGHUP` to make a server reload). A
 	--- container that is not running is `conflict`.
 	---

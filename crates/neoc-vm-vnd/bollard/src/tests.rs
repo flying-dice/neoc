@@ -125,9 +125,16 @@ impl Daemon {
             }
             ("POST", "/containers/create") => answer(201, &json!({ "Id": "ccc333", "Warnings": [] })),
             ("POST", "/containers/web/start") => full(304, ""),
-            ("POST", "/containers/web/stop" | "/containers/web/restart" | "/containers/web/kill") => {
-                full(204, "")
+            ("POST", "/containers/web/rename") if query.contains("name=taken") => {
+                refusal(409, "Conflict. The container name \"/taken\" is already in use")
             }
+            (
+                "POST",
+                "/containers/web/stop"
+                | "/containers/web/restart"
+                | "/containers/web/kill"
+                | "/containers/web/rename",
+            ) => full(204, ""),
             ("DELETE", "/containers/web") if query.contains("force=true") => full(204, ""),
             ("DELETE", "/containers/web") => {
                 refusal(409, "cannot remove container \"/web\": container is running")
@@ -369,6 +376,7 @@ async fn the_lifecycle_calls_send_their_options() {
         assert(docker:stop_container("web", { timeout = 5 }))
         assert(docker:restart_container("web", { signal = "SIGINT" }))
         assert(docker:kill_container("web", { signal = "SIGHUP" }))
+        assert(docker:rename_container("web", "web-old"))
         assert(docker:remove_container("web", { force = true, volumes = true }))
         assert(docker:remove_network("backend"))
         assert(assert(docker:list_images())[1].RepoTags[1] == "nginx:1.27")
@@ -380,6 +388,7 @@ async fn the_lifecycle_calls_send_their_options() {
     assert!(daemon.request_to("/containers/web/stop").target.contains("t=5"));
     assert!(daemon.request_to("/containers/web/restart").target.contains("signal=SIGINT"));
     assert!(daemon.request_to("/containers/web/kill").target.contains("signal=SIGHUP"));
+    assert!(daemon.request_to("/containers/web/rename").target.contains("name=web-old"));
     let removed = daemon.request_to("/containers/web");
     assert_eq!(removed.method, "DELETE");
     assert!(removed.target.contains("force=true") && removed.target.contains("v=true"));
@@ -478,6 +487,8 @@ async fn dockers_refusals_keep_its_message_under_a_stable_kind() {
         local _, not_found = docker:start_container("ghost")
         local _, conflict = docker:remove_container("web")
         local _, in_use = docker:remove_volume("data")
+        local _, taken = docker:rename_container("web", "taken")
+        assert(taken.kind == "conflict", tostring(taken))
         local _, other = docker:pause_container("web")
         assert(other.kind == "api" and other.status == 500, tostring(other))
         -- the message is Docker's sentence, and so is the reason
@@ -877,7 +888,7 @@ async fn no_call_panics_on_hostile_input() {
             local methods = {
                 "ping", "version", "info", "list_containers", "inspect_container", "create_container",
                 "start_container", "stop_container", "restart_container", "kill_container", "pause_container",
-                "unpause_container", "remove_container", "logs", "stats", "exec", "list_images", "pull_image",
+                "unpause_container", "rename_container", "remove_container", "logs", "stats", "exec", "list_images", "pull_image",
                 "remove_image", "list_volumes", "create_volume", "remove_volume", "list_networks",
                 "create_network", "remove_network", "events",
             }

@@ -303,6 +303,19 @@ test.describe('Containers journeys', () => {
     await expect(row(page, 'pihole', 'ports')).toHaveText('8054:80')
   })
 
+  test('CT11b: an edit whose new container cannot start leaves the old one as it was, running under its own name', async ({ page }) => {
+    await openContainers(page)
+    await row(page, 'pihole', 'open').click()
+    await part(page, 'inspector-edit').click()
+    // the machine's port 8080 is blog-web-1's: the new container is made, but cannot start
+    await field(page, 'form-port-0-host-port').fill('8080')
+    await part(page, 'form-save').click()
+    await expect(part(page, 'form-failure')).toContainText('port is already allocated')
+    // four as before: the new one went, and the old one has its name back (nothing is left aside)
+    expect(docker.count()).toBe(4)
+    expect(docker.container('pihole')).toMatchObject({ ports: { '80/tcp': '8053' }, running: true })
+  })
+
   test('CT12: a container that cannot be made says why, and leaves nothing behind', async ({ page }) => {
     await openContainers(page)
     await part(page, 'new').click()

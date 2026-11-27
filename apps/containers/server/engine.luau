@@ -362,32 +362,39 @@ function engine.recreate(container: string, asked: spec.Spec, progress: Progress
   local name = string.gsub(old.Name or "", "^/", "")
   local wanted = spec.trim(asked.name)
 
+  -- the old one steps aside, stopped and under another name, until the new one runs: if the new one cannot be made, the
+  -- old one gets its name back and runs again as it was, everything in it kept
   if ran then
     local _, stop_err = api:stop_container(id)
     if stop_err then
       return nil, sentence(stop_err)
     end
   end
-  local _, remove_err = api:remove_container(id, { force = true })
-  if remove_err then
+  local aside = `{name}-old-{string.sub(id, 1, 12)}`
+  local _, rename_err = api:rename_container(id, aside)
+  if rename_err then
     if ran then
       api:start_container(id)
     end
-    return nil, sentence(remove_err)
+    return nil, sentence(rename_err)
   end
 
   local made, failure = make(api, asked, if wanted == "" then name else wanted)
-  if made then
-    return made, nil
+  if not made then
+    local _, back_err = api:rename_container(id, name)
+    if back_err then
+      return nil,
+        `{failure} The old container is stopped as {aside}: it could not have its name back ({sentence(back_err)}).`
+    end
+    if ran then
+      api:start_container(id)
+    end
+    return nil, failure
   end
-  local back, back_err = api:create_container(spec.restored(old), { name = if name == "" then nil else name })
-  if not back then
-    return nil, `{failure} The old container could not be made again either: {sentence(back_err)}`
-  end
-  if ran then
-    api:start_container(back.Id)
-  end
-  return nil, failure
+  -- its named volumes stay; what was only in the old container goes with it. Should Docker refuse, the new one runs all
+  -- the same, and the old one is left stopped as `aside`, in the list, for the person to remove
+  api:remove_container(id, { force = true })
+  return made, nil
 end
 
 -- Remove a container: one that runs only when `force`, which kills it first. Its anonymous volumes go with it when
