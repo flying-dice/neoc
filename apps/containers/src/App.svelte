@@ -11,6 +11,10 @@
     stop: (params) => RPC.send_request('containers', '_stop', params),
     restart: (params) => RPC.send_request('containers', '_restart', params),
     remove: (params) => RPC.send_request('containers', '_remove', params),
+    create: (params) => RPC.send_request('containers', '_create', params),
+    recreate: (params) => RPC.send_request('containers', '_recreate', params),
+    networks: () => RPC.send_request('containers', '_networks'),
+    volumes: () => RPC.send_request('containers', '_volumes'),
     startStack: (params) => RPC.send_request('containers', '_stack_start', params),
     stopStack: (params) => RPC.send_request('containers', '_stack_stop', params),
     restartStack: (params) => RPC.send_request('containers', '_stack_restart', params),
@@ -19,7 +23,11 @@
     logs: (params) => RPC.send_request('containers', '_logs', params)
   }
   const events: ContainersEvents = {
-    on: (name, fn) => (name === 'changed' ? RPC.on_notification('containers', 'changed', fn) : vos.host.on(name, fn))
+    on(name: string, fn: (progress: VosApp.Containers.PullingParams) => void): () => void {
+      if (name === 'pulling') return RPC.on_notification('containers', '_pulling', fn)
+      const heard = (): void => (fn as () => void)()
+      return name === 'changed' ? RPC.on_notification('containers', 'changed', heard) : vos.host.on(name, heard)
+    }
   }
   const containers = new Containers(rpc, events)
 </script>

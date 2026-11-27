@@ -4,18 +4,27 @@
  * need no Docker and no image, nothing listens on a port of the machine they run on, no folder has to be there, and
  * what they find is the same on every machine.
  *
- * It starts with the containers and networks it is given (none, for an app that makes its own), keeps the images that
- * were pulled and the containers that were made exactly as they were asked for (which is what the journeys look at),
- * changes them as Docker would, and reports each change on `/events`, which is how an app's backend hears of it.
+ * It starts with the containers and networks it is given (none, for an app that makes its own) beside Docker's own
+ * networks (`bridge`, `host`, `none`), keeps the images that were pulled, the volumes that were made and the containers
+ * that were made exactly as they were asked for (which is what the journeys look at), changes them as Docker would
+ * (refusing what Docker refuses, in its words), and reports each change on `/events`, which is how an app's backend
+ * hears of it.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-/** A folder of the machine, as a container is given it. */
+/** What a container finds at a place of its own: a folder of the machine (`bind`), or a volume (`source` is its name). */
 export interface Mount {
+  type: 'bind' | 'volume'
   source: string
   target: string
   readOnly: boolean
+}
+
+/** Where a port of a container is published: the machine's address (empty for all) and port (empty for one Docker chooses). */
+export interface Binding {
+  HostIp: string
+  HostPort: string
 }
 
 /** A container the machine starts with. */
@@ -33,6 +42,8 @@ export interface Seed {
 /** A network the machine starts with. */
 export interface Network {
   name: string
+  /** `bridge` when left out. */
+  driver?: string
   labels?: Record<string, string>
 }
 
@@ -45,15 +56,28 @@ export interface Container {
   /** `NAME=value`, each. */
   env: string[]
   labels: Record<string, string>
-  /** `8081/tcp` -> the machine's port. */
+  /** `8081/tcp` -> the machine's port (the first it is published on). */
   ports: Record<string, string>
+  /** `8081/tcp` -> every binding of it, as it was asked for. */
+  bindings: Record<string, Binding[]>
+  /** Every port the image exposes is published too. */
+  publishAll: boolean
   mounts: Mount[]
+  /** The network it is on. */
+  network: string
   restart: string
+  /** With `on-failure`: how many times at most. */
+  retries: number
+  workingDir: string
+  user: string
+  hostname: string
   running: boolean
 }
 
 interface Kept extends Container {
   id: string
+  /** The ports Docker chose for the bindings that left it to Docker, by the binding's key and place. */
+  chosen: Record<string, string>
   /** It was there when the machine started: it has been up, or down, for a while. */
   seeded: boolean
   /** It ran, and stopped. */
@@ -70,12 +94,14 @@ export interface Options {
   startLog?: string[]
   /** Where a container writes: its output (the default) or its errors. An app shows both together. */
   logStream?: 'stdout' | 'stderr'
+  /** Images the registry does not have: pulling one fails as Docker's pull does. */
+  missingImages?: string[]
 }
 
 export interface FakeDocker {
   /** Where the app is pointed: `tcp://127.0.0.1:<port>`. */
   readonly host: string
-  /** Put the machine back as it starts: its first containers and networks, no image, every port free. */
+  /** Put the machine back as it starts: its first containers, networks and volumes, only their images, every port free. */
   reset(): void
   /** A container by name; `undefined` when there is none (it was removed, or never made). */
   container(name: string): Container | undefined
@@ -83,8 +109,10 @@ export interface FakeDocker {
   count(): number
   /** The images that were pulled, in order. */
   pulled(): string[]
-  /** The names of the networks that are left. */
+  /** The names of the networks that are left, Docker's own first. */
   networks(): string[]
+  /** The names of the volumes there are, in the order they were made. */
+  volumes(): string[]
   /** The order the containers were started in since the last reset, by name. */
   started(): string[]
   /** Something else has a container's ports (or lets go of them): Docker refuses to start a container that publishes one. */
@@ -108,15 +136,36 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
 export async function startFakeDocker(options: Options = {}): Promise<FakeDocker> {
   const stream = options.logStream === 'stderr' ? 2 : 1
   const startLog = options.startLog ?? ['started']
+  const missing = new Set(options.missingImages ?? [])
   let made = 0
-  const keep = (c: Container, seeded: boolean, log: string[]): Kept => {
+  const keep = (c: Container, seeded: boolean, log: string[], chosen: Record<string, string> = {}): Kept => {
     made += 1
-    return { ...c, id: made.toString(16).padStart(64, '0'), seeded, exited: false, log }
+    return { ...c, id: made.toString(16).padStart(64, '0'), chosen, seeded, exited: false, log }
   }
+  /** A whole container from what is known of it: the rest as Docker has it for a container made with nothing more. */
+  const container = (c: Partial<Container> & Pick<Container, 'name' | 'image'>): Container => ({
+    entrypoint: [],
+    cmd: [],
+    env: [],
+    labels: {},
+    ports: {},
+    bindings: {},
+    publishAll: false,
+    mounts: [],
+    network: 'bridge',
+    restart: 'no',
+    retries: 0,
+    workingDir: '',
+    user: '',
+    hostname: '',
+    running: false,
+    ...c
+  })
   const seeds = (): Kept[] =>
-    (options.containers ?? []).map((seed) =>
-      keep(
-        {
+    (options.containers ?? []).map((seed) => {
+      const stack = seed.labels?.['com.docker.compose.project']
+      return keep(
+        container({
           name: seed.name,
           image: seed.image,
           entrypoint: ['docker-entrypoint.sh'],
@@ -124,19 +173,37 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           env: ['PATH=/usr/local/bin:/usr/bin', 'SECRET_TOKEN=do-not-show'],
           labels: { ...seed.labels },
           ports: { ...seed.ports },
-          mounts: [],
+          bindings: Object.fromEntries(Object.entries(seed.ports ?? {}).map(([port, host]) => [port, [{ HostIp: '', HostPort: host }]])),
+          mounts: [{ type: 'volume', source: `${seed.name}-data`, target: '/data', readOnly: false }],
+          network: stack === undefined ? 'bridge' : `${stack}_default`,
           restart: 'unless-stopped',
           running: seed.running
-        },
+        }),
         true,
         [...(seed.log ?? [])]
       )
-    )
-  const firstNetworks = (): Network[] => (options.networks ?? []).map((network) => ({ ...network }))
+    })
+  /** Docker's own networks, which every Docker has and none can remove. */
+  const OWN: readonly Network[] = [
+    { name: 'bridge', driver: 'bridge' },
+    { name: 'host', driver: 'host' },
+    { name: 'none', driver: 'null' }
+  ]
+  const firstNetworks = (): Network[] => [...OWN, ...(options.networks ?? [])].map((network) => ({ ...network }))
+  interface Volume {
+    name: string
+    /** Docker named it: it is a container's own, made with it (`docker rm -v` removes it). */
+    anonymous: boolean
+  }
+  const firstVolumes = (kept: Kept[]): Volume[] =>
+    kept.flatMap((c) => c.mounts.filter((m) => m.type === 'volume').map((m) => ({ name: m.source, anonymous: false })))
 
   let containers = seeds()
   let networks = firstNetworks()
-  let images: string[] = []
+  let volumes = firstVolumes(containers)
+  // the image of a container that is there is on the machine
+  const firstImages = (kept: Kept[]): string[] => [...new Set(kept.map((c) => c.image))]
+  let images = firstImages(containers)
   let pulled: string[] = []
   let started: string[] = []
   let portTaken = false
@@ -148,6 +215,13 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     for (const listener of listeners) listener.write(`${event}\n`)
   }
   const find = (key: string): Kept | undefined => containers.find((c) => c.id === key || c.name === key)
+  // the ports Docker chooses, when a binding leaves it to Docker
+  let nextPort = 49153
+  /** The machine's port of each binding: the one asked for, or the one Docker chose. */
+  const published = (c: Kept): { key: string; ip: string; port: string }[] =>
+    Object.entries(c.bindings).flatMap(([key, bindings]) =>
+      bindings.map((binding, i) => ({ key, ip: binding.HostIp, port: binding.HostPort === '' ? (c.chosen[`${key}#${i}`] ?? '') : binding.HostPort }))
+    )
   const filtersOf = (query: URLSearchParams): { label?: string[]; reference?: string[] } =>
     JSON.parse(query.get('filters') ?? '{}') as { label?: string[]; reference?: string[] }
   /** Docker's `label` filter: `key`, or `key=value`, every one of them. */
@@ -200,26 +274,69 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     Labels: c.labels,
     // a container that does not run has no port of the machine
     Ports: c.running
-      ? Object.entries(c.ports).map(([port, host]) => ({ IP: '0.0.0.0', PrivatePort: Number(port.split('/')[0]), PublicPort: Number(host), Type: port.split('/')[1] ?? 'tcp' }))
+      ? published(c).map(({ key, ip, port }) => ({
+          IP: ip === '' ? '0.0.0.0' : ip,
+          PrivatePort: Number(key.split('/')[0]),
+          PublicPort: Number(port),
+          Type: key.split('/')[1] ?? 'tcp'
+        }))
       : []
   })
 
+  /** Docker's inspection of a container: what it was made with (`Config`, `HostConfig`), and what it has now. */
   const inspectOf = (c: Kept): object => ({
     Id: c.id,
     Name: `/${c.name}`,
-    Path: c.entrypoint[0] ?? '',
-    Args: [...c.entrypoint.slice(1), ...c.cmd],
-    State: { Status: stateOf(c), Running: c.running },
-    Config: { Image: c.image, Env: c.env, Labels: c.labels },
-    HostConfig: { RestartPolicy: { Name: c.restart } },
-    Mounts: [
-      { Type: 'volume', Name: `${c.name}-data`, Destination: '/data' },
-      ...c.mounts.map((m) => ({ Type: 'bind', Source: m.source, Destination: m.target, RW: !m.readOnly }))
-    ],
+    Created: '2026-11-27T09:00:00.000000000Z',
+    Path: c.entrypoint[0] ?? c.cmd[0] ?? '',
+    Args: c.entrypoint.length > 0 ? [...c.entrypoint.slice(1), ...c.cmd] : c.cmd.slice(1),
+    State: { Status: stateOf(c), Running: c.running, Paused: false, Restarting: false, ExitCode: c.exited ? 137 : 0 },
+    Image: `sha256:${'f'.repeat(64)}`,
+    Config: {
+      // Docker names a container's host after the start of its id
+      Hostname: c.hostname === '' ? c.id.slice(0, 12) : c.hostname,
+      User: c.user,
+      ExposedPorts: Object.fromEntries(Object.keys(c.bindings).map((key) => [key, {}])),
+      Env: c.env,
+      Cmd: c.cmd,
+      Image: c.image,
+      WorkingDir: c.workingDir,
+      Entrypoint: c.entrypoint.length > 0 ? c.entrypoint : null,
+      Labels: c.labels
+    },
+    HostConfig: {
+      NetworkMode: c.network,
+      PortBindings: c.bindings,
+      RestartPolicy: { Name: c.restart, MaximumRetryCount: c.retries },
+      PublishAllPorts: c.publishAll,
+      Mounts: c.mounts.map((m) => ({ Type: m.type, Source: m.source, Target: m.target, ReadOnly: m.readOnly }))
+    },
+    Mounts: c.mounts.map((m) =>
+      m.type === 'volume'
+        ? { Type: 'volume', Name: m.source, Source: `/var/lib/docker/volumes/${m.source}/_data`, Destination: m.target, Driver: 'local', Mode: 'z', RW: !m.readOnly, Propagation: '' }
+        : { Type: 'bind', Source: m.source, Destination: m.target, Mode: '', RW: !m.readOnly, Propagation: 'rprivate' }
+    ),
     NetworkSettings: {
-      Networks: { [c.labels['com.docker.compose.project'] === undefined ? 'bridge' : `${c.labels['com.docker.compose.project']}_default`]: {} }
+      Ports: c.running
+        ? Object.fromEntries(Object.keys(c.bindings).map((key) => [key, published(c).filter((p) => p.key === key).map((p) => ({ HostIp: p.ip === '' ? '0.0.0.0' : p.ip, HostPort: p.port }))]))
+        : {},
+      Networks: { [c.network]: { NetworkID: c.network, EndpointID: c.running ? c.id : '', IPAddress: c.running ? '172.17.0.2' : '' } }
     }
   })
+
+  /** A volume as Docker lists it: the client reads every one of these fields. */
+  const volumeOf = (v: Volume): object => ({
+    Name: v.name,
+    Driver: 'local',
+    Mountpoint: `/var/lib/docker/volumes/${v.name}/_data`,
+    CreatedAt: '2026-11-27T09:00:00Z',
+    Labels: {},
+    Scope: 'local',
+    Options: {}
+  })
+
+  /** A whole path, as Docker takes one for a mount. */
+  const absolute = (path: string): boolean => path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 
   async function answer(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://docker')
@@ -241,53 +358,144 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return json(res, 200, images.filter((image) => wanted.length === 0 || wanted.includes(image)).map(imageOf))
     }
     if (method === 'POST' && path === '/images/create') {
+      const from = url.searchParams.get('fromImage') ?? ''
       const tag = url.searchParams.get('tag')
-      const image = `${url.searchParams.get('fromImage') ?? ''}${tag ? `:${tag}` : ''}`
+      const image = `${from}${tag ? `:${tag}` : ''}`
+      // the registry has no such image: Docker says so before it pulls anything
+      if (missing.has(image)) {
+        return json(res, 404, {
+          message: `pull access denied for ${from}, repository does not exist or may require 'docker login': denied: requested access to the resource is denied`
+        })
+      }
       images.push(image)
       pulled.push(image)
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.write(`${JSON.stringify({ status: `Pulling from ${image}` })}\n`)
+      const step = (status: string, id?: string, progressDetail?: { current: number; total: number }): void =>
+        void res.write(`${JSON.stringify({ status, ...(id === undefined ? {} : { id }), ...(progressDetail ? { progressDetail } : {}) })}\n`)
+      // two layers, each downloaded in two steps and extracted, as Docker reports a pull
+      step(`Pulling from ${from}`, tag ?? 'latest')
+      const layers = [
+        ['a1b2c3d4e5f6', 3_000_000],
+        ['0f9e8d7c6b5a', 1_000_000]
+      ] as const
+      for (const [id] of layers) step('Pulling fs layer', id)
+      for (const [id, total] of layers) {
+        step('Downloading', id, { current: total / 2, total })
+        step('Downloading', id, { current: total, total })
+        step('Download complete', id)
+      }
+      for (const [id, total] of layers) {
+        step('Extracting', id, { current: total, total })
+        step('Pull complete', id)
+      }
+      step(`Digest: sha256:${'e'.repeat(64)}`)
       return void res.end(`${JSON.stringify({ status: `Status: Downloaded newer image for ${image}` })}\n`)
     }
     if (method === 'GET' && path === '/networks') {
       const wanted = filtersOf(url.searchParams).label ?? []
-      return json(res, 200, networks.filter((n) => labelled(n.labels ?? {}, wanted)).map((n) => ({ Id: n.name, Name: n.name, Labels: n.labels ?? {} })))
+      return json(
+        res,
+        200,
+        networks
+          .filter((n) => labelled(n.labels ?? {}, wanted))
+          .map((n) => ({ Id: n.name, Name: n.name, Driver: n.driver ?? 'bridge', Scope: 'local', Internal: false, Attachable: false, Labels: n.labels ?? {} }))
+      )
     }
     const network = /^\/networks\/([^/]+)$/.exec(path)
     if (method === 'DELETE' && network) {
+      if (OWN.some((n) => n.name === network[1])) return json(res, 403, { message: `${network[1]} is a pre-defined network and cannot be removed` })
       networks = networks.filter((n) => n.name !== network[1])
       return void res.writeHead(204).end()
+    }
+    if (method === 'GET' && path === '/volumes') {
+      return json(res, 200, { Volumes: volumes.map(volumeOf), Warnings: [] })
     }
     if (method === 'GET' && path === '/containers/json') {
       const wanted = filtersOf(url.searchParams).label ?? []
       return json(res, 200, containers.filter((c) => labelled(c.labels, wanted)).map(summaryOf))
     }
     if (method === 'POST' && path === '/containers/create') {
-      const name = url.searchParams.get('name') ?? `unnamed-${made}`
-      if (find(name)) return json(res, 409, { message: `Conflict. The container name "/${name}" is already in use.` })
+      const asked = url.searchParams.get('name')
+      if (asked !== null && !/^\/?[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(asked)) {
+        return json(res, 400, { message: `Invalid container name (${asked}), only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed` })
+      }
+      const name = asked?.replace(/^\//, '') ?? `unnamed-${made}`
+      const taken = find(name)
+      if (taken) {
+        return json(res, 409, {
+          message: `Conflict. The container name "/${name}" is already in use by container "${taken.id}". You have to remove (or rename) that container to be able to reuse that name.`
+        })
+      }
       const body = await bodyOf(req)
       const image = String(body.Image ?? '')
       if (!images.includes(image)) return json(res, 404, { message: `No such image: ${image}` })
       const hostConfig = (body.HostConfig ?? {}) as {
-        PortBindings?: Record<string, { HostPort?: string }[]>
+        PortBindings?: Record<string, { HostIp?: string; HostPort?: string }[]>
+        PublishAllPorts?: boolean
         Mounts?: { Type?: string; Source?: string; Target?: string; ReadOnly?: boolean }[]
-        RestartPolicy?: { Name?: string }
+        NetworkMode?: string
+        RestartPolicy?: { Name?: string; MaximumRetryCount?: number }
+      }
+      const restart = hostConfig.RestartPolicy?.Name || 'no'
+      const retries = hostConfig.RestartPolicy?.MaximumRetryCount ?? 0
+      if (retries < 0) return json(res, 400, { message: 'invalid restart policy: maximum retry count cannot be negative' })
+      if (retries > 0 && restart !== 'on-failure') {
+        return json(res, 400, { message: "invalid restart policy: maximum retry count can only be used with 'on-failure'" })
+      }
+      const mode = hostConfig.NetworkMode ?? ''
+      const network = mode === '' || mode === 'default' ? 'bridge' : mode
+      if (!networks.some((n) => n.name === network)) return json(res, 404, { message: `network ${network} not found` })
+      const mounts: Mount[] = []
+      for (const m of hostConfig.Mounts ?? []) {
+        const type = m.Type === 'bind' || m.Type === 'volume' ? m.Type : undefined
+        if (type === undefined) return json(res, 400, { message: `mount type unknown: '${m.Type ?? ''}'` })
+        const target = m.Target ?? ''
+        if (!target.startsWith('/')) {
+          return json(res, 400, { message: `invalid mount config for type "${type}": invalid mount path: '${target}' mount path must be absolute` })
+        }
+        const source = m.Source ?? ''
+        if (type === 'bind' && !absolute(source)) {
+          return json(res, 400, { message: `invalid mount config for type "bind": invalid mount path: '${source}' mount path must be absolute` })
+        }
+        mounts.push({ type, source, target, readOnly: m.ReadOnly === true })
+      }
+      const bindings: Record<string, Binding[]> = Object.fromEntries(
+        Object.entries(hostConfig.PortBindings ?? {}).map(([port, list]) => [port, list.map((b) => ({ HostIp: b.HostIp ?? '', HostPort: b.HostPort ?? '' }))])
+      )
+      // the ports left to Docker are chosen now, and the volumes a container is made with are made with it
+      const chosen: Record<string, string> = {}
+      for (const [port, list] of Object.entries(bindings)) list.forEach((b, i) => b.HostPort === '' && (chosen[`${port}#${i}`] = String(nextPort++)))
+      for (const m of mounts) {
+        if (m.type !== 'volume') continue
+        if (m.source === '') {
+          m.source = (made + volumes.length + 1).toString(16).padStart(64, 'a')
+          volumes.push({ name: m.source, anonymous: true })
+        } else if (!volumes.some((v) => v.name === m.source)) {
+          volumes.push({ name: m.source, anonymous: false })
+        }
       }
       const created = keep(
-        {
+        container({
           name,
           image,
           entrypoint: (body.Entrypoint ?? []) as string[],
           cmd: (body.Cmd ?? []) as string[],
           env: (body.Env ?? []) as string[],
           labels: (body.Labels ?? {}) as Record<string, string>,
-          ports: Object.fromEntries(Object.entries(hostConfig.PortBindings ?? {}).map(([port, bindings]) => [port, bindings[0]?.HostPort ?? ''])),
-          mounts: (hostConfig.Mounts ?? []).map((m) => ({ source: m.Source ?? '', target: m.Target ?? '', readOnly: m.ReadOnly === true })),
-          restart: hostConfig.RestartPolicy?.Name ?? 'no',
-          running: false
-        },
+          ports: Object.fromEntries(Object.entries(bindings).map(([port, list]) => [port, list[0]?.HostPort || chosen[`${port}#0`] || ''])),
+          bindings,
+          publishAll: hostConfig.PublishAllPorts === true,
+          mounts,
+          network,
+          restart,
+          retries,
+          workingDir: String(body.WorkingDir ?? ''),
+          user: String(body.User ?? ''),
+          hostname: String(body.Hostname ?? '')
+        }),
         false,
-        []
+        [],
+        chosen
       )
       containers.push(created)
       tell('create', created)
@@ -306,15 +514,36 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return void res.writeHead(200, { 'content-type': 'application/vnd.docker.multiplexed-stream' }).end(Buffer.concat(lines.map(frame)))
     }
     if (method === 'DELETE' && verb === undefined) {
+      const yes = (flag: string): boolean => ['1', 'true'].includes(url.searchParams.get(flag) ?? '')
+      if (found.running && !yes('force')) {
+        return json(res, 409, {
+          message: `cannot remove container "/${found.name}": container is running: stop the container before removing or force remove`
+        })
+      }
       containers = containers.filter((c) => c !== found)
+      // its anonymous volumes go with it when asked; a named volume is never a container's own
+      if (yes('v')) {
+        const own = new Set(found.mounts.filter((m) => m.type === 'volume').map((m) => m.source))
+        volumes = volumes.filter((v) => !(v.anonymous && own.has(v.name)))
+      }
       tell('destroy', found)
       return void res.writeHead(204).end()
     }
     if (method === 'POST' && (verb === 'start' || verb === 'restart')) {
-      const port = Object.values(found.ports)[0]
+      const mine = published(found)
+      const port = mine[0]?.port
       if (portTaken && port !== undefined) {
         return json(res, 500, {
           message: `driver failed programming external connectivity on endpoint ${found.name}: Bind for 0.0.0.0:${port} failed: port is already allocated`
+        })
+      }
+      // a port of the machine is one running container's
+      const clash = mine.find((p) =>
+        containers.some((c) => c !== found && c.running && published(c).some((q) => q.port === p.port && q.key.split('/')[1] === p.key.split('/')[1] && (q.ip === p.ip || q.ip === '' || p.ip === '')))
+      )
+      if (clash) {
+        return json(res, 500, {
+          message: `driver failed programming external connectivity on endpoint ${found.name}: Bind for ${clash.ip === '' ? '0.0.0.0' : clash.ip}:${clash.port} failed: port is already allocated`
         })
       }
       found.running = true
@@ -345,7 +574,9 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     reset() {
       containers = seeds()
       networks = firstNetworks()
-      images = []
+      volumes = firstVolumes(containers)
+      images = firstImages(containers)
+      nextPort = 49153
       pulled = []
       started = []
       portTaken = false
@@ -361,8 +592,15 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           env: c.env,
           labels: c.labels,
           ports: c.ports,
+          bindings: c.bindings,
+          publishAll: c.publishAll,
           mounts: c.mounts,
+          network: c.network,
           restart: c.restart,
+          retries: c.retries,
+          workingDir: c.workingDir,
+          user: c.user,
+          hostname: c.hostname,
           running: c.running
         }
       )
@@ -370,16 +608,13 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     count: () => containers.length,
     pulled: () => [...pulled],
     networks: () => networks.map((n) => n.name),
+    volumes: () => volumes.map((v) => v.name),
     started: () => [...started],
     takePort(taken) {
       portTaken = taken
     },
     run(name, image) {
-      const ran = keep(
-        { name, image, entrypoint: [], cmd: [], env: [], labels: {}, ports: {}, mounts: [], restart: 'no', running: true },
-        false,
-        ['hello']
-      )
+      const ran = keep(container({ name, image, running: true }), false, ['hello'])
       containers.push(ran)
       tell('start', ran)
     },

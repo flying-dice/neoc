@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { container } from './fakeApi'
-import { imageLabel, isUp, runningSummary, stackSummary, stackTone, stateLabel, toneOf } from './format'
+import { bytes, imageLabel, isUp, portLabel, restartLabel, runningSummary, stackSummary, stackTone, stateLabel, toneOf } from './format'
 
 describe('a state', () => {
   test('reads as going, not going, in between or broken', () => {
@@ -51,4 +51,29 @@ test('a list of containers says how many are running', () => {
   expect(runningSummary([])).toBe('No containers')
   expect(runningSummary([container('a', 'x', 'running')])).toBe('1 of 1 container running')
   expect(runningSummary([container('a', 'x', 'running'), container('b', 'x', 'exited')])).toBe('1 of 2 containers running')
+})
+
+describe('a port, as a person reads it', () => {
+  test("is the machine's address and port, then the container's", () => {
+    expect(portLabel({ host_ip: '', host_port: '8080', container_port: '80', protocol: 'tcp' })).toBe('8080 → 80/tcp')
+    expect(portLabel({ host_ip: '127.0.0.1', host_port: '53', container_port: '53', protocol: 'udp' })).toBe('127.0.0.1:53 → 53/udp')
+    expect(portLabel({ host_ip: '::1', host_port: '', container_port: '443', protocol: 'tcp' })).toBe('[::1]:any port → 443/tcp')
+  })
+})
+
+describe('a restart policy, in words', () => {
+  test('says how many times at most, for on-failure only', () => {
+    expect(restartLabel({ restart: 'unless-stopped', retries: '' })).toBe('unless-stopped')
+    expect(restartLabel({ restart: 'on-failure', retries: '' })).toBe('on-failure')
+    expect(restartLabel({ restart: 'on-failure', retries: '1' })).toBe('on-failure, at most 1 time')
+    expect(restartLabel({ restart: 'on-failure', retries: '5' })).toBe('on-failure, at most 5 times')
+  })
+})
+
+describe('a number of bytes', () => {
+  test('is in the unit that reads best', () => {
+    expect(bytes(512)).toBe('512 B')
+    expect(bytes(12_345_678)).toBe('12.3 MB')
+    expect(bytes(480_000_000)).toBe('480 MB')
+  })
 })

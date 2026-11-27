@@ -8,8 +8,13 @@
 -- Docker's events for as long as the app is loaded and tells the open windows with the `changed` notification, and
 -- they read the overview again.
 --
+-- A person makes containers here too (`_create`, from a spec the form fills in), changes one (`_recreate`: Docker
+-- cannot change most of what a container was made with, so it is made again) and removes one. While an image is
+-- pulled for them, the windows hear how it goes (`_pulling`).
+--
 -- An agent can do what a person does most: see what runs (`list_containers`), read a container's logs
--- (`container_logs`), and start, stop and restart a container or a whole stack. Removing is left to the person. A tool
+-- (`container_logs`), and start, stop and restart a container or a whole stack. Making, changing and removing are left
+-- to the person. A tool
 -- that changed something tells the windows itself, so they follow even while the watcher is between two Dockers. It
 -- serves on the RPC bus through the global `RPC`, typed by the generated `types/vos.d.luau`; the page's methods are
 -- private (`_overview`, `_start`, ...).
@@ -60,8 +65,39 @@ RPC.on_request("_restart", function(params: containers_RestartParams, ctx: vos_a
 end)
 
 RPC.on_request("_remove", function(params: containers_RemoveParams, ctx: vos_app_Context): containers_RemoveResult
-  local problem = engine.container("remove", params.container)
+  local problem = engine.remove(params.container, params.force == true, params.volumes == true)
   return if problem then ctx:fail(problem) else engine.overview()
+end)
+
+-- how the pull of an image goes, for the windows that wait for it
+local function pulling(image: string, status: string, current: number, total: number)
+  RPC.send_notification("_pulling", { image = image, status = status, current = current, total = total })
+end
+
+RPC.on_request("_create", function(params: containers_CreateParams, ctx: vos_app_Context): containers_CreateResult
+  local made, problem = engine.create(params.spec, pulling)
+  if not made then
+    return ctx:fail(problem or "The container could not be made.")
+  end
+  return { container = made, overview = engine.overview() }
+end)
+
+RPC.on_request("_recreate", function(params: containers_RecreateParams, ctx: vos_app_Context): containers_RecreateResult
+  local made, problem = engine.recreate(params.container, params.spec, pulling)
+  if not made then
+    return ctx:fail(problem or "The container could not be made again.")
+  end
+  return { container = made, overview = engine.overview() }
+end)
+
+RPC.on_request("_networks", function(_params: {}, ctx: vos_app_Context): containers_NetworksResult
+  local networks, problem = engine.networks()
+  return networks or ctx:fail(problem or "Docker did not list its networks.")
+end)
+
+RPC.on_request("_volumes", function(_params: {}, ctx: vos_app_Context): containers_VolumesResult
+  local volumes, problem = engine.volumes()
+  return volumes or ctx:fail(problem or "Docker did not list its volumes.")
 end)
 
 RPC.on_request(

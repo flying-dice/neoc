@@ -18,15 +18,19 @@ const ID = 'containers'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)
 const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${ID}-${name}`)
 const row = (page: Page, name: string, piece?: string): Locator => part(page, `item-${name}${piece ? `-${piece}` : ''}`)
-// the kit's text field holds the real input in its shadow tree
+// the kit's text field holds the real input in its shadow tree, and its picker the real select
 const address = (page: Page): Locator => part(page, 'host-input').locator('input')
+const field = (page: Page, name: string): Locator => part(page, name).locator('input')
+const picker = (page: Page, name: string): Locator => part(page, name).locator('select')
+// an image the journeys' registry does not have
+const MISSING = 'nosuch/app:1'
 
 test.describe.configure({ mode: 'serial' })
 
 let docker: FakeDocker
 
 test.beforeAll(async () => {
-  docker = await startFakeDocker({ containers: CONTAINERS, networks: NETWORKS })
+  docker = await startFakeDocker({ containers: CONTAINERS, networks: NETWORKS, missingImages: [MISSING] })
 })
 
 test.beforeEach(() => docker.reset())
@@ -127,9 +131,11 @@ test.describe('Containers journeys', () => {
     await expect(details).toContainText('unless-stopped')
     await expect(details).toContainText('blog · web')
     await expect(details).toContainText('blog-web-1-data -> /data')
-    // the names of its environment, never the values
+    // the names of its environment; the values only once they are asked for
     await expect(details).toContainText('SECRET_TOKEN')
     await expect(details).not.toContainText('do-not-show')
+    await part(page, 'details-reveal').click()
+    await expect(details).toContainText('SECRET_TOKEN=do-not-show')
 
     await part(page, 'inspector-back').click()
     await expect(row(page, 'pihole')).toBeVisible()
@@ -143,20 +149,24 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'summary')).toHaveText('4 of 5 containers running')
   })
 
-  test('CT6: remove a container, and take a stack down, each after a second look', async ({ page }) => {
+  test('CT6: remove a running container with force, and take a stack down, each after a second look', async ({ page }) => {
     await openContainers(page)
     await row(page, 'pihole', 'open').click()
     await part(page, 'inspector-remove').click()
-    await expect(part(page, 'inspector-confirm')).toContainText('It is running')
+    // Docker removes a running container only when forced: the button waits for that
+    await expect(part(page, 'remove-confirm')).toHaveAttribute('disabled', '')
     // saying no removes nothing
-    await part(page, 'inspector-confirm-cancel').click()
-    await expect(part(page, 'inspector-confirm')).toHaveCount(0)
+    await part(page, 'remove-cancel').click()
+    await expect(part(page, 'remove')).toHaveCount(0)
+    await expect(part(page, 'inspector-name')).toHaveText('pihole')
     expect(docker.container('pihole')?.running).toBe(true)
     await part(page, 'inspector-remove').click()
-    await part(page, 'inspector-confirm-confirm').click()
+    await part(page, 'remove-force').click()
+    await part(page, 'remove-confirm').click()
     await expect(part(page, 'items')).toBeVisible()
     await expect(row(page, 'pihole')).toHaveCount(0)
     expect(docker.container('pihole')).toBeUndefined()
+    expect(docker.volumes(), 'its named volume stays').toContain('pihole-data')
 
     await part(page, 'stack-blog').click()
     await part(page, 'stack-remove').click()
@@ -166,7 +176,12 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'title')).toHaveText('All Containers')
     await expect(row(page, 'media-jellyfin-1')).toBeVisible()
     expect(docker.container('blog-db-1')).toBeUndefined()
-    expect(docker.networks(), "the stack's network went with it, the other stack's stayed").toEqual(['media_default'])
+    expect(docker.networks(), "the stack's network went with it, the other stack's and Docker's own stayed").toEqual([
+      'bridge',
+      'host',
+      'none',
+      'media_default'
+    ])
   })
 
   test('CT7: an address that is none is refused, and one nothing listens at says so', async ({ page }) => {
@@ -201,6 +216,128 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'stack-media')).toHaveAttribute('aria-label', 'media, Running')
     // Docker's own reason comes back to the agent
     await expect(callTool(`${ID}__start_container`, { container: 'nowhere' })).rejects.toThrow('No such container: nowhere')
+  })
+
+  test('CT10: make a container with a variable, a port, a folder, a volume and a restart policy, and see it run with them', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'new').click()
+    await expect(part(page, 'form-title')).toHaveText('New Container')
+    await field(page, 'form-image').fill('nginx:1.27')
+    await field(page, 'form-name').fill('site')
+    await part(page, 'form-add-env').click()
+    await field(page, 'form-env-0-name').fill('NGINX_HOST')
+    await field(page, 'form-env-0-value').fill('example.org')
+    await part(page, 'form-add-port').click()
+    await field(page, 'form-port-0-host-port').fill('8088')
+    await field(page, 'form-port-0-container-port').fill('80')
+    await part(page, 'form-add-bind').click()
+    await field(page, 'form-mount-0-source').fill('/srv/www')
+    await field(page, 'form-mount-0-target').fill('/usr/share/nginx/html')
+    await part(page, 'form-mount-0-read-only').click()
+    // a volume that is not there yet: named here, made by Docker
+    await part(page, 'form-add-volume').click()
+    await picker(page, 'form-mount-1-volume').selectOption('+new')
+    await field(page, 'form-mount-1-source').fill('site-data')
+    await field(page, 'form-mount-1-target').fill('/data')
+    await picker(page, 'form-restart').selectOption('on-failure')
+    await field(page, 'form-retries').fill('3')
+    await part(page, 'form-save').click()
+
+    // the image was pulled first, and the container is looked at once it runs
+    await expect(part(page, 'inspector-name')).toHaveText('site')
+    await expect(part(page, 'inspector-status')).toContainText('Up 1 second')
+    expect(docker.pulled()).toEqual(['nginx:1.27'])
+    expect(docker.container('site')).toMatchObject({
+      image: 'nginx:1.27',
+      env: ['NGINX_HOST=example.org'],
+      ports: { '80/tcp': '8088' },
+      mounts: [
+        { type: 'bind', source: '/srv/www', target: '/usr/share/nginx/html', readOnly: true },
+        { type: 'volume', source: 'site-data', target: '/data', readOnly: false }
+      ],
+      network: 'bridge',
+      restart: 'on-failure',
+      retries: 3,
+      running: true
+    })
+    expect(docker.volumes()).toContain('site-data')
+
+    await part(page, 'inspector-tab-details').click()
+    const details = part(page, 'details')
+    await expect(details).toContainText('8088 → 80/tcp')
+    await expect(details).toContainText('on-failure, at most 3 times')
+    await expect(details).toContainText('/srv/www -> /usr/share/nginx/html (read-only)')
+    await expect(details).toContainText('site-data -> /data')
+    await expect(details).toContainText('NGINX_HOST=')
+    await expect(details).not.toContainText('example.org')
+    await part(page, 'inspector-back').click()
+    await expect(row(page, 'site', 'ports')).toHaveText('8088:80')
+  })
+
+  test('CT11: edit a container to change its port: it is made again, by its new settings, and runs', async ({ page }) => {
+    await openContainers(page)
+    await row(page, 'pihole', 'open').click()
+    await part(page, 'inspector-edit').click()
+    await expect(part(page, 'form-recreate')).toContainText('Anything it keeps outside a volume is lost')
+    // filled from the container as Docker has it
+    await expect(field(page, 'form-image')).toHaveValue('pihole/pihole:2024.07.0')
+    await expect(field(page, 'form-port-0-host-port')).toHaveValue('8053')
+    await field(page, 'form-port-0-host-port').fill('8054')
+    await part(page, 'form-save').click()
+
+    await expect(part(page, 'form')).toHaveCount(0)
+    await expect(part(page, 'inspector-name')).toHaveText('pihole')
+    await expect(part(page, 'inspector-status')).toContainText('Up 1 second')
+    await part(page, 'inspector-tab-details').click()
+    await expect(part(page, 'details')).toContainText('8054 → 80/tcp')
+    expect(docker.count(), 'made again, not made twice').toBe(4)
+    expect(docker.container('pihole')).toMatchObject({
+      ports: { '80/tcp': '8054' },
+      running: true,
+      restart: 'unless-stopped',
+      entrypoint: ['docker-entrypoint.sh'],
+      cmd: ['serve']
+    })
+    expect(docker.container('pihole')?.env).toContain('SECRET_TOKEN=do-not-show')
+    await part(page, 'inspector-back').click()
+    await expect(row(page, 'pihole', 'ports')).toHaveText('8054:80')
+  })
+
+  test('CT12: a container that cannot be made says why, and leaves nothing behind', async ({ page }) => {
+    await openContainers(page)
+    await part(page, 'new').click()
+    // what the backend checks itself, in its words
+    await field(page, 'form-image').fill('nginx:1.27')
+    await part(page, 'form-add-port').click()
+    await field(page, 'form-port-0-container-port').fill('70000')
+    await part(page, 'form-save').click()
+    await expect(part(page, 'form-failure')).toHaveText("Port: the container's port must be a number from 1 to 65535.")
+    await part(page, 'form-port-0-remove').click()
+    // an image the registry does not have
+    await field(page, 'form-image').fill(MISSING)
+    await part(page, 'form-save').click()
+    await expect(part(page, 'form-failure')).toContainText(`The image ${MISSING} could not be pulled: pull access denied for nosuch/app`)
+    await expect(part(page, 'form')).toBeVisible()
+    expect(docker.count()).toBe(4)
+    expect(docker.pulled()).toEqual([])
+    await part(page, 'form-cancel').click()
+    await expect(part(page, 'summary')).toHaveText('3 of 4 containers running')
+  })
+
+  test('CT13: remove a stopped container of a stack after a second look, which says Compose makes it again', async ({ page }) => {
+    await openContainers(page)
+    await row(page, 'media-jellyfin-1', 'open').click()
+    await part(page, 'inspector-remove').click()
+    await expect(part(page, 'remove-about')).toHaveJSProperty(
+      'footer',
+      'It is the jellyfin service of the Compose stack media. Compose makes it again on the next docker compose up.'
+    )
+    await expect(part(page, 'remove-force')).toHaveCount(0)
+    await part(page, 'remove-confirm').click()
+    await expect(part(page, 'items')).toBeVisible()
+    await expect(row(page, 'media-jellyfin-1')).toHaveCount(0)
+    expect(docker.container('media-jellyfin-1')).toBeUndefined()
+    await expect(part(page, 'stack-media')).toHaveCount(0)
   })
 
   test('CT9: the Containers window at its smallest still works', async ({ page }) => {

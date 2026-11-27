@@ -19,13 +19,15 @@
     ontoggle: (container: Container) => void
     onstack?: (stack: Stack, action: Action) => void
     onback?: () => void
+    onnew?: () => void
   }
 
   const onopen = fn<(container: Container) => void>()
   const ontoggle = fn<(container: Container) => void>()
   const onstack = fn<(stack: Stack, action: Action) => void>()
   const onback = fn<() => void>()
-  const heard = [onopen, ontoggle, onstack, onback]
+  const onnew = fn<() => void>()
+  const heard = [onopen, ontoggle, onstack, onback, onnew]
 
   const of = (stack: string): Container[] => CONTAINERS.filter((c) => c.stack === stack)
   const [BLOG, MEDIA] = stacksOf(CONTAINERS) as [Stack, Stack]
@@ -36,7 +38,7 @@
     title: 'Organisms/ContainerList',
     component: ContainerList,
     tags: ['autodocs'],
-    args: { title: 'All Containers', containers: CONTAINERS, busy: idle, onopen, ontoggle, onstack, onback },
+    args: { title: 'All Containers', containers: CONTAINERS, busy: idle, onopen, ontoggle, onstack, onback, onnew },
     argTypes: { busy: { control: false } },
     beforeEach: () => heard.forEach((spy) => spy.mockClear()),
     render: template
@@ -49,14 +51,16 @@
   </div>
 {/snippet}
 
-<!-- Every container: nothing acts on all of them at once. -->
+<!-- Every container: nothing acts on all of them at once. A new one is made from here. -->
 <Story
   name="All containers"
-  play={async ({ canvas }) => {
+  play={async ({ canvas, userEvent }) => {
     await expect(canvas.getByTestId('containers-title')).toHaveTextContent('All Containers')
     await expect(canvas.getByTestId('containers-summary')).toHaveTextContent('4 of 6 containers running')
     await expect(canvas.queryByTestId('containers-stack-actions')).toBeNull()
     await expect(canvas.queryByTestId('containers-back')).toBeNull()
+    await userEvent.click(canvas.getByTestId('containers-new'))
+    await expect(onnew).toHaveBeenCalledTimes(1)
   }}
 />
 

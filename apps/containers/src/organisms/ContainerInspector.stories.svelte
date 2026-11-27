@@ -1,13 +1,12 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import { alertButton, alertDialog } from '@vos/storybook/kit'
   type Container = VosApp.Containers.Container
   type Details = VosApp.Containers.Details
   type Logs = VosApp.Containers.Logs
   import ContainerInspector from './ContainerInspector.svelte'
   import type { Action, Tab } from '../lib/containers.svelte'
-  import { container } from '../lib/fakeApi'
+  import { container, specOf } from '../lib/fakeApi'
 
   interface Args {
     container: Container
@@ -15,15 +14,21 @@
     tab: Tab
     logs: Logs | null
     details: Details | null
-    onact: (action: Action) => void
+    onact: (action: Exclude<Action, 'remove'>) => void
     ontab: (tab: Tab) => void
     onback: () => void
+    onedit: () => void
+    onduplicate: () => void
+    onremove: () => void
   }
 
-  const onact = fn<(action: Action) => void>()
+  const onact = fn<(action: Exclude<Action, 'remove'>) => void>()
   const ontab = fn<(tab: Tab) => void>()
   const onback = fn<() => void>()
-  const heard = [onact, ontab, onback]
+  const onedit = fn<() => void>()
+  const onduplicate = fn<() => void>()
+  const onremove = fn<() => void>()
+  const heard = [onact, ontab, onback, onedit, onduplicate, onremove]
 
   const DB = container('blog-db-1', 'postgres:16', 'running', { stack: 'blog', service: 'db', ports: ['5432:5432'] })
   const LINES = Array.from({ length: 40 }, (_, i) => `2026-06-09 09:${String(i).padStart(2, '0')}:00 UTC [1] LOG:  checkpoint ${i + 1} complete`)
@@ -31,11 +36,17 @@
   const DETAILS: Details = {
     container: DB.id,
     command: 'docker-entrypoint.sh postgres',
-    restart: 'unless-stopped',
     health: 'healthy',
-    mounts: ['blog_db-data -> /var/lib/postgresql/data'],
+    mounts: ['blog_db-data -> /var/lib/postgresql/data', '/srv/blog/init -> /docker-entrypoint-initdb.d (read-only)'],
     networks: ['blog_default'],
-    environment: ['PATH', 'PGDATA', 'POSTGRES_PASSWORD']
+    spec: {
+      ...specOf(DB),
+      ports: [{ host_ip: '127.0.0.1', host_port: '5432', container_port: '5432', protocol: 'tcp' }],
+      restart: 'on-failure',
+      retries: '5',
+      working_dir: '/var/lib/postgresql',
+      user: 'postgres'
+    }
   }
 
   /** One container looked at. It keeps only the question it has asked before the container is removed. */
@@ -43,7 +54,7 @@
     title: 'Organisms/ContainerInspector',
     component: ContainerInspector,
     tags: ['autodocs'],
-    args: { container: DB, tab: 'logs', logs: logs(LINES.slice(0, 6)), details: null, onact, ontab, onback },
+    args: { container: DB, tab: 'logs', logs: logs(LINES.slice(0, 6)), details: null, onact, ontab, onback, onedit, onduplicate, onremove },
     beforeEach: () => heard.forEach((spy) => spy.mockClear()),
     render: template
   })
@@ -89,17 +100,26 @@
 
 <Story name="Reading the logs" args={{ logs: null }} />
 
-<!-- What it was made with. The values of its environment are never sent, only the names. -->
+<!-- What it was made with: its ports, mounts, network, restart policy and labels. The values of its environment are hidden until they are asked for. -->
 <Story
   name="Details"
   args={{ tab: 'details', details: DETAILS }}
-  play={async ({ canvas }) => {
+  play={async ({ canvas, userEvent }) => {
     const details = canvas.getByTestId('containers-details')
     await expect(details).toHaveTextContent('docker-entrypoint.sh postgres')
-    await expect(details).toHaveTextContent('unless-stopped')
+    await expect(details).toHaveTextContent('127.0.0.1:5432 → 5432/tcp')
+    await expect(details).toHaveTextContent('on-failure, at most 5 times')
     await expect(details).toHaveTextContent('healthy')
     await expect(details).toHaveTextContent('blog · db')
-    await expect(details).toHaveTextContent('POSTGRES_PASSWORD')
+    await expect(details).toHaveTextContent('(read-only)')
+    await expect(details).toHaveTextContent('com.docker.compose.service=db')
+    await expect(details).toHaveTextContent('/var/lib/postgresql')
+    await expect(details).toHaveTextContent('POSTGRES_PASSWORD=')
+    await expect(details).not.toHaveTextContent('correct-horse')
+    await userEvent.click(canvas.getByTestId('containers-details-reveal'))
+    await expect(details).toHaveTextContent('POSTGRES_PASSWORD=correct-horse')
+    await userEvent.click(canvas.getByTestId('containers-details-reveal'))
+    await expect(details).not.toHaveTextContent('correct-horse')
   }}
 />
 
@@ -109,12 +129,19 @@
   args={{
     container: container('scratch', 'alpine:3.20', 'exited'),
     tab: 'details',
-    details: { ...DETAILS, command: '/bin/sh', restart: 'no', health: '', mounts: [], environment: [] }
+    details: {
+      ...DETAILS,
+      command: '/bin/sh',
+      health: '',
+      mounts: [],
+      spec: { ...specOf(container('scratch', 'alpine:3.20', 'exited')), environment: [], mounts: [] }
+    }
   }}
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('containers-inspector-start')).toBeVisible()
     await expect(canvas.getByTestId('containers-details')).not.toHaveTextContent('Stack')
     await expect(canvas.getByTestId('containers-details')).toHaveTextContent('None published')
+    await expect(canvas.queryByTestId('containers-details-reveal')).toBeNull()
   }}
 />
 
@@ -127,16 +154,6 @@
   }}
 />
 
-<!-- Removing is asked about first, and says what it does to a container that runs. -->
-<Story
-  name="Asked before it is removed"
-  play={async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await expect(alertDialog(canvas.getByTestId('containers-inspector-confirm'))).toHaveTextContent('Remove blog-db-1?')
-    await expect(alertDialog(canvas.getByTestId('containers-inspector-confirm'))).toHaveTextContent('It is running')
-    await expect(onact).not.toHaveBeenCalled()
-  }}
-/>
 
 <Story
   name="Acting"
@@ -149,12 +166,14 @@
     // the kit's segmented control holds its segments in its shadow tree
     await userEvent.click(canvas.getByTestId('containers-inspector-tab').shadowRoot!.querySelector('[data-testid="containers-inspector-tab-details"]')!)
     await expect(ontab).toHaveBeenLastCalledWith('details')
+    await userEvent.click(canvas.getByTestId('containers-inspector-edit'))
+    await expect(onedit).toHaveBeenCalledTimes(1)
+    await userEvent.click(canvas.getByTestId('containers-inspector-duplicate'))
+    await expect(onduplicate).toHaveBeenCalledTimes(1)
+    // removing asks first: that is the page's
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'cancel'))
+    await expect(onremove).toHaveBeenCalledTimes(1)
     await expect(onact).toHaveBeenCalledTimes(2)
-    await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'action'))
-    await expect(onact).toHaveBeenLastCalledWith('remove')
     await userEvent.click(canvas.getByTestId('containers-inspector-back'))
     await expect(onback).toHaveBeenCalledTimes(1)
   }}

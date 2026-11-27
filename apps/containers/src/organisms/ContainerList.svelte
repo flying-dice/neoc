@@ -1,4 +1,4 @@
-<!-- @organism ContainerList — the containers that are shown, each with the button that starts or stops it; for a Compose stack, also where it came from and the buttons that act on all of it -->
+<!-- @organism ContainerList — the containers that are shown, each with the button that starts or stops it, and the button that makes a new one; for a Compose stack, also where it came from and the buttons that act on all of it -->
 <script lang="ts">
   type Container = VosApp.Containers.Container
   type Stack = VosApp.Containers.Stack
@@ -23,9 +23,11 @@
     ontoggle: (container: Container) => void
     onstack?: (stack: Stack, action: Action) => void
     onback?: () => void
+    /** Make a new container: the form. */
+    onnew?: () => void
   }
 
-  let { title, containers, stack, stackBusy = false, busy, back = false, onopen, ontoggle, onstack, onback }: Props = $props()
+  let { title, containers, stack, stackBusy = false, busy, back = false, onopen, ontoggle, onstack, onback, onnew }: Props = $props()
 
   // taking a stack down removes its containers: the name of the stack the person has been asked about
   let asking = $state<string | null>(null)
@@ -48,6 +50,12 @@
         {runningSummary(containers)}{#if stack?.folder}{' · '}<span class="folder">{stack.folder}</span>{/if}
       </p>
     </div>
+    {#if onnew}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <ui-button variant="plain" square hit label="New container" onclick={onnew} data-testid="containers-new">
+        <ui-icon slot="icon" name="plus"></ui-icon>
+      </ui-button>
+    {/if}
   </header>
   {#if stack}
     <div class="actions" data-testid="containers-stack-actions">
@@ -123,7 +131,7 @@
       <ui-empty-state
         icon="rectangle.stack"
         heading="No Containers"
-        message="Docker has none yet. One appears here when it is made with docker run or docker compose up."
+        message="Docker has none yet. Make one with the + button, or with docker run or docker compose up."
         data-testid="containers-empty"
       ></ui-empty-state>
     {/if}

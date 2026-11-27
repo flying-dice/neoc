@@ -5,7 +5,9 @@
 -- A function that does something answers with a plain sentence when it could not (the handler and the tool pass it on
 -- as it is) and with nothing when it did what it was asked.
 local docker = require("vos:docker")
+local spec = require("./spec")
 local stacks = require("./stacks")
+local time = require("std:time")
 
 local engine = {}
 
@@ -22,7 +24,16 @@ local STATES: { [string]: containers_State } = {
   dead = "dead",
 }
 
+-- how often the windows are told how a pull goes, at most, in milliseconds
+local PULL_EVERY = 250
+
 local sentence = docker.sentence
+
+-- Hears how the pull of an image goes: Docker's word for the step it is at, and how many bytes of the image's layers
+-- are downloaded of how many (0 while Docker has not said).
+export type Progress = (image: string, status: string, current: number, total: number) -> ()
+-- what is downloaded of a layer of an image, in bytes
+type Layer = { current: number, total: number }
 
 -- Choose the Docker this app manages: an address, or empty for this machine's own.
 engine.use = docker.use
@@ -187,7 +198,8 @@ function engine.stack(action: Action, stack: string): string?
   return failure
 end
 
--- What a container was made with. The values of its environment are left out: they often hold passwords.
+-- What a container was made with: what it runs and is mounted as Docker has it, and its spec, for the form that
+-- changes or copies it. Its environment's values are in the spec: the window hides them until they are asked for.
 function engine.details(container: string): (containers_Details?, string?)
   local api, problem = docker.reader()
   if not api then
@@ -206,7 +218,8 @@ function engine.details(container: string): (containers_Details?, string?)
   local mounts: { string } = {}
   local mounted: { vnd_bollard_MountPoint } = found.Mounts or {}
   for _, mount in mounted do
-    table.insert(mounts, `{mount.Name or mount.Source or ""} -> {mount.Destination or ""}`)
+    local line = `{mount.Name or mount.Source or ""} -> {mount.Destination or ""}`
+    table.insert(mounts, if mount.RW == false then `{line} (read-only)` else line)
   end
   table.sort(mounts)
   local networks: { string } = {}
@@ -216,25 +229,218 @@ function engine.details(container: string): (containers_Details?, string?)
     table.insert(networks, name)
   end
   table.sort(networks)
-  local environment: { string } = {}
-  local variables: { string } = (found.Config and found.Config.Env) or {}
-  for _, variable in variables do
-    table.insert(environment, string.match(variable, "^[^=]*") :: string)
-  end
-  table.sort(environment)
 
-  local policy = found.HostConfig and found.HostConfig.RestartPolicy and found.HostConfig.RestartPolicy.Name
   local health = found.State and found.State.Health and found.State.Health.Status
   return {
     container = found.Id or container,
     command = table.concat(command, " "),
-    restart = if policy and policy ~= "" then policy else "no",
     health = if health and health ~= "none" then health else "",
     mounts = mounts,
     networks = networks,
-    environment = environment,
+    spec = spec.of(found),
   },
     nil
+end
+
+-- Have the image, pulling it when Docker does not have it; `progress` hears how the pull goes.
+local function pulled(api: vnd_bollard_Client, image: string, progress: Progress): string?
+  local tagged = spec.tagged(image)
+  local images, err = api:list_images { filters = { reference = { tagged } } }
+  if not images then
+    return sentence(err)
+  end
+  if #images > 0 then
+    return nil
+  end
+  local puller, unreachable = docker.puller()
+  if not puller then
+    return unreachable
+  end
+  local pull = puller:pull_image(tagged)
+  -- what is downloaded of each layer, by its id
+  local layers: { [string]: Layer } = {}
+  local told: typeof(time.now())? = nil
+  local function tell(status: string)
+    if told and told:elapsed():as_millis() < PULL_EVERY then
+      return
+    end
+    told = time.now()
+    local current, total = 0, 0
+    for _, layer in layers do
+      current += layer.current
+      total += layer.total
+    end
+    progress(image, status, current, total)
+  end
+  -- the pull runs as its progress is read: an image that cannot be pulled is the error of a step
+  while true do
+    local step, step_err = pull:next()
+    local refused = step and step.errorDetail and step.errorDetail.message
+    if step_err or refused then
+      return `The image {image} could not be pulled: {if refused then refused else sentence(step_err)}`
+    end
+    if not step then
+      return nil
+    end
+    local status: string = step.status or ""
+    if step.id then
+      local layer: Layer = layers[step.id] or { current = 0, total = 0 }
+      layers[step.id] = layer
+      local detail = step.progressDetail
+      -- extracting has a progress of its own, which is not the download's
+      if status == "Downloading" and detail and detail.total then
+        layer.total = detail.total
+        layer.current = detail.current or 0
+      elseif status == "Download complete" or status == "Pull complete" then
+        layer.current = layer.total
+      end
+    end
+    tell(status)
+  end
+end
+
+-- Make a container from a spec Docker can be asked for, named `name` (nil: Docker chooses), and start it when the
+-- spec says so. One that could not be started is removed again: nothing is left of what failed.
+local function make(api: vnd_bollard_Client, asked: spec.Spec, name: string?): (string?, string?)
+  local made, err = api:create_container(spec.body(asked), { name = name })
+  if not made then
+    return nil, sentence(err)
+  end
+  if asked.start then
+    local _, start_err = api:start_container(made.Id)
+    if start_err then
+      api:remove_container(made.Id, { force = true, volumes = true })
+      return nil, sentence(start_err)
+    end
+  end
+  return made.Id, nil
+end
+
+-- Make a container from a spec: checked, its image pulled when Docker does not have it, made, and started when the
+-- spec says so. Answers with its id, or with why it could not be made.
+function engine.create(asked: spec.Spec, progress: Progress): (string?, string?)
+  local wrong = spec.refused(asked)
+  if wrong then
+    return nil, wrong
+  end
+  local api, problem = docker.actor()
+  if not api then
+    return nil, problem
+  end
+  local missing = pulled(api, spec.trim(asked.image), progress)
+  if missing then
+    return nil, missing
+  end
+  local name = spec.trim(asked.name)
+  return make(api, asked, if name == "" then nil else name)
+end
+
+-- Make a container again from a changed spec, as Docker cannot change one: the old one is stopped and removed (one
+-- name is one container's), and the new one made in its place, by the name the spec gives or else the old one's.
+-- Everything that can be refused before is (the spec, the image), so the old one is touched only for what Docker alone
+-- can refuse; when it does, the old one is made again from its own settings, and started when it ran. Its anonymous
+-- volumes and named ones stay. Answers with the new one's id, or with why it could not be made.
+function engine.recreate(container: string, asked: spec.Spec, progress: Progress): (string?, string?)
+  local wrong = spec.refused(asked)
+  if wrong then
+    return nil, wrong
+  end
+  local api, problem = docker.actor()
+  if not api then
+    return nil, problem
+  end
+  local old, err = api:inspect_container(container)
+  if not old or not old.Id then
+    return nil, if err then sentence(err) else "That container is not there any more."
+  end
+  local missing = pulled(api, spec.trim(asked.image), progress)
+  if missing then
+    return nil, missing
+  end
+  local id = old.Id :: string
+  local ran = old.State ~= nil and old.State.Running == true
+  local name = string.gsub(old.Name or "", "^/", "")
+  local wanted = spec.trim(asked.name)
+
+  if ran then
+    local _, stop_err = api:stop_container(id)
+    if stop_err then
+      return nil, sentence(stop_err)
+    end
+  end
+  local _, remove_err = api:remove_container(id, { force = true })
+  if remove_err then
+    if ran then
+      api:start_container(id)
+    end
+    return nil, sentence(remove_err)
+  end
+
+  local made, failure = make(api, asked, if wanted == "" then name else wanted)
+  if made then
+    return made, nil
+  end
+  local back, back_err = api:create_container(spec.restored(old), { name = if name == "" then nil else name })
+  if not back then
+    return nil, `{failure} The old container could not be made again either: {sentence(back_err)}`
+  end
+  if ran then
+    api:start_container(back.Id)
+  end
+  return nil, failure
+end
+
+-- Remove a container: one that runs only when `force`, which kills it first. Its anonymous volumes go with it when
+-- `volumes`; its named volumes always stay.
+function engine.remove(container: string, force: boolean, volumes: boolean): string?
+  local api, problem = docker.actor()
+  if not api then
+    return problem
+  end
+  local _, err = api:remove_container(container, { force = force, volumes = volumes })
+  return if err then sentence(err) else nil
+end
+
+-- Docker's networks, by name.
+function engine.networks(): ({ containers_Network }?, string?)
+  local api, problem = docker.reader()
+  if not api then
+    return nil, problem
+  end
+  local list, err = api:list_networks()
+  if not list then
+    return nil, sentence(err)
+  end
+  local networks: { containers_Network } = {}
+  for _, network in list do
+    if network.Name then
+      table.insert(networks, { name = network.Name, driver = network.Driver or "" })
+    end
+  end
+  table.sort(networks, function(a, b)
+    return a.name < b.name
+  end)
+  return networks, nil
+end
+
+-- Docker's volumes, by name.
+function engine.volumes(): ({ containers_Volume }?, string?)
+  local api, problem = docker.reader()
+  if not api then
+    return nil, problem
+  end
+  local list, err = api:list_volumes()
+  if not list then
+    return nil, sentence(err)
+  end
+  local volumes: { containers_Volume } = {}
+  for _, volume in list.Volumes do
+    table.insert(volumes, { name = volume.Name, driver = volume.Driver })
+  end
+  table.sort(volumes, function(a, b)
+    return a.name < b.name
+  end)
+  return volumes, nil
 end
 
 -- The end of what a container wrote, its output and its errors together in the order Docker has them.

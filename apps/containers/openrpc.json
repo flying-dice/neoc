@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Containers",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "methods": [
     {
@@ -126,7 +126,7 @@
     },
     {
       "name": "_remove",
-      "summary": "Remove a container, running or not. Its named volumes stay.",
+      "summary": "Remove a container. A running one only when `force`, which kills it first. Its named volumes stay; its anonymous volumes too, unless `volumes`.",
       "params": [
         {
           "name": "container",
@@ -136,12 +136,127 @@
             "type": "string",
             "maxLength": 128
           }
+        },
+        {
+          "name": "force",
+          "required": false,
+          "description": "Remove it even while it runs: Docker kills it first.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "volumes",
+          "required": false,
+          "description": "Also remove the anonymous volumes it was made with.",
+          "schema": {
+            "type": "boolean"
+          }
         }
       ],
       "result": {
         "name": "overview",
         "schema": {
           "$ref": "#/components/schemas/Overview"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_create",
+      "summary": "Make a container from a spec: the image is pulled first when Docker does not have it (`_pulling` tells how that goes), and the container is started when `start`. A container that could not be made and started is not left behind.",
+      "params": [
+        {
+          "name": "spec",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Spec"
+          }
+        }
+      ],
+      "result": {
+        "name": "made",
+        "schema": {
+          "$ref": "#/components/schemas/Made"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "What was asked for is not a container Docker can make (the message says what is wrong), or Docker cannot be reached or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_recreate",
+      "summary": "Make a container again from a changed spec, as Docker cannot change one: the old one is stopped and removed, the new one made with its name and started when the old one ran (or `start`). When that fails the old one is made again from its own settings, and started when it ran. Anything it kept outside a volume is lost.",
+      "params": [
+        {
+          "name": "container",
+          "required": true,
+          "description": "The id of one of the containers of `overview`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        {
+          "name": "spec",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Spec"
+          }
+        }
+      ],
+      "result": {
+        "name": "made",
+        "schema": {
+          "$ref": "#/components/schemas/Made"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "What was asked for is not a container Docker can make (the message says what is wrong), or Docker cannot be reached or refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_networks",
+      "summary": "Docker's networks, by name: what a container can be put on.",
+      "params": [],
+      "result": {
+        "name": "networks",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Network"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "Docker cannot be reached, the container or stack is gone, or Docker refused: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_volumes",
+      "summary": "Docker's volumes, by name: what a container can mount.",
+      "params": [],
+      "result": {
+        "name": "volumes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Volume"
+          }
         }
       },
       "errors": [
@@ -261,7 +376,7 @@
     },
     {
       "name": "_details",
-      "summary": "What a container was made with: its command, restart policy, mounts, networks and the names of its environment variables.",
+      "summary": "What a container was made with: what it runs, its health, what is mounted, its networks, and its spec (the settings a new container is made with, as the form has them). Its environment's values are sent: the window hides them until they are asked for.",
       "params": [
         {
           "name": "container",
@@ -580,6 +695,43 @@
       }
     },
     {
+      "name": "_pulling",
+      "summary": "How the pull of an image goes, while `_create` or `_recreate` waits for it.",
+      "params": [
+        {
+          "name": "image",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "description": "Docker's word for the step it is at: `Downloading`, `Extracting`, ...",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "current",
+          "required": true,
+          "description": "How many bytes of the image's layers are downloaded.",
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "name": "total",
+          "required": true,
+          "description": "How many bytes there are to download, as far as Docker has said; 0 while it has not.",
+          "schema": {
+            "type": "number"
+          }
+        }
+      ]
+    },
+    {
       "name": "changed",
       "summary": "Docker changed, or a tool changed something: the open windows read the overview again.",
       "params": []
@@ -736,10 +888,6 @@
             "type": "string",
             "description": "What it runs, as one line."
           },
-          "restart": {
-            "type": "string",
-            "description": "Its restart policy: `no`, `always`, `unless-stopped` or `on-failure`."
-          },
           "health": {
             "type": "string",
             "description": "`healthy`, `unhealthy` or `starting` for a container with a health check; empty without one."
@@ -749,7 +897,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Each mount as `source -> path in the container`."
+            "description": "Each mount as `source -> path in the container`, `(read-only)` after one it cannot write; the image's own volumes too."
           },
           "networks": {
             "type": "array",
@@ -757,22 +905,17 @@
               "type": "string"
             }
           },
-          "environment": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The names of its environment variables. Their values are not sent: they often hold passwords."
+          "spec": {
+            "$ref": "#/components/schemas/Spec"
           }
         },
         "required": [
           "container",
           "command",
-          "restart",
           "health",
           "mounts",
           "networks",
-          "environment"
+          "spec"
         ]
       },
       "Logs": {
@@ -828,6 +971,266 @@
           "status",
           "ports",
           "stack"
+        ]
+      },
+      "Entry": {
+        "type": "object",
+        "description": "A name and its value: a variable of the environment, or a label.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 32768
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ]
+      },
+      "Protocol": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "udp"
+        ]
+      },
+      "Port": {
+        "type": "object",
+        "description": "A port of the container, published on the machine.",
+        "properties": {
+          "host_ip": {
+            "type": "string",
+            "description": "The machine's address it is published on; empty for all of them.",
+            "maxLength": 64
+          },
+          "host_port": {
+            "type": "string",
+            "description": "The machine's port, 1 to 65535; empty for one Docker chooses.",
+            "maxLength": 16
+          },
+          "container_port": {
+            "type": "string",
+            "description": "The container's port, 1 to 65535.",
+            "maxLength": 16
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/Protocol"
+          }
+        },
+        "required": [
+          "host_ip",
+          "host_port",
+          "container_port",
+          "protocol"
+        ]
+      },
+      "MountKind": {
+        "type": "string",
+        "description": "`bind`: a folder of the machine. `volume`: a volume of Docker's.",
+        "enum": [
+          "bind",
+          "volume"
+        ]
+      },
+      "Mount": {
+        "type": "object",
+        "description": "What a container finds at a place of its own.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MountKind"
+          },
+          "source": {
+            "type": "string",
+            "description": "A bind mount's folder, a whole path; a volume's name (made when there is none), empty for an anonymous one.",
+            "maxLength": 4096
+          },
+          "target": {
+            "type": "string",
+            "description": "Where in the container, a whole path.",
+            "maxLength": 4096
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "target",
+          "read_only"
+        ]
+      },
+      "Restart": {
+        "type": "string",
+        "description": "When Docker starts the container again: never, always, unless it was stopped by hand, or after it failed.",
+        "enum": [
+          "no",
+          "always",
+          "unless-stopped",
+          "on-failure"
+        ]
+      },
+      "Spec": {
+        "type": "object",
+        "description": "The settings a container is made with, as the form has them. What is empty is the image's own, or Docker's.",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "The image: `nginx`, `nginx:1.27`, `ghcr.io/owner/app:tag`.",
+            "maxLength": 512
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name; empty for one Docker chooses.",
+            "maxLength": 128
+          },
+          "command": {
+            "type": "string",
+            "description": "What the entrypoint is given in place of the image's command, as words a shell would split.",
+            "maxLength": 8192
+          },
+          "entrypoint": {
+            "type": "string",
+            "description": "What it runs in place of the image's entrypoint, as words a shell would split.",
+            "maxLength": 8192
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            },
+            "description": "Its environment."
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Port"
+            },
+            "description": "The ports it publishes."
+          },
+          "publish_all": {
+            "type": "boolean",
+            "description": "Also publish every port the image exposes, each on a port Docker chooses."
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Mount"
+            },
+            "description": "Its bind mounts and volumes."
+          },
+          "network": {
+            "type": "string",
+            "description": "The network it is put on: `bridge` for Docker's own.",
+            "maxLength": 256
+          },
+          "restart": {
+            "$ref": "#/components/schemas/Restart"
+          },
+          "retries": {
+            "type": "string",
+            "description": "With `on-failure`: how many times at most, a whole number; empty or 0 for no limit.",
+            "maxLength": 16
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Entry"
+            },
+            "description": "Its labels."
+          },
+          "working_dir": {
+            "type": "string",
+            "description": "The folder it starts in, a whole path; empty for the image's.",
+            "maxLength": 4096
+          },
+          "user": {
+            "type": "string",
+            "description": "Who it runs as (`1000`, `1000:1000`, `nginx`); empty for the image's.",
+            "maxLength": 256
+          },
+          "hostname": {
+            "type": "string",
+            "description": "Its host name; empty for Docker's.",
+            "maxLength": 256
+          },
+          "start": {
+            "type": "boolean",
+            "description": "Start it once it is made."
+          }
+        },
+        "required": [
+          "image",
+          "name",
+          "command",
+          "entrypoint",
+          "environment",
+          "ports",
+          "publish_all",
+          "mounts",
+          "network",
+          "restart",
+          "retries",
+          "labels",
+          "working_dir",
+          "user",
+          "hostname",
+          "start"
+        ]
+      },
+      "Made": {
+        "type": "object",
+        "description": "A container that was made, and what Docker has now.",
+        "properties": {
+          "container": {
+            "type": "string",
+            "description": "Its id."
+          },
+          "overview": {
+            "$ref": "#/components/schemas/Overview"
+          }
+        },
+        "required": [
+          "container",
+          "overview"
+        ]
+      },
+      "Network": {
+        "type": "object",
+        "description": "A network of Docker's.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "driver": {
+            "type": "string",
+            "description": "`bridge`, `host`, `overlay`, ..."
+          }
+        },
+        "required": [
+          "name",
+          "driver"
+        ]
+      },
+      "Volume": {
+        "type": "object",
+        "description": "A volume of Docker's.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "driver": {
+            "type": "string",
+            "description": "`local`, or a plugin's."
+          }
+        },
+        "required": [
+          "name",
+          "driver"
         ]
       }
     }

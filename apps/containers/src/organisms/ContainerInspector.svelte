@@ -1,11 +1,11 @@
-<!-- @organism ContainerInspector — one container looked at: how it is doing, the buttons that start, stop, restart and remove it, and its logs (kept scrolled to the newest) or what it was made with -->
+<!-- @organism ContainerInspector — one container looked at: how it is doing, the buttons that start, stop and restart it and that edit, copy and remove it, and its logs (kept scrolled to the newest) or what it was made with (its environment's values hidden until asked for) -->
 <script lang="ts">
   type Container = VosApp.Containers.Container
   type Details = VosApp.Containers.Details
   type Logs = VosApp.Containers.Logs
   import { StateDot } from '@vos/docker'
   import type { Action, Tab } from '../lib/containers.svelte'
-  import { imageLabel, isUp, stateLabel, toneOf } from '../lib/format'
+  import { imageLabel, isUp, portLabel, restartLabel, stateLabel, toneOf } from '../lib/format'
 
   interface Props {
     container: Container
@@ -16,19 +16,27 @@
     logs: Logs | null
     /** What it was made with, once that is read. */
     details: Details | null
-    onact: (action: Action) => void
+    onact: (action: Exclude<Action, 'remove'>) => void
     ontab: (tab: Tab) => void
     onback: () => void
+    /** Change it: the form, filled from it. */
+    onedit: () => void
+    /** Make a copy of it: the form, filled from it, with another name. */
+    onduplicate: () => void
+    /** Ask before it is removed. */
+    onremove: () => void
   }
 
-  let { container, busy = false, tab, logs, details, onact, ontab, onback }: Props = $props()
+  let { container, busy = false, tab, logs, details, onact, ontab, onback, onedit, onduplicate, onremove }: Props = $props()
 
   const TABS = [
     { value: 'logs', label: 'Logs' },
     { value: 'details', label: 'Details' }
   ]
   const up = $derived(isUp(container))
-  let confirming = $state(false)
+  // the values of its environment often hold passwords: shown once they are asked for, for this container only
+  let revealed = $state<string | null>(null)
+  const showing = $derived(revealed === container.id)
 
   let output = $state<HTMLElement>()
   // New output moves the newest line: keep it in view, unless the person has scrolled up to read. Read before the
@@ -48,20 +56,36 @@
     void document.fonts.ready.then(() => atEnd && toNewest())
   })
 
-  /** What the details say, each under its name; a list of nothing says so. */
+  /** What the details say before the environment, each under its name; a list of nothing says so. */
   const facts = $derived.by((): [name: string, values: string[]][] => {
     if (!details) return []
+    const spec = details.spec
     const or = (values: string[], none: string): string[] => (values.length > 0 ? values : [none])
+    const when = (value: string, name: string): [string, string[]][] => (value ? [[name, [value]]] : [])
     return [
       ['Image', [imageLabel(container.image)]],
       ['Command', [details.command]],
-      ['Ports', or(container.ports, 'None published')],
-      ['Restart', [details.restart]],
-      ...(details.health ? ([['Health', [details.health]]] as [string, string[]][]) : []),
-      ...(container.stack ? ([['Stack', [`${container.stack} · ${container.service}`]]] as [string, string[]][]) : []),
+      [
+        'Ports',
+        or([...spec.ports.map(portLabel), ...(spec.publish_all ? ['Every exposed port, on ports Docker chooses'] : [])], 'None published')
+      ],
+      ['Restart', [restartLabel(spec)]],
+      ...when(details.health, 'Health'),
+      ...when(container.stack && `${container.stack} · ${container.service}`, 'Stack'),
       ['Mounts', or(details.mounts, 'None')],
-      ['Networks', or(details.networks, 'None')],
-      ['Environment', or(details.environment, 'None')]
+      ['Networks', or(details.networks, 'None')]
+    ]
+  })
+  /** What the details say after the environment. */
+  const more = $derived.by((): [name: string, values: string[]][] => {
+    if (!details) return []
+    const spec = details.spec
+    const when = (value: string, name: string): [string, string[]][] => (value ? [[name, [value]]] : [])
+    return [
+      ['Labels', spec.labels.length > 0 ? spec.labels.map((l) => `${l.name}=${l.value}`) : ['None']],
+      ...when(spec.working_dir, 'Working folder'),
+      ...when(spec.user, 'User'),
+      ...when(spec.hostname, 'Host name')
     ]
   })
 </script>
@@ -103,35 +127,29 @@
       Restart
     </ui-button>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <ui-button variant="gray" size="small" hit disabled={busy} onclick={onedit} data-testid="containers-inspector-edit">
+      <ui-icon slot="icon" name="square.and.pencil"></ui-icon>
+      Edit
+    </ui-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <ui-button variant="gray" size="small" hit disabled={busy} onclick={onduplicate} data-testid="containers-inspector-duplicate">
+      Duplicate
+    </ui-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button
       class="remove"
       variant="plain"
       size="small"
       destructive
       hit
-      disabled={busy || confirming}
-      onclick={() => (confirming = true)}
+      disabled={busy}
+      onclick={onremove}
       data-testid="containers-inspector-remove"
     >
       <ui-icon slot="icon" name="trash"></ui-icon>
       Remove
     </ui-button>
   </div>
-  {#if confirming}
-    <ui-alert
-      open
-      destructive
-      action-label="Remove"
-      heading="Remove {container.name}?"
-      message={up ? 'It is running: it is stopped and removed. Its named volumes stay.' : 'Its named volumes stay.'}
-      data-testid="containers-inspector-confirm"
-      oncancel={() => (confirming = false)}
-      onconfirm={() => {
-        confirming = false
-        onact('remove')
-      }}
-    ></ui-alert>
-  {/if}
   <div class="tabs">
     <ui-segmented
       label="What to show"
@@ -162,6 +180,38 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <dl class="facts" tabindex="0" aria-label="Details of {container.name}" data-testid="containers-details">
       {#each facts as [name, values] (name)}
+        <div class="fact">
+          <dt>{name}</dt>
+          {#each values as value, i (i)}
+            <dd>{value}</dd>
+          {/each}
+        </div>
+      {/each}
+      <div class="fact" data-testid="containers-details-environment">
+        <dt class="with-action">
+          Environment
+          {#if details.spec.environment.length > 0}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <ui-button
+              variant="plain"
+              size="small"
+              hit
+              toggle
+              pressed={showing}
+              onclick={() => (revealed = showing ? null : container.id)}
+              data-testid="containers-details-reveal"
+            >
+              {showing ? 'Hide values' : 'Show values'}
+            </ui-button>
+          {/if}
+        </dt>
+        {#each details.spec.environment as variable, i (i)}
+          <dd>{variable.name}={#if showing}{variable.value}{:else}<span class="hidden" aria-label="hidden">••••••</span>{/if}</dd>
+        {:else}
+          <dd>None</dd>
+        {/each}
+      </div>
+      {#each more as [name, values] (name)}
         <div class="fact">
           <dt>{name}</dt>
           {#each values as value, i (i)}
@@ -270,6 +320,16 @@
   dt {
     font: var(--type-footnote);
     color: var(--label-secondary);
+  }
+  .with-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .hidden {
+    color: var(--label-tertiary);
+    letter-spacing: 0.1em;
   }
   dd {
     margin: 2px 0 0;

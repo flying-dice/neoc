@@ -14,6 +14,7 @@
   },
   "scripts": {
     "typecheck": "bun -e \"import { writeKitTypes } from '@vos/vite-plugin'; writeKitTypes('.')\" && svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./e2e",
     "storybook": "storybook dev -p 6021 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

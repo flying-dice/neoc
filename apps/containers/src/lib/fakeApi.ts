@@ -1,13 +1,20 @@
 /**
  * A stand-in for the Containers app's backend, for stories and unit tests: a Docker kept in the page, with no host and
  * no daemon. It has containers that start, stop and go away as the real ones do, stacks worked out from them as the
- * backend works them out, and a line of log for everything that happens to a container.
+ * backend works them out, and a line of log for everything that happens to a container. Containers are made from a
+ * spec as the backend makes them: the image pulled first when it is not there (with its progress told), the spec
+ * checked for some of what the backend checks, in its words.
  */
 type Container = VosApp.Containers.Container
 type Details = VosApp.Containers.Details
+type Network = VosApp.Containers.Network
 type Overview = VosApp.Containers.Overview
+type Port = VosApp.Containers.Port
+type Pulling = VosApp.Containers.PullingParams
+type Spec = VosApp.Containers.Spec
 type Stack = VosApp.Containers.Stack
 type State = VosApp.Containers.State
+type Volume = VosApp.Containers.Volume
 import type { Action, ContainersEvents, ContainersRpc } from './containers.svelte'
 
 export interface FakeBackend {
@@ -34,6 +41,14 @@ export interface FakeOptions {
   pace?: number
   /** The names of containers Docker refuses to act on, as it does when a port is taken. */
   refusing?: readonly string[]
+  /** The images Docker has (default: those of the containers); any other is pulled first. */
+  images?: readonly string[]
+  /** Images the registry does not have: pulling one fails as Docker's does. */
+  missingImages?: readonly string[]
+  /** Docker's networks (default: its own, and one for each stack). */
+  networks?: readonly Network[]
+  /** Docker's volumes (default: one for each container). */
+  volumes?: readonly Volume[]
 }
 
 /** A failure the backend answers a call with (`ctx:fail`). */
@@ -71,6 +86,65 @@ export const CONTAINERS: readonly Container[] = [
 
 const FOLDERS: Readonly<Record<string, string>> = { blog: '/srv/blog', media: '/srv/media' }
 
+/** A container's published port (`8080:80`, `53:53/udp`) as a row of its spec. */
+const portOf = (label: string): Port => {
+  const [host = '', rest = ''] = label.split(':')
+  const [container = '', protocol] = rest.split('/')
+  return { host_ip: '', host_port: host, container_port: container, protocol: protocol === 'udp' ? 'udp' : 'tcp' }
+}
+
+/** The spec a container of the fake was made with, worked out from what is listed of it. */
+export function specOf(c: Container): Spec {
+  return {
+    image: c.image,
+    name: c.name,
+    command: c.image.startsWith('postgres') ? 'postgres' : '',
+    entrypoint: '',
+    environment: [
+      { name: 'PATH', value: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin' },
+      { name: 'TZ', value: 'Europe/Amsterdam' },
+      ...(c.image.startsWith('postgres') ? [{ name: 'POSTGRES_PASSWORD', value: 'correct-horse' }] : [])
+    ],
+    ports: c.ports.map(portOf),
+    publish_all: false,
+    mounts: [{ kind: 'volume', source: `${c.name}-data`, target: '/data', read_only: false }],
+    network: c.stack === '' ? 'bridge' : `${c.stack}_default`,
+    restart: c.stack === '' ? 'no' : 'unless-stopped',
+    retries: '',
+    labels: c.stack === '' ? [] : [
+      { name: 'com.docker.compose.project', value: c.stack },
+      { name: 'com.docker.compose.service', value: c.service }
+    ],
+    working_dir: '',
+    user: '',
+    hostname: '',
+    start: c.state === 'running'
+  }
+}
+
+/** Some of what the backend refuses in a spec, in its words: enough for a story to show a refusal. */
+export function refusal(spec: Spec): string | null {
+  const image = spec.image.trim()
+  if (image === '') return 'Say which image the container runs, like nginx:1.27.'
+  if (!/^[a-z0-9]+([._/-][a-z0-9]+)*(:[\w][\w.-]*)?$/.test(image)) {
+    return `${image} is not the name of an image. An image is named like nginx, nginx:1.27 or ghcr.io/owner/app:1.0.`
+  }
+  const port = (text: string): boolean => /^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= 65535
+  for (const [i, p] of spec.ports.entries()) {
+    const which = spec.ports.length === 1 ? 'Port' : `Port ${i + 1}`
+    if (!port(p.container_port.trim())) return `${which}: the container's port must be a number from 1 to 65535.`
+    if (p.host_port.trim() !== '' && !port(p.host_port.trim())) {
+      return `${which}: the machine's port must be a number from 1 to 65535, or empty for one Docker chooses.`
+    }
+  }
+  for (const [i, m] of spec.mounts.entries()) {
+    if (!m.target.trim().startsWith('/')) {
+      return `${spec.mounts.length === 1 ? 'Mount' : `Mount ${i + 1}`}: the place in the container is a whole path, like /data.`
+    }
+  }
+  return null
+}
+
 /** The stacks a list of containers belongs to, by name: what the backend's stacks.luau answers. */
 export function stacksOf(containers: readonly Container[]): Stack[] {
   const stacks = new Map<string, Stack>()
@@ -87,6 +161,19 @@ const ADDRESS = /^(unix:\/\/\/|tcp:\/\/[^/]|https?:\/\/[^/])/
 /** A backend in the page: every call is answered on a later turn of the event loop, as a real answer would be. */
 export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   let containers: Container[] = (options.containers ?? CONTAINERS).map((c) => ({ ...c, ports: [...c.ports] }))
+  const specs = new Map<string, Spec>(containers.map((c) => [c.id, specOf(c)]))
+  const images = new Set(options.images ?? containers.map((c) => c.image))
+  const missing = new Set(options.missingImages ?? [])
+  const networks: Network[] = [
+    ...(options.networks ?? [
+      { name: 'bridge', driver: 'bridge' },
+      { name: 'host', driver: 'host' },
+      { name: 'none', driver: 'null' },
+      ...stacksOf(containers).map((s) => ({ name: `${s.name}_default`, driver: 'bridge' }))
+    ])
+  ]
+  let volumes: Volume[] = [...(options.volumes ?? containers.map((c) => ({ name: `${c.name}-data`, driver: 'local' })))]
+  let made = 0
   let problem = options.problem ?? ''
   let host = options.host ?? ''
   const pace = options.pace ?? 0
@@ -134,6 +221,48 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     log(found.id, action === 'stop' ? 'stopping' : `${found.name} started`)
   }
 
+  /**
+   * Make a container from a spec, as the backend does: checked, its image pulled (and the pull told) when Docker does
+   * not have it, made by the name given or one Docker chooses, and started when the spec says so.
+   */
+  function make(spec: Spec, replacing?: Container): Container {
+    if (problem !== '') throw new Refused(problem)
+    const wrong = refusal(spec)
+    if (wrong) throw new Refused(wrong)
+    const image = spec.image.trim()
+    if (!images.has(image)) {
+      if (missing.has(image)) {
+        throw new Refused(`The image ${image} could not be pulled: pull access denied for ${image.split(':')[0]}, repository does not exist or may require 'docker login'`)
+      }
+      for (const current of [0, 24_000_000, 48_000_000]) emit('pulling', { image, status: current === 0 ? 'Pulling fs layer' : 'Downloading', current, total: 48_000_000 } satisfies Pulling)
+      images.add(image)
+    }
+    made += 1
+    const name = spec.name.trim() || `quirky_${made}`
+    if (containers.some((c) => c.name === name && c !== replacing)) {
+      throw new Refused(`Conflict. The container name "/${name}" is already in use by container "id-${name}". You have to remove (or rename) that container to be able to reuse that name.`)
+    }
+    const labels = Object.fromEntries(spec.labels.map((l) => [l.name, l.value]))
+    const fresh: Container = {
+      id: `id-${name}-${made}`,
+      name,
+      image,
+      state: spec.start ? 'running' : 'created',
+      status: spec.start ? 'Up 1 second' : 'Created',
+      ports: spec.ports.filter((p) => p.host_port.trim() !== '').map((p) => `${p.host_port.trim()}:${p.container_port.trim()}${p.protocol === 'udp' ? '/udp' : ''}`),
+      stack: labels['com.docker.compose.project'] ?? '',
+      service: labels['com.docker.compose.service'] ?? ''
+    }
+    for (const m of spec.mounts) {
+      if (m.kind === 'volume' && m.source.trim() !== '' && !volumes.some((v) => v.name === m.source.trim())) {
+        volumes = [...volumes, { name: m.source.trim(), driver: 'local' }]
+      }
+    }
+    specs.set(fresh.id, { ...spec, name, image })
+    written.set(fresh.id, spec.start ? [`${name} started`] : [])
+    return fresh
+  }
+
   const onContainer = (action: Action) => ({ container: id }: { container: string }) =>
     answered(() => {
       act(find(id), action)
@@ -172,7 +301,38 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     start: onContainer('start'),
     stop: onContainer('stop'),
     restart: onContainer('restart'),
-    remove: onContainer('remove'),
+    remove: ({ container: id, force }) =>
+      answered(() => {
+        const found = find(id)
+        if (found.state === 'running' && !force) {
+          throw new Refused(`cannot remove container "/${found.name}": container is running: stop the container before removing or force remove`)
+        }
+        containers = containers.filter((c) => c !== found)
+        return overview()
+      }),
+    create: ({ spec }) =>
+      answered(() => {
+        const fresh = make(spec)
+        containers = [...containers, fresh]
+        return { container: fresh.id, overview: overview() }
+      }),
+    recreate: ({ container: id, spec }) =>
+      answered(() => {
+        const old = find(id)
+        const fresh = make(spec, old)
+        containers = containers.map((c) => (c === old ? fresh : c))
+        return { container: fresh.id, overview: overview() }
+      }),
+    networks: () =>
+      answered(() => {
+        if (problem !== '') throw new Refused(problem)
+        return [...networks]
+      }),
+    volumes: () =>
+      answered(() => {
+        if (problem !== '') throw new Refused(problem)
+        return [...volumes].sort((a, b) => a.name.localeCompare(b.name))
+      }),
     startStack: onStack('start'),
     stopStack: onStack('stop'),
     restartStack: onStack('restart'),
@@ -180,14 +340,14 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     details: ({ container: id }) =>
       answered((): Details => {
         const found = find(id)
+        const spec = specs.get(id) ?? specOf(found)
         return {
           container: id,
           command: found.image.startsWith('postgres') ? 'docker-entrypoint.sh postgres' : '/init',
-          restart: found.stack === '' ? 'no' : 'unless-stopped',
           health: found.image.startsWith('postgres') && found.state === 'running' ? 'healthy' : '',
-          mounts: [`${found.name}-data -> /data`],
-          networks: [found.stack === '' ? 'bridge' : `${found.stack}_default`],
-          environment: ['PATH', 'TZ']
+          mounts: spec.mounts.map((m) => `${m.source} -> ${m.target}${m.read_only ? ' (read-only)' : ''}`).sort(),
+          networks: [spec.network],
+          spec: { ...spec, start: found.state === 'running' }
         }
       }),
     logs: ({ container: id, tail }) =>
@@ -200,11 +360,11 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   }
 
   const events: ContainersEvents = {
-    on(name, fn) {
+    on(name: string, fn: (data: never) => void): () => void {
       const heard = listeners.get(name) ?? new Set()
       listeners.set(name, heard)
-      heard.add(fn)
-      return () => heard.delete(fn)
+      heard.add(fn as (data: unknown) => void)
+      return () => heard.delete(fn as (data: unknown) => void)
     }
   }
 
@@ -238,6 +398,10 @@ export function createFailingBackend(message: string): FakeBackend {
       stop: refuse,
       restart: refuse,
       remove: refuse,
+      create: refuse,
+      recreate: refuse,
+      networks: refuse,
+      volumes: refuse,
       startStack: refuse,
       stopStack: refuse,
       restartStack: refuse,

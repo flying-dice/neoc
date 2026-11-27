@@ -141,7 +141,7 @@
   }}
 />
 
-<!-- Removing the container that is looked at goes back to the list, without it. -->
+<!-- Removing the container that is looked at asks first, then goes back to the list, without it. -->
 <Story
   name="Removing a container"
   tags={['play-only']}
@@ -149,11 +149,77 @@
     await show(canvas, userEvent, 'containers-scope-all')
     await inspect(canvas, userEvent, 'scratch')
     await userEvent.click(canvas.getByTestId('containers-inspector-remove'))
-    await appears(canvas, 'containers-inspector-confirm')
-    await userEvent.click(alertButton(canvas.getByTestId('containers-inspector-confirm'), 'action'))
+    await appears(canvas, 'containers-remove')
+    await userEvent.click(canvas.getByTestId('containers-remove-confirm'))
     await appears(canvas, 'containers-items')
     await gone(canvas, 'containers-item-scratch')
     await says(canvas, 'containers-summary', '4 of 5 containers running')
+  }}
+/>
+
+<!-- The form a new container is made in, over the list. -->
+<Story
+  name="A new container"
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-all')
+    await appears(canvas, 'containers-new')
+    await userEvent.click(canvas.getByTestId('containers-new'))
+    await appears(canvas, 'containers-form')
+    await says(canvas, 'containers-form-title', 'New Container')
+  }}
+/>
+
+<!-- A new container is made from the form: its image is pulled, and it is looked at once it runs. -->
+<Story
+  name="Making a container"
+  tags={['play-only']}
+  args={{ backend: () => createFakeBackend({ pace: 20 }) }}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-all')
+    await appears(canvas, 'containers-new')
+    await userEvent.click(canvas.getByTestId('containers-new'))
+    await appears(canvas, 'containers-form')
+    await userEvent.type(input(canvas, 'containers-form-image'), 'nginx:1.27')
+    await userEvent.type(input(canvas, 'containers-form-name'), 'site')
+    await userEvent.click(canvas.getByTestId('containers-form-add-port'))
+    await userEvent.type(input(canvas, 'containers-form-port-0-host-port'), '8088')
+    await userEvent.type(input(canvas, 'containers-form-port-0-container-port'), '80')
+    await userEvent.click(canvas.getByTestId('containers-form-save'))
+    await says(canvas, 'containers-inspector-name', 'site')
+    await says(canvas, 'containers-inspector-status', 'Up 1 second')
+  }}
+/>
+
+<!-- The backend refuses what the form says: its reason, and the form stays open. -->
+<Story
+  name="A form that is refused"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-all')
+    await appears(canvas, 'containers-new')
+    await userEvent.click(canvas.getByTestId('containers-new'))
+    await appears(canvas, 'containers-form')
+    await userEvent.type(input(canvas, 'containers-form-image'), 'Not An Image')
+    await userEvent.click(canvas.getByTestId('containers-form-save'))
+    await says(canvas, 'containers-form-failure', 'Not An Image is not the name of an image')
+    await appears(canvas, 'containers-form')
+  }}
+/>
+
+<!-- A container is changed: the form is filled from it, and saving makes it again by the new settings. -->
+<Story
+  name="Editing a container"
+  tags={['play-only']}
+  play={async ({ canvas, userEvent }) => {
+    await show(canvas, userEvent, 'containers-scope-all')
+    await inspect(canvas, userEvent, 'pihole')
+    await userEvent.click(canvas.getByTestId('containers-inspector-edit'))
+    await appears(canvas, 'containers-form-recreate')
+    await userEvent.type(input(canvas, 'containers-form-port-1-host-port'), '{Backspace}', { initialSelectionStart: 0, initialSelectionEnd: 100 })
+    await userEvent.type(input(canvas, 'containers-form-port-1-host-port'), '8054')
+    await userEvent.click(canvas.getByTestId('containers-form-save'))
+    await says(canvas, 'containers-inspector-name', 'pihole')
+    await gone(canvas, 'containers-form')
   }}
 />
 

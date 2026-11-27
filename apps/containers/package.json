@@ -2,8 +2,8 @@
   "name": "@vos-apps/containers",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
-  "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs.",
+  "version": "0.2.0",
+  "description": "The Docker containers and Compose stacks of this machine: see what runs, make, change and remove containers, start, stop and restart them, read their logs.",
   "vos": {
     "title": "Containers",
     "icon": "rectangle.stack",

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ALL, Containers, stackScope } from './containers.svelte'
 import { CONTAINERS, container, createFailingBackend, createFakeBackend, type FakeBackend } from './fakeApi'
+import { blankEntry, blankMount, blankPort } from './spec'
 
 /** A window on a fake backend, loaded and listening. */
 async function opened(backend: FakeBackend = createFakeBackend()): Promise<Containers> {
@@ -27,6 +28,8 @@ const stackNamed = (containers: Containers, name: string) => {
   return found
 }
 const names = (containers: Containers): string[] => containers.containers.map((c) => c.name)
+/** What the window holds in its state, as plain data. */
+const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 describe('a window that has just opened', () => {
   test('says nothing about Docker until the first answer', () => {
@@ -85,10 +88,25 @@ describe('a container', () => {
     expect(containers.busy(named(containers, 'pihole'))).toBe(false)
   })
 
-  test('is removed, and gone from the list', async () => {
+  test('is removed after the question, and gone from the list', async () => {
     const containers = await opened()
-    await containers.act(named(containers, 'scratch'), 'remove')
+    containers.ask(named(containers, 'scratch'))
+    expect(plain(containers.removal)).toMatchObject({ force: false, volumes: false, failure: null })
+    await containers.remove()
+    expect(containers.removal).toBeNull()
     expect(names(containers)).not.toContain('scratch')
+  })
+
+  test("that runs is removed only when forced: else Docker's reason stays with the question", async () => {
+    const containers = await opened()
+    containers.ask(named(containers, 'pihole'))
+    await containers.remove()
+    expect(containers.removal?.failure).toContain('container is running')
+    expect(names(containers)).toContain('pihole')
+    containers.removal!.force = true
+    await containers.remove()
+    expect(containers.removal).toBeNull()
+    expect(names(containers)).not.toContain('pihole')
   })
 
   test("that Docker refuses keeps Docker's reason, stays as it was, and is not busy", async () => {
@@ -165,7 +183,7 @@ describe('looking at a container', () => {
     expect(containers.logs?.text).toBe('blog-db-1 started\nlistening\n')
     expect(containers.following).toBe(true)
     await containers.show('details')
-    expect(containers.details).toMatchObject({ command: 'docker-entrypoint.sh postgres', restart: 'unless-stopped', health: 'healthy' })
+    expect(containers.details).toMatchObject({ command: 'docker-entrypoint.sh postgres', health: 'healthy', spec: { restart: 'unless-stopped' } })
     expect(containers.following).toBe(false)
   })
 
@@ -189,7 +207,8 @@ describe('looking at a container', () => {
     const backend = createFakeBackend()
     const containers = await opened(backend)
     await containers.inspect(named(containers, 'scratch'))
-    await containers.act(named(containers, 'scratch'), 'remove')
+    containers.ask(named(containers, 'scratch'))
+    await containers.remove()
     expect(containers.inspected).toBeUndefined()
     expect(containers.logs).toBeNull()
 
@@ -215,6 +234,98 @@ describe('looking at a container', () => {
     containers.close()
     await reading
     expect(containers.logs).toBeNull()
+  })
+})
+
+describe('the form', () => {
+  test('for a new container starts empty, started once made, on bridge, with the networks and volumes to pick from', async () => {
+    const containers = await opened()
+    await containers.compose()
+    expect(plain(containers.form)).toMatchObject({ mode: 'new', of: null, failure: null, saving: false })
+    expect(plain(containers.form?.draft)).toMatchObject({ image: '', network: 'bridge', restart: 'no', start: true, ports: [], mounts: [] })
+    expect(containers.savable).toBe(false)
+    expect(containers.networks.map((n) => n.name)).toEqual(['bridge', 'host', 'none', 'blog_default', 'media_default'])
+    expect(containers.volumes.map((v) => v.name)).toContain('pihole-data')
+  })
+
+  test('makes the container it says, pulling its image with the progress told, and looks at it', async () => {
+    const backend = createFakeBackend({ pace: 2 })
+    const containers = await opened(backend)
+    await containers.compose()
+    const form = containers.form!
+    form.draft.image = 'nginx:1.27'
+    form.draft.name = 'site'
+    form.draft.environment.push({ ...blankEntry(), name: 'MODE', value: 'live' }, blankEntry())
+    form.draft.ports.push({ ...blankPort(), host_port: '8088', container_port: '80' })
+    form.draft.mounts.push({ ...blankMount('volume'), source: 'site-data', target: '/data' })
+    const pulls: number[] = []
+    backend.events.on('pulling', (progress) => pulls.push(progress.current))
+    const saving = containers.save()
+    expect(containers.form?.saving).toBe(true)
+    expect(containers.savable).toBe(false)
+    await saving
+    expect(pulls).toEqual([0, 24_000_000, 48_000_000])
+    expect(containers.form).toBeNull()
+    expect(containers.inspected?.name).toBe('site')
+    expect(named(containers, 'site')).toMatchObject({ image: 'nginx:1.27', state: 'running', ports: ['8088:80'] })
+    await containers.show('details')
+    // the empty row is left out
+    expect(containers.details?.spec.environment).toEqual([{ name: 'MODE', value: 'live' }])
+    expect(containers.volumes.map((v) => v.name)).not.toContain('site-data')
+  })
+
+  test("stays open with the backend's reason when it is refused, and nothing is made", async () => {
+    const containers = await opened()
+    await containers.compose()
+    containers.form!.draft.image = 'nginx:1.27'
+    containers.form!.draft.ports.push({ ...blankPort(), host_port: '99999', container_port: '80' })
+    await containers.save()
+    expect(containers.form?.failure).toBe("Port: the machine's port must be a number from 1 to 65535, or empty for one Docker chooses.")
+    expect(containers.form?.saving).toBe(false)
+    expect(containers.all).toHaveLength(CONTAINERS.length)
+  })
+
+  test('says why an image could not be pulled', async () => {
+    const containers = await opened(createFakeBackend({ missingImages: ['nosuch/app:1'] }))
+    await containers.compose()
+    containers.form!.draft.image = 'nosuch/app:1'
+    await containers.save()
+    expect(containers.form?.failure).toContain('The image nosuch/app:1 could not be pulled')
+  })
+
+  test('to edit a container is filled from it, and saving makes it again by its new settings', async () => {
+    const containers = await opened()
+    await containers.open(named(containers, 'pihole'), 'edit')
+    const form = containers.form!
+    expect(plain(form)).toMatchObject({ mode: 'edit', of: { name: 'pihole' } })
+    expect(plain(form.draft)).toMatchObject({ image: 'pihole/pihole:2024.07.0', name: 'pihole', start: true })
+    expect(form.draft.ports.map((p) => `${p.host_port}:${p.container_port}/${p.protocol}`)).toEqual(['53:53/udp', '8053:80/tcp'])
+    // a volume that is there is picked, not named anew
+    expect(plain(form.draft.mounts[0])).toMatchObject({ kind: 'volume', source: 'pihole-data', fresh: false })
+    form.draft.ports[1]!.host_port = '8054'
+    await containers.save()
+    expect(containers.form).toBeNull()
+    expect(named(containers, 'pihole').ports).toEqual(['53:53/udp', '8054:80'])
+    expect(containers.all).toHaveLength(CONTAINERS.length)
+    expect(containers.inspected?.name).toBe('pihole')
+  })
+
+  test('to duplicate a container is filled from it, by a name no container has', async () => {
+    const containers = await opened()
+    await containers.open(named(containers, 'scratch'), 'duplicate')
+    expect(plain(containers.form)).toMatchObject({ mode: 'duplicate', draft: { name: 'scratch-copy', image: 'alpine:3.20', start: true } })
+    await containers.save()
+    expect(names(containers)).toContain('scratch-copy')
+    expect(names(containers)).toContain('scratch')
+  })
+
+  test('is left for where it was opened from', async () => {
+    const containers = await opened()
+    await containers.inspect(named(containers, 'pihole'))
+    await containers.open(named(containers, 'pihole'), 'edit')
+    containers.cancel()
+    expect(containers.form).toBeNull()
+    expect(containers.inspected?.name).toBe('pihole')
   })
 })
 

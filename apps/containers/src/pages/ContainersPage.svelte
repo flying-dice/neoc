@@ -1,8 +1,10 @@
-<!-- @page ContainersPage — the whole app: the stacks beside the containers of the one that is shown (or one of the two in a narrow window), a container looked at in their place, and what to do when Docker cannot be reached; driven by one window's Containers state -->
+<!-- @page ContainersPage — the whole app: the stacks beside the containers of the one that is shown (or one of the two in a narrow window), a container looked at in their place, the form a container is made or changed in, the question before one is removed, and what to do when Docker cannot be reached; driven by one window's Containers state -->
 <script lang="ts">
+  import ContainerForm from '../organisms/ContainerForm.svelte'
   import ContainerInspector from '../organisms/ContainerInspector.svelte'
   import ContainerList from '../organisms/ContainerList.svelte'
   import { EngineDown } from '@vos/docker'
+  import RemoveContainer from '../organisms/RemoveContainer.svelte'
   import StackSidebar from '../organisms/StackSidebar.svelte'
   import type { Containers } from '../lib/containers.svelte'
   import { isUp } from '../lib/format'
@@ -63,6 +65,21 @@
           onconnect={() => void containers.connect()}
           testid="containers"
         />
+      {:else if containers.form}
+        <ContainerForm
+          bind:form={containers.form}
+          networks={containers.networks}
+          volumes={containers.volumes}
+          savable={containers.savable}
+          onsave={() => void containers.save()}
+          oncancel={() => containers.cancel()}
+        />
+      {:else if containers.removal}
+        <RemoveContainer
+          bind:removal={containers.removal}
+          onremove={() => void containers.remove()}
+          oncancel={() => (containers.removal = null)}
+        />
       {:else if inspected}
         <ContainerInspector
           container={inspected}
@@ -73,6 +90,9 @@
           onact={(action) => void containers.act(inspected, action)}
           ontab={(tab) => void containers.show(tab)}
           onback={() => containers.close()}
+          onedit={() => void containers.open(inspected, 'edit')}
+          onduplicate={() => void containers.open(inspected, 'duplicate')}
+          onremove={() => containers.ask(inspected)}
         />
       {:else}
         <ContainerList
@@ -86,6 +106,7 @@
           ontoggle={(container) => void containers.act(container, isUp(container) ? 'stop' : 'start')}
           onstack={(stack, action) => void containers.actOnStack(stack, action)}
           onback={() => containers.back()}
+          onnew={() => void containers.compose()}
         />
       {/if}
     </div>
