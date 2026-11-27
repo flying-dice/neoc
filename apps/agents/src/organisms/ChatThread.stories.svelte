@@ -111,12 +111,9 @@
     await expect(canvas.getByTestId('agents-title')).toHaveTextContent('What is 12 times 7?')
     await expect(canvas.getByTestId('agents-thread')).toHaveTextContent('12 times 7 is 84.')
     await expect(canvas.getByTestId('agents-composer-send')).toBeVisible()
-    // an agent without a picture: its initials beside its name, and leading its answer
-    await expect(canvas.getAllByRole('img', { name: 'Scripted agent' })).toHaveLength(2)
+    // an agent without a picture: its initials beside its name, in the header only (the chat is with it)
+    await expect(canvas.getAllByRole('img', { name: 'Scripted agent' })).toHaveLength(1)
     await expect(canvas.getByTestId('agents-avatar-thread').querySelector('[role="img"]')).toHaveAttribute('data-initials', 'SA')
-    await expect(canvas.getByTestId('agents-run-2')).toBeVisible()
-    // the person's words are not led by it
-    await expect(canvas.queryByTestId('agents-run-1')).toBeNull()
   }}
 />
 
@@ -126,7 +123,6 @@
   args={{ conversation: { ...TALK, chat: { ...TALK.chat, agent: PICTURED.name, agent_id: PICTURED.id } }, avatar: PICTURE }}
   play={async ({ canvas }) => {
     await expect(canvas.getByTestId('agents-avatar-thread').querySelector('img')).toHaveAttribute('src', PICTURE)
-    await expect(canvas.getByTestId('agents-run-2').querySelector('img')).toHaveAttribute('src', PICTURE)
   }}
 />
 

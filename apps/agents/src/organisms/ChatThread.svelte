@@ -1,4 +1,4 @@
-<!-- @organism ChatThread — one chat: its title, what was said and done in it (kept scrolled to the newest, each run of the agent's output led by its avatar, each run of its steps one row), what the agent is at while its turn runs, and the composer under it -->
+<!-- @organism ChatThread — one chat: its title, what was said and done in it (kept scrolled to the newest, each run of the agent's steps one row), what the agent is at while its turn runs, and the composer under it -->
 <script lang="ts">
   type Conversation = VosApp.Agents.Conversation
   type Item = VosApp.Agents.Item
@@ -35,13 +35,8 @@
 
   let { conversation, avatar = '', draft, failure = null, back = false, ondraft, onsend, onstop, onanswer, onremove, onback, onlink }: Props = $props()
 
-  // what the agent says and does, as against what the person said and what the app notes about the chat
-  const AGENT: readonly string[] = ['assistant', 'reasoning', 'tool', 'plan', 'permission']
-  const agents = (entry: Entry | undefined): boolean => entry !== undefined && (entry.steps !== undefined || AGENT.includes(entry.item.kind))
   // a run of steps between the agent's words is one row
   const entries = $derived(entriesOf(conversation.items))
-  // the agent's avatar leads each run of what it said and did
-  const leads = (i: number): boolean => agents(entries[i]) && !agents(entries[i - 1])
   const idOf = (entry: Entry): number => entry.item?.id ?? entry.steps![0]!.id
   const status = $derived(statusOf(conversation))
 
@@ -81,12 +76,7 @@
   <!-- a keyboard reaches the log to scroll it -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div class="thread" bind:this={thread} role="log" tabindex="0" aria-label="Conversation" data-testid="agents-thread">
-    {#each entries as entry, i (entry.steps ? `steps-${idOf(entry)}` : idOf(entry))}
-      {#if leads(i)}
-        <div class="who" data-testid="agents-run-{idOf(entry)}">
-          <Avatar id={conversation.chat.agent_id} name={conversation.chat.agent} picture={avatar} size={22} />
-        </div>
-      {/if}
+    {#each entries as entry (entry.steps ? `steps-${idOf(entry)}` : idOf(entry))}
       {#if entry.steps}
         <StepGroup steps={entry.steps} {onlink} />
       {:else}
@@ -159,11 +149,6 @@
     flex-direction: column;
     gap: 12px;
     padding: 16px;
-  }
-  /* the agent's avatar sits close over what it leads */
-  .who {
-    display: flex;
-    margin: 4px 0 -6px;
   }
   /* steps one after another (tools, thoughts, a plan) stack as one list */
   .thread > :global(.step + .step) {
