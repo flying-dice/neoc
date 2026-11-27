@@ -2997,6 +2997,82 @@ export type lib_text = {
 	strip_ansi: (text: string) -> string,
 }
 
+-- ===== lib:tracing =====
+
+--- How detailed an event or a span is, finest first. The host keeps what its filter lets through (`info` and
+--- above unless it was told otherwise).
+--- - `trace`: The finest detail.
+--- - `debug`: Detail for whoever debugs it.
+--- - `info`: Normal operation.
+--- - `warn`: Something to look at.
+--- - `error`: Something failed.
+export type lib_tracing_Level = "trace" | "debug" | "info" | "warn" | "error"
+
+--- A span: a named stretch of the script's work, with fields, in the span it was opened in. Run work in it with
+--- `in_scope`; record more on it with `record`.
+declare extern type lib_tracing_Span with
+	--- Record `value` under `key` on the span, as `tracing`'s `Span::record` does. Nothing happens once the span
+	--- has ended.
+	---
+	--- ```luau
+	--- local span = tracing.span("import")
+	--- span:in_scope(function()
+	---     span:record("rows", 10)
+	--- end)
+	--- ```
+	record: (self: lib_tracing_Span, key: string, value: any) -> ()
+	--- Run `body` in the span and end the span: what `body` does (the events it writes, the spans it opens, the
+	--- tasks it starts) is in this span. Gives what `body` returned; what it raises is recorded as the span's
+	--- failure and raised again. A span is put in scope once: a second call runs `body` outside any span of its
+	--- own.
+	---
+	--- ```luau
+	--- local units = tracing.span("list units", { scope = "system" }):in_scope(function()
+	---     return listUnits()
+	--- end)
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	in_scope: (self: lib_tracing_Span, body: () -> any) -> any
+end
+
+--- How a span is opened.
+export type lib_tracing_SpanOptions = {
+	--- How detailed it is. When not given: `info`.
+	level: lib_tracing_Level?,
+}
+
+export type lib_tracing = {
+	--- Open a span named `name` with `fields`, in the span the script is in now. It starts now; put work in it with
+	--- `in_scope`.
+	---
+	--- ```luau
+	--- local parsed = tracing.span("parse units", { n = #raw }):in_scope(function()
+	---     return parse(raw)
+	--- end)
+	--- ```
+	span: (name: string, fields: { [string]: any }?, options: lib_tracing_SpanOptions?) -> lib_tracing_Span,
+	--- Write a `trace` event in the span the script is in now.
+	trace: (message: string, fields: { [string]: any }?) -> (),
+	--- Write a `debug` event in the span the script is in now.
+	debug: (message: string, fields: { [string]: any }?) -> (),
+	--- Write an `info` event in the span the script is in now.
+	---
+	--- ```luau
+	--- tracing.info("read the overview", { units = 212 })
+	--- ```
+	info: (message: string, fields: { [string]: any }?) -> (),
+	--- Write a `warn` event in the span the script is in now.
+	warn: (message: string, fields: { [string]: any }?) -> (),
+	--- Write an `error` event in the span the script is in now.
+	---
+	--- ```luau
+	--- local ok, err = pcall(restart, unit)
+	--- if not ok then tracing.error("restart failed", { unit = unit, error = tostring(err) }) end
+	--- ```
+	error: (message: string, fields: { [string]: any }?) -> (),
+}
+
 -- ===== lib:unicode =====
 
 --- The `General_Category` of a codepoint (UAX #44), by its two-letter abbreviation.
@@ -7691,18 +7767,19 @@ export type vnd_toml = {
 
 --- Who is calling.
 export type vos_app_Actor = {
-	--- The person or an agent.
+	--- The person, an agent or another app.
 	kind: vos_app_ActorKind,
-	--- The caller's id: `"user"` for the person, the agent's id for an agent.
+	--- The caller's id: `"user"` for the person, the agent's id for an agent, the app's id for an app.
 	id: string,
 	--- The name to show for the caller.
 	name: string,
 }
 
---- What makes a call: the person, from the app's page, or an agent, through a tool.
+--- What makes a call: the person, from the app's page, an agent, through a tool, or another app's backend.
 --- - `user`: The person, from the app's page.
 --- - `agent`: An agent, through a tool.
-export type vos_app_ActorKind = "user" | "agent"
+--- - `app`: Another app's backend: a request it sent (`RPC.send_request`), or its notification reaching a listener (`RPC.on_notification`).
+export type vos_app_ActorKind = "user" | "agent" | "app"
 
 --- What an app may know of an agent contact: never grants, tokens or launch commands.
 export type vos_app_AgentCard = {
@@ -7726,7 +7803,7 @@ export type vos_app_Caller = {
 	name: string,
 }
 
---- What a handler of the app's backend, or a tool's `run`, is called with: who is calling and when.
+--- What a handler of the app's backend is called with: who is calling and when.
 declare extern type vos_app_Context with
 	--- Who is calling. From the app's page it is the person (`kind` is `"user"`). Read-only.
 	actor: vos_app_Actor
@@ -7734,7 +7811,7 @@ declare extern type vos_app_Context with
 	now: string
 	--- End the call with `message`, which the caller is shown as it is: no file or line. A handler's caller is the
 	--- page, whose `rpc` rejects with an application error (-32010) carrying the message; to fail with another
-	--- JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. A tool's caller is the agent. It never
+	--- JSON-RPC code, raise `error("RPC-32602 Title cannot be empty", 0)`. An agent's tool call is a request too: its caller is the agent. It never
 	--- returns (it is declared `never`), so `return ctx:fail(...)` fits a handler whatever its result is.
 	fail: (self: vos_app_Context, message: string) -> never
 end
@@ -7746,7 +7823,7 @@ declare extern type vos_app_Db with
 	---
 	--- Yields the calling coroutine while it waits.
 	migrate: (self: vos_app_Db, steps: { string }) -> ()
-	--- Run a statement that writes. Raises when the statement fails, and inside a `readOnly` tool.
+	--- Run a statement that writes. Raises when the statement fails, and inside a read-only call.
 	---
 	--- Yields the calling coroutine while it waits.
 	exec: (self: vos_app_Db, sql: string, params: { [string]: any }?) -> vos_app_ExecResult
@@ -7833,11 +7910,6 @@ declare extern type vos_app_Files with
 	temp: vos_app_Location
 end
 
---- What an app's entry returns: the handlers its page reaches with `rpc(name, args)`, as
---- `handler(ctx, args)`. An entry that returns anything else (nothing included) does not load; an
---- app with nothing to call returns `{}`.
-export type vos_app_Handlers = { [string]: (ctx: vos_app_Context, args: any) -> any }
-
 --- A tool of a running app, as an agent is shown it.
 export type vos_app_HostTool = {
 	--- `<appId>__<tool>`: what `app.tools.call` takes.
@@ -7860,11 +7932,11 @@ declare extern type vos_app_Kv with
 	---
 	--- Yields the calling coroutine while it waits.
 	get: (self: vos_app_Kv, key: string) -> any?
-	--- Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a `readOnly` tool.
+	--- Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a read-only call.
 	---
 	--- Yields the calling coroutine while it waits.
 	set: (self: vos_app_Kv, key: string, value: any) -> ()
-	--- Delete `key`. Raises inside a `readOnly` tool.
+	--- Delete `key`. Raises inside a read-only call.
 	---
 	--- Yields the calling coroutine while it waits.
 	delete: (self: vos_app_Kv, key: string) -> ()
@@ -7873,7 +7945,7 @@ end
 --- One managed location of the app (`app.files.documents`, `.cache`, `.temp`). A path is relative to it, written
 --- with `/` (`"notes/a.txt"`; `""` is the location itself); an absolute path, `..`, `:`, a backslash, NUL or a name
 --- over 255 bytes is `invalid_input`, and a symbolic link inside it is never followed. A failure is returned as
---- `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a `readOnly` tool raises. A call holds the
+--- `nil, err` with the kinds of `std:fs` (`err.kind`). A write inside a read-only call raises. A call holds the
 --- app's turn until it ends. Scoped to the app by convention: not a sandbox.
 declare extern type vos_app_Location with
 	--- The whole file (binary-safe); at most 64 MiB (`too_large`). A directory is `is_directory`.
@@ -7895,7 +7967,7 @@ declare extern type vos_app_Location with
 	--- Create a directory and the missing ones above it; one already there is not an error.
 	---
 	--- Yields the calling coroutine while it waits.
-	createDir: (self: vos_app_Location, path: string) -> (boolean?, vos_app_FileError?)
+	create_dir: (self: vos_app_Location, path: string) -> (boolean?, vos_app_FileError?)
 	--- Remove a file, or a directory: empty (`not_empty` otherwise) unless `{ recursive = true }`.
 	---
 	--- Yields the calling coroutine while it waits.
@@ -7924,45 +7996,6 @@ export type vos_app_RemoveOptions = {
 	recursive: boolean?,
 }
 
---- The type of one input field of a tool, made by a builder of `app.t`.
-declare extern type vos_app_Schema with
-end
-
---- What a builder takes. A field is required unless it is `optional` or has a `default`.
-export type vos_app_SchemaOptions = {
-	--- What the field is for: an agent reads it.
-	description: string?,
-	--- The value the field takes when a call leaves it out.
-	default: any?,
-	--- The least a number may be.
-	min: number?,
-	--- The most a number may be.
-	max: number?,
-	--- The fewest characters a string may have.
-	minLength: number?,
-	--- The most characters a string may have.
-	maxLength: number?,
-	--- A call may leave the field out. Default: `false`.
-	optional: boolean?,
-}
-
---- A tool an agent can call.
-export type vos_app_Tool = {
-	--- A local identifier: `[a-z][a-z0-9_]*` (agents see it as `<appId>__<name>`).
-	name: string,
-	--- The name a person is shown.
-	title: string?,
-	--- What the tool does: the agent decides from it when to call the tool.
-	description: string?,
-	--- The fields of the tool's input, each built with `app.t`. A call is checked against them before `run`.
-	input: { [string]: vos_app_Schema }?,
-	--- Enforced: the tool runs with app writes blocked (db writes, `app.kv` set/delete, `db:migrate`,
-	--- `app.files` writes raise) and an agent may run it without a permission prompt.
-	readOnly: boolean?,
-	--- The tool: `run(input, ctx)`. What it returns (JSON) is the answer.
-	run: (input: any, ctx: vos_app_Context) -> any,
-}
-
 --- The kinds of `vos_app_ToolCallError`.
 export type vos_app_ToolCallErrorKind = "not_found" | "failed" | "internal"
 
@@ -7974,28 +8007,6 @@ export type vos_app_ToolCallError =
 	| { kind: "failed", message: string, op: string }
 	--- The host could not run it.
 	| { kind: "internal", message: string, op: string }
-
---- The builders of a tool's input fields: `app.t.string { description = "..." }`. Each returns a `Schema`.
-declare extern type vos_app_t with
-end
-
---- The statics of `vos_app_t`.
-export type vos_app_tStatics = {
-	--- Text.
-	string: (options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- A whole number.
-	integer: (options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- A number.
-	number: (options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- `true` or `false`.
-	boolean: (options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- A list whose items are `items`.
-	array: (items: vos_app_Schema, options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- A table with these fields: they are required or optional as a tool's `input` fields are.
-	object: (fields: { [string]: vos_app_Schema }, options: vos_app_SchemaOptions?) -> vos_app_Schema,
-	--- One of `values`.
-	enum: (values: { string }, options: vos_app_SchemaOptions?) -> vos_app_Schema,
-}
 
 --- The tools of every running app, for an app that offers them to an agent of its own: `app.tools.all()` and
 --- `app.tools.call(name, agent, args)`.
@@ -8010,7 +8021,7 @@ export type vos_app_toolsStatics = {
 	--- the tool is told called it (its `ctx.actor`). Nothing checks what that agent may call: the app decides whom it offers the tools to. The
 	--- result is `(result, nil)`, or `(nil, err)` when the tool failed, does not exist or its app is not running.
 	--- Raises for a name that is not `<appId>__<tool>`, an agent whose `id` or `name` is not 1 to 200 bytes, and
-	--- inside a `readOnly` tool. It waits without the app's turn: the tool runs in another app's VM, or in this
+	--- inside a read-only call. It waits without the app's turn: the tool runs in another app's VM, or in this
 	--- one's as any other call.
 	---
 	--- Yields the calling coroutine while it waits.
@@ -8020,7 +8031,7 @@ export type vos_app_toolsStatics = {
 --- The `app` API.
 ---
 --- `local app = require("vos:app")` in an app's backend; it is also the global `app`. The host provides it (one VM
---- per app). The backend's entry returns the handlers its page calls (`Handlers`).
+--- per app). The backend serves its methods on the bus (`RPC.on_request`).
 export type vos_app = {
 	--- The app's id.
 	id: string,
@@ -8032,16 +8043,11 @@ export type vos_app = {
 	files: vos_app_Files,
 	--- The agent contacts.
 	agents: vos_app_Agents,
-	t: vos_app_tStatics,
 	tools: vos_app_toolsStatics,
-	--- Declare a tool an agent can call: `app.tool { name = "search", input = { ... }, run = function(input, ctx) ... end }`.
-	--- Raises when the definition is refused (a name that is not `[a-z][a-z0-9_]*`, one already registered) and
-	--- inside a `readOnly` tool.
-	tool: (def: vos_app_Tool) -> (),
 	--- Open the app's window on the person's screen, or bring it forward if it is open (every connected shell is
 	--- asked; with none connected nothing happens). An app has one window, the frame of its page; `params` is
-	--- JSON handed to it. A change to the world like `notify`: a `readOnly` tool may not.
-	openWindow: (params: { [string]: any }?) -> (),
+	--- JSON handed to it. A change to the world like `notify`: a read-only call may not.
+	open_window: (params: { [string]: any }?) -> (),
 	--- `app.notify { title, body }`: tell the person something now. It reaches the clients connected now; one that
 	--- is not connected never gets it (nothing is kept for later). The host sends the app's id with it, never text
 	--- from the app, and each shell client draws it as a banner above its windows with the app's name and icon
@@ -8052,7 +8058,7 @@ export type vos_app = {
 	--- and both are text, never markup.
 	---
 	--- Raises: a key other than `title` and `body`, no title, a title that is blank or over 200 characters, a body
-	--- over 2000, a value that is not a string, a call in a `readOnly` tool, and a 65th while 64 from the same
+	--- over 2000, a value that is not a string, a call inside a read-only call, and a 65th while 64 from the same
 	--- call are still waiting. The host delivers waiting notifications whenever a call of the app ends, and when a
 	--- call waits (`task.wait`, a request, a task or request handler pausing, or a tool that has notified and then
 	--- works on), so a tool that notifies half way is heard then, not when it returns. The limit guards against a
@@ -8060,10 +8066,6 @@ export type vos_app = {
 	notify: (notification: vos_app_Notification) -> (),
 	--- Write a line to the host's log, with the app's id.
 	log: (message: string) -> (),
-	--- Tell the app's open pages something changed outside them (`host.on(name, fn)` in the page): after an
-	--- agent's tool changed data, or from a background task. `name` is 1 to 64 letters, digits and `. _ : -` (not
-	--- `host:...`), `data` is JSON of at most 64 KiB. A change to the world like `notify`: a `readOnly` tool may not.
-	emit: (name: string, data: any?) -> (),
 }
 
 -- ===== vos:docker =====
@@ -8199,6 +8201,48 @@ export type vos_docker = {
 	container: (name: string) -> vos_docker_Container,
 }
 
+-- ===== vos:rpc =====
+
+--- The kinds of `vos_rpc_RequestError`.
+export type vos_rpc_RequestErrorKind = "not_found" | "failed" | "internal"
+
+--- Why a request gave no result.
+export type vos_rpc_RequestError =
+	--- The app is not running, or nothing on the bus handles the method.
+	{ kind: "not_found", message: string, op: string }
+	--- The handler refused the params, raised, or said it could not (`ctx:fail`).
+	| { kind: "failed", message: string, op: string }
+	--- The host could not run it.
+	| { kind: "internal", message: string, op: string }
+
+--- The RPC bus: `local RPC = require("vos:rpc")`, and the global `RPC`. A page has the same four functions on its
+--- global `RPC`. Every call names its app; only an app serves its own methods and sends its own notifications.
+export type vos_rpc = {
+	--- Send a request on the RPC bus to `app` (this one's id included): every handler registered for `method`, a
+	--- backend's (`on_request`) or an open page's, is asked, and the first answer wins (the others
+	--- are cancelled). The handler is told this app called (`ctx.actor.kind` is `"app"`). The result is
+	--- `(result, nil)`, or `(nil, err)` when the app is not running, nothing handles the method, or the handler
+	--- failed. Raises for an id that is not an app's, a method name that is not 1 to 128 characters, and inside a
+	--- read-only call. It waits without the app's turn.
+	---
+	--- Yields the calling coroutine while it waits.
+	send_request: (app: string, method: string, params: { [string]: any }?) -> (any, vos_rpc_RequestError?),
+	--- Serve one of this app's methods on the RPC bus: `fn(params, ctx)` answers a request for `method`, from the
+	--- app's page, another app or an agent. An open page of the app may serve it too: the first answer wins. A public
+	--- method (no leading `_`) is an agent tool too, described by the app's contract. Raises for a method
+	--- this backend already serves, and inside a read-only call.
+	on_request: (method: string, handler: (arg1: any, arg2: vos_app_Context) -> any) -> (),
+	--- Send one of this app's notifications on the RPC bus: to the app's open pages and backend listeners and, unless
+	--- it is a `_name`, to every other app that listens. Nothing waits for it. `name` is 1 to 64 letters, digits and `. _ : -` (not
+	--- `host:...`), `params` is JSON of at most 64 KiB. A change to the world like `app.notify`: a read-only call may not.
+	send_notification: (name: string, params: any?) -> (),
+	--- Hear an app's notification (this one's too: what its page sends): `fn(params, ctx)` runs, as a call of this
+	--- app's own, each time `app` sends `name`, with `ctx.actor` that app. Listeners run in the order they were added.
+	--- Raises for an id that is not an app's, another app's `_name` (private: it never leaves that app) or a `host:`
+	--- name, and inside a read-only call.
+	on_notification: (app: string, name: string, listener: (arg1: any, arg2: vos_app_Context) -> ()) -> (),
+}
+
 -- ===== not for apps =====
 -- A module in NOT_FOR_APPS (the Lua adapter refuses it when it runs) and a global the app's environment does not
 -- have. A module or a library is a table with one `never` field: the first member access is a type error naming it
@@ -8261,6 +8305,9 @@ export type vos_NotForApps_vector = { __not_for_apps: never }
 --- The `app` API, the same as `require("vos:app")`.
 declare app: vos_app
 
+--- The RPC bus, the same as `require("vos:rpc")`.
+declare RPC: vos_rpc
+
 declare buffer: vos_NotForApps_buffer
 declare collectgarbage: vos_NotForApps_collectgarbage
 declare debug: vos_NotForApps_debug
@@ -8306,6 +8353,7 @@ declare require:
 	& ((path: "lib:tempfile") -> lib_tempfile)
 	& ((path: "lib:template") -> lib_template)
 	& ((path: "lib:text") -> lib_text)
+	& ((path: "lib:tracing") -> lib_tracing)
 	& ((path: "lib:unicode") -> lib_unicode)
 	& ((path: "lib:url") -> lib_url)
 	& ((path: "lib:vcr") -> lib_vcr)
@@ -8336,6 +8384,7 @@ declare require:
 	& ((path: "vnd:toml") -> vnd_toml)
 	& ((path: "vos:app") -> vos_app)
 	& ((path: "vos:docker") -> vos_docker)
+	& ((path: "vos:rpc") -> vos_rpc)
 	& ((path: "lib:test") -> vos_NotForApps_lib_test)
 	& ((path: "lib:compile") -> vos_NotForApps_lib_compile)
 	& ((path: "std:workers") -> vos_NotForApps_std_workers)

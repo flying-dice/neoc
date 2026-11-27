@@ -9,7 +9,7 @@
   interface Props {
     /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
     notebooks: Notebooks
-    /** Open a link out of the app (the host's `openLink`). */
+    /** Open a link out of the app (the host's `open_link`). */
     onlink: (url: string) => void
   }
 

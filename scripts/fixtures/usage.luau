@@ -7,6 +7,7 @@
 -- The check also requires every module an app is offered to be `require`d here (a line of the form
 -- `= require("lib:json")`), so a new module needs a line in this file.
 local app = require("vos:app")
+local rpc = require("vos:rpc")
 local docker = require("vos:docker")
 local collections = require("std:collections")
 local env = require("std:env")
@@ -45,6 +46,7 @@ local semver = require("lib:semver")
 local template = require("lib:template")
 local tempfile = require("lib:tempfile")
 local text = require("lib:text")
+local tracing = require("lib:tracing")
 local unicode = require("lib:unicode")
 local url = require("lib:url")
 local vcr = require("lib:vcr")
@@ -160,7 +162,7 @@ end)
 app.kv:set("k", { 1, 2 })
 local _stored: any = app.kv:get("k")
 local docs: vos_app_Location = app.files.documents
-local _made: boolean?, _madeErr: vos_app_FileError? = docs:createDir("notes")
+local _made: boolean?, _madeErr: vos_app_FileError? = docs:create_dir("notes")
 local _wrote: boolean? = docs:write("notes/a.txt", "hello")
 local _text: string?, readErr: vos_app_FileError? = docs:read("notes/a.txt")
 -- a failure is a typed value: its kind is one of a declared set, its message is for a person
@@ -182,43 +184,36 @@ app.files.temp:remove("scratch.txt")
 app.notify { title = "hello", body = "world" }
 app.notify { title = "hello" }
 app.log("usage")
-app.emit("items.changed", { id = 1 })
-app.emit("items.cleared")
-app.openWindow()
-app.openWindow { item = 1 }
+rpc.send_notification("items.changed", { id = 1 })
+rpc.send_notification("items.cleared")
+app.open_window()
+app.open_window { item = 1 }
 local _id: string = app.id
 for _, card in ipairs(app.agents:list()) do
   local _name: string = card.name
 end
 
-app.tool {
-  name = "add",
-  title = "Add",
-  description = "Add an item",
-  readOnly = false,
-  input = { name = app.t.string { description = "The name" }, n = app.t.integer { default = 1, min = 1, max = 5 } },
-  run = function(input: { name: string, n: number }, ctx)
-    if input.n > 3 then
-      return ctx:fail("too many")
-    end
-    return { added = input.name, by = ctx.actor.name, at = ctx.now }
-  end,
-}
+-- ── the handlers: a public one is an agent tool (its contract describes it), a private one (`_`) is the app's page's alone ──
+rpc.on_request("add", function(input: { name: string, n: number? }, ctx)
+  if (input.n or 1) > 3 then
+    return ctx:fail("too many")
+  end
+  local added = { added = input.name, by = ctx.actor.name, at = ctx.now }
+  return added
+end)
 
--- ── the handlers: what the entry returns, and the app's page calls with `rpc(name, args)` ───────────────────────
-local handlers: vos_app_Handlers = {
-  list = function(_ctx: vos_app_Context)
-    return app.db:all("select id, name from items order by id")
-  end,
-  rename = function(ctx: vos_app_Context, args: { id: number, name: string })
-    if args.name == "" then
-      return ctx:fail("A name cannot be empty")
-    end
-    local changed = app.db:exec("update items set name = :name where id = :id", { id = args.id, name = args.name })
-    app.emit("items.changed", { id = args.id, by = ctx.actor.name, kind = ctx.actor.kind, at = ctx.now })
-    return changed.changes
-  end,
-}
+rpc.on_request("_list", function(_params: any, _ctx: vos_app_Context)
+  return app.db:all("select id, name from items order by id")
+end)
+
+rpc.on_request("_rename", function(args: { id: number, name: string }, ctx: vos_app_Context)
+  if args.name == "" then
+    return ctx:fail("A name cannot be empty")
+  end
+  local changed = app.db:exec("update items set name = :name where id = :id", { id = args.id, name = args.name })
+  rpc.send_notification("items.changed", { id = args.id, by = ctx.actor.name, kind = ctx.actor.kind, at = ctx.now })
+  return changed.changes
+end)
 
 -- vos:docker: which Docker, one container the app owns, and its log
 local server = docker.container("vos-usage")
@@ -232,7 +227,14 @@ local reachable: boolean = docker.status().reachable and server:status(declared)
 local written = server:logs(50)
 local shown: string = if written then written.text else refused or docker.sentence(nil)
 task.spawn(docker.watch, server.filters, function()
-  app.emit("changed", { reachable = reachable, shown = shown, host = docker.host() })
+  rpc.send_notification("changed", { reachable = reachable, shown = shown, host = docker.host() })
 end)
 
-return handlers
+-- the RPC bus: the global `RPC`, and the same table required
+rpc.on_request("_ping", function(_params: {}, ctx: vos_app_Context): string
+  return "pong at " .. ctx.now
+end)
+local _same: boolean = rpc.send_notification == RPC.send_notification
+tracing.span("usage", { n = 1 }):in_scope(function()
+  return nil
+end)

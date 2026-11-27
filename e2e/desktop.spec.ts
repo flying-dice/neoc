@@ -6,13 +6,13 @@
  *  • full screen, Split View and Slide Over,
  *  • on an iPad-sized screen and a large one.
  *
- * The built-in pages come from the shell's app registry and the installed apps from their contracts (`openrpc.json`),
+ * The built-in pages come from the shell's app registry and the installed apps from their packages (`package.json`),
  * so a new app is covered with no extra code. The Calculator's display is "0" in every shot: nothing here presses a key,
  * and the journeys (which do) run after this project.
  *
  * A picture of each state is kept under test-results/screenshots (`capture`), to look at: it is compared with nothing.
  */
-import { readdirSync, readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   capture,
@@ -28,7 +28,7 @@ import {
   test,
   windowOf
 } from './fixtures'
-import { FIXTURE_APPS } from './host/config'
+import { FIXTURE_APPS, INSTALLED_REPO_APPS, appMeta } from './host/config'
 import type { Page } from '@playwright/test'
 
 const ROOT = join(import.meta.dirname, '..')
@@ -41,17 +41,15 @@ function builtinAppIds(): string[] {
 }
 
 /**
- * The installed apps, each a page in a frame of its own (a contract, `openrpc.json`), that are installed at start: the framework
- * fixtures (`FIXTURE_APPS`; the other apps of e2e/apps are installed only by their journeys) and the repo's Vite projects
- * (apps/<dir>).
+ * The installed apps, each a page in a frame of its own (a Vite project: `package.json` says what it is, `openrpc.json` is its
+ * API), that are installed at start: the framework fixtures (`FIXTURE_APPS`; the other apps of e2e/apps are installed only by
+ * their journeys) and the repo's apps the host installs (`INSTALLED_REPO_APPS`).
  */
 function installedAppIds(): string[] {
   return [
-    ...FIXTURE_APPS.map((dir) => join(ROOT, 'e2e/apps', dir, 'openrpc.json')),
-    ...readdirSync(join(ROOT, 'apps')).map((dir) => join(ROOT, 'apps', dir, 'openrpc.json'))
-  ]
-    .filter((file) => existsSync(file))
-    .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { 'x-app': { id: string } })['x-app'].id)
+    ...FIXTURE_APPS.map((dir) => `e2e/apps/${dir}`),
+    ...INSTALLED_REPO_APPS.map((dir) => `apps/${dir}`)
+  ].map((dir) => appMeta(dir).id)
 }
 
 /** Layout is checked inside the window's content: the resize corner deliberately overhangs the frame. */

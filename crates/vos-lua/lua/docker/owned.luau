@@ -129,8 +129,8 @@ function owned.container(name: string): Container
     if stale then
       return stale
     end
-    local made, err =
-      api:create_container(declaration.body(declared, name, { [OWNER] = app.id, [SIGNATURE] = signature }))
+    local body = declaration.body(declared, { [OWNER] = app.id, [SIGNATURE] = signature })
+    local made, err = api:create_container(body, { name = name })
     if not made then
       return engine.sentence(err)
     end

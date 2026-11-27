@@ -34,6 +34,30 @@
         "vite": "^8.3.4",
       },
     },
+    "apps/app1": {
+      "name": "@vos-apps/app1",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/app2": {
+      "name": "@vos-apps/app2",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@vos/vite-plugin": "workspace:*",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "apps/calculator": {
       "name": "@vos-apps/calculator",
       "version": "0.1.0",
@@ -237,6 +261,26 @@
         "vite": "^8.3.4",
       },
     },
+    "apps/telemetry": {
+      "name": "@vos-apps/telemetry",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
     "apps/terminal": {
       "name": "@vos-apps/terminal",
       "version": "0.1.0",
@@ -308,6 +352,15 @@
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
         "typescript-eslint": "8.72.1",
+        "vite": "^8.3.4",
+      },
+    },
+    "crates/vos-lua/tests/fixtures/typescript": {
+      "name": "@vos-fixtures/typescript",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@vos/vite-plugin": "workspace:*",
+        "typescript": "^5.9.3",
         "vite": "^8.3.4",
       },
     },
@@ -471,9 +524,6 @@
     "packages/vite-plugin": {
       "name": "@vos/vite-plugin",
       "version": "0.1.0",
-      "bin": {
-        "vos": "./bin/vos.ts",
-      },
       "dependencies": {
         "@typescript-to-lua/language-extensions": "1.19.0",
         "@vos/kit": "workspace:*",
@@ -848,6 +898,10 @@
 
     "@vos-apps/agents": ["@vos-apps/agents@workspace:apps/agents"],
 
+    "@vos-apps/app1": ["@vos-apps/app1@workspace:apps/app1"],
+
+    "@vos-apps/app2": ["@vos-apps/app2@workspace:apps/app2"],
+
     "@vos-apps/calculator": ["@vos-apps/calculator@workspace:apps/calculator"],
 
     "@vos-apps/containers": ["@vos-apps/containers@workspace:apps/containers"],
@@ -868,6 +922,8 @@
 
     "@vos-apps/services": ["@vos-apps/services@workspace:apps/services"],
 
+    "@vos-apps/telemetry": ["@vos-apps/telemetry@workspace:apps/telemetry"],
+
     "@vos-apps/terminal": ["@vos-apps/terminal@workspace:apps/terminal"],
 
     "@vos-apps/todos": ["@vos-apps/todos@workspace:apps/todos"],
@@ -881,6 +937,8 @@
     "@vos-fixtures/tasks-svelte": ["@vos-fixtures/tasks-svelte@workspace:e2e/apps/tasks-svelte"],
 
     "@vos-fixtures/ticker": ["@vos-fixtures/ticker@workspace:e2e/apps/ticker"],
+
+    "@vos-fixtures/typescript": ["@vos-fixtures/typescript@workspace:crates/vos-lua/tests/fixtures/typescript"],
 
     "@vos/client": ["@vos/client@workspace:client"],
 

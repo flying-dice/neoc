@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
 //! An app's page and its backend, end to end over the real adapters: the frame route and its policy, a client's
 //! `rpc` on `/rpc` reaching the handler of the app it names, a handler's error as a message, and an agent's tool
-//! telling the app's open clients with `app.emit`.
+//! telling the app's open clients with a notification.
 
 use crate::common;
 
@@ -16,31 +16,25 @@ use vos_host::startup::prepare_data_dir;
 const PAGE: &str = "<!doctype html><title>tasks</title><script src=\"/apps/bridge.js\"></script>";
 const SCRIPT: &str = "console.log('tasks')";
 
-/// A backend whose handlers say which app answered; `add_task` is an agent tool that also tells the clients.
+/// A backend whose page methods (`_`) say which app answered; `add_task` is an agent tool that also tells the clients.
 fn backend(name: &str) -> String {
     format!(
         r#"
 local db = app.db
 db:migrate {{ [1] = "create table tasks(id integer primary key, title text not null)" }}
 
-app.tool {{
-  name = "add_task",
-  input = {{ title = app.t.string {{}} }},
-  run = function(input)
-    db:exec("insert into tasks(title) values (:t)", {{ t = input.title }})
-    app.emit("tasks.changed", {{ title = input.title }})
-    return {{ ok = true }}
-  end,
-}}
-return {{
-  whose = function(ctx, args) return {{ app = "{name}", args = args }} end,
-  add = function(ctx, args)
-    if type(args) ~= "table" or args.title == nil then return ctx:fail("A task needs a title.") end
-    db:exec("insert into tasks(title) values (:t)", {{ t = args.title }})
-    return db:all("select id, title from tasks order by id")
-  end,
-  explode = function() error("boom") end,
-}}
+RPC.on_request("add_task", function(input)
+  db:exec("insert into tasks(title) values (:t)", {{ t = input.title }})
+  RPC.send_notification("tasks.changed", {{ title = input.title }})
+  return {{ ok = true }}
+end)
+RPC.on_request("_whose", function(args) return {{ app = "{name}", args = args }} end)
+RPC.on_request("_add", function(args, ctx)
+  if type(args) ~= "table" or args.title == nil then return ctx:fail("A task needs a title.") end
+  db:exec("insert into tasks(title) values (:t)", {{ t = args.title }})
+  return db:all("select id, title from tasks order by id")
+end)
+RPC.on_request("_explode", function() error("boom") end)
 "#
     )
 }
@@ -321,23 +315,23 @@ async fn a_client_call_reaches_the_handler_of_the_app_it_names_and_only_that_app
     let r = host_with_apps(&tmp, &["alpha", "beta"]).await;
     let (_cookie, mut ws) = paired(&r).await;
 
-    let a = rpc(&mut ws, 1, "app.call", json!({"app": "alpha", "method": "whose", "args": {"n": 1}})).await;
+    let a = rpc(&mut ws, 1, "app.call", json!({"app": "alpha", "method": "_whose", "args": {"n": 1}})).await;
     assert_eq!(a["result"], json!({"app": "alpha", "args": {"n": 1}}), "{a}");
-    let b = rpc(&mut ws, 2, "app.call", json!({"app": "beta", "method": "whose"})).await;
+    let b = rpc(&mut ws, 2, "app.call", json!({"app": "beta", "method": "_whose"})).await;
     assert_eq!(b["result"]["app"], "beta", "{b}");
     assert_eq!(b["result"].get("args"), None, "no args is nil");
 
     // an app that is not there, a handler that is not there, a method no handler can have
-    let ghost = rpc(&mut ws, 3, "app.call", json!({"app": "ghost", "method": "whose"})).await;
+    let ghost = rpc(&mut ws, 3, "app.call", json!({"app": "ghost", "method": "_whose"})).await;
     assert_eq!(ghost["error"]["code"], -32002, "{ghost}");
     let nope = rpc(&mut ws, 4, "app.call", json!({"app": "alpha", "method": "nope"})).await;
     assert_eq!(nope["error"]["code"], -32601, "{nope}");
     assert_eq!(nope["error"]["message"], "Method not found: nope");
 
     // the params are the shell's, exactly: a field it does not know is an invalid call
-    let extra = rpc(&mut ws, 5, "app.call", json!({"app": "alpha", "method": "whose", "as": "beta"})).await;
+    let extra = rpc(&mut ws, 5, "app.call", json!({"app": "alpha", "method": "_whose", "as": "beta"})).await;
     assert_eq!(extra["error"]["code"], -32602, "{extra}");
-    let missing = rpc(&mut ws, 6, "app.call", json!({"method": "whose"})).await;
+    let missing = rpc(&mut ws, 6, "app.call", json!({"method": "_whose"})).await;
     assert_eq!(missing["error"]["code"], -32602, "{missing}");
     r.stop().await;
 }
@@ -348,16 +342,16 @@ async fn a_handlers_failure_comes_back_as_its_message() {
     let r = host_with_apps(&tmp, &["tasks"]).await;
     let (_cookie, mut ws) = paired(&r).await;
 
-    let failed = rpc(&mut ws, 1, "app.call", json!({"app": "tasks", "method": "add", "args": {}})).await;
+    let failed = rpc(&mut ws, 1, "app.call", json!({"app": "tasks", "method": "_add", "args": {}})).await;
     assert_eq!(failed["error"]["code"], -32010, "{failed}");
     assert_eq!(failed["error"]["message"], "A task needs a title.");
 
-    let raised = rpc(&mut ws, 2, "app.call", json!({"app": "tasks", "method": "explode"})).await;
+    let raised = rpc(&mut ws, 2, "app.call", json!({"app": "tasks", "method": "_explode"})).await;
     assert_eq!(raised["error"]["code"], -32010, "{raised}");
     assert!(raised["error"]["message"].as_str().unwrap().contains("boom"), "{raised}");
 
     let added =
-        rpc(&mut ws, 3, "app.call", json!({"app": "tasks", "method": "add", "args": {"title": "milk"}}))
+        rpc(&mut ws, 3, "app.call", json!({"app": "tasks", "method": "_add", "args": {"title": "milk"}}))
             .await;
     assert_eq!(
         added["result"],
@@ -369,7 +363,7 @@ async fn a_handlers_failure_comes_back_as_its_message() {
     let off = rpc(&mut ws, 4, "app.disable", json!({"app": "tasks"})).await;
     assert!(off.get("error").is_none(), "{off}");
     let down =
-        rpc(&mut ws, 5, "app.call", json!({"app": "tasks", "method": "add", "args": {"title": "x"}})).await;
+        rpc(&mut ws, 5, "app.call", json!({"app": "tasks", "method": "_add", "args": {"title": "x"}})).await;
     assert_eq!(down["error"]["code"], -32005, "{down}");
     r.stop().await;
 }
@@ -388,7 +382,7 @@ async fn an_agents_tool_tells_the_open_clients_of_its_own_app_and_the_data_is_th
 
     // the client reads it back through the same backend
     let listed =
-        rpc(&mut ws, 1, "app.call", json!({"app": "tasks", "method": "add", "args": {"title": "and me"}}))
+        rpc(&mut ws, 1, "app.call", json!({"app": "tasks", "method": "_add", "args": {"title": "and me"}}))
             .await;
     assert_eq!(listed["result"].as_array().unwrap().len(), 2, "{listed}");
 

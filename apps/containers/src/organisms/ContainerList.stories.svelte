@@ -2,7 +2,8 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
-  import type { Container, Stack } from 'app:rpc'
+  type Container = VosApp.Containers.Container
+  type Stack = VosApp.Containers.Stack
   import ContainerList from './ContainerList.svelte'
   import type { Action } from '../lib/containers.svelte'
   import { CONTAINERS, stacksOf } from '../lib/fakeApi'

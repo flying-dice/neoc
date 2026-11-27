@@ -1,6 +1,6 @@
 <!-- @organism ListSidebar — the smart lists and the person's own, each with how many todos it holds, and the field a new list is named in; a tap on a list shows it -->
 <script lang="ts">
-  import type { List } from 'app:rpc'
+  type List = VosApp.Todos.List
   import Composer from '../molecules/Composer.svelte'
   import { SMART, listView, sameView, smart, type SmartId, type View } from '../lib/views'
 

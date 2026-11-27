@@ -189,7 +189,9 @@ impl Scheduler {
     }
 
     fn spawn_task(&self, future: impl Future<Output = ()> + Send + 'static) -> tokio::task::AbortHandle {
-        let abort = self.life.spawn(future).abort_handle();
+        // the task carries the span it was started in: what it does later is in the trace of the call that started it
+        let abort =
+            self.life.spawn(tracing::Instrument::instrument(future, tracing::Span::current())).abort_handle();
         self.handles.lock().push(abort.clone(), |handle| !handle.is_finished());
         abort
     }

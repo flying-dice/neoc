@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Notes",
-    "version": "0.1.0",
-    "description": "Folders of notes, for you and your agents: write one, pin it, search them all, and get a deleted one back."
-  },
-  "x-app": {
-    "id": "notes",
-    "icon": "square.and.pencil",
-    "tint": "yellow",
-    "description": "Folders of notes, for you and your agents: write one, pin it, search them all, and get a deleted one back.",
-    "window": {
-      "w": 960,
-      "h": 640,
-      "minW": 420,
-      "minH": 420
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "board",
+      "name": "_board",
       "summary": "Every folder and every note, the most recently edited first. A note is listed by its title and a line of what follows; `read` gives the whole of one. Notes deleted more than 30 days ago are gone.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "addFolder",
+      "name": "_add_folder",
       "summary": "Add a folder, and answer with the board as it now stands.",
       "params": [
         {
@@ -57,7 +44,7 @@
       ]
     },
     {
-      "name": "removeFolder",
+      "name": "_remove_folder",
       "summary": "Delete a folder. Its notes go to Recently Deleted.",
       "params": [
         {
@@ -82,7 +69,7 @@
       ]
     },
     {
-      "name": "create",
+      "name": "_create",
       "summary": "Start a blank note in a folder.",
       "params": [
         {
@@ -107,7 +94,7 @@
       ]
     },
     {
-      "name": "read",
+      "name": "_read",
       "summary": "The whole text of one note.",
       "params": [
         {
@@ -132,7 +119,7 @@
       ]
     },
     {
-      "name": "write",
+      "name": "_write",
       "summary": "Replace the text of a note. Its first line is its title.",
       "params": [
         {
@@ -165,7 +152,7 @@
       ]
     },
     {
-      "name": "pin",
+      "name": "_pin",
       "summary": "Pin a note to the top of its list, or unpin it.",
       "params": [
         {
@@ -197,7 +184,7 @@
       ]
     },
     {
-      "name": "move",
+      "name": "_move",
       "summary": "Move a note to another folder.",
       "params": [
         {
@@ -229,7 +216,7 @@
       ]
     },
     {
-      "name": "remove",
+      "name": "_remove",
       "summary": "Delete a note: it goes to Recently Deleted, where it stays for 30 days. A note with nothing in it is gone at once.",
       "params": [
         {
@@ -254,7 +241,7 @@
       ]
     },
     {
-      "name": "restore",
+      "name": "_restore",
       "summary": "Bring a deleted note back to its folder.",
       "params": [
         {
@@ -279,7 +266,7 @@
       ]
     },
     {
-      "name": "purge",
+      "name": "_purge",
       "summary": "Delete a deleted note for good.",
       "params": [
         {
@@ -304,7 +291,7 @@
       ]
     },
     {
-      "name": "search",
+      "name": "_search",
       "summary": "The notes whose text holds what is asked for, whatever its capitals. Deleted notes are not searched.",
       "params": [
         {
@@ -322,6 +309,183 @@
           "$ref": "#/components/schemas/Found"
         }
       }
+    },
+    {
+      "name": "list_notes",
+      "summary": "List the notes",
+      "x-readOnly": true,
+      "description": "The notes, the most recently edited first: each with its id, its title (its first line), the line after it, the folder it is in, whether it is pinned and when it was last edited. Give `folder` for one folder only, and `search` for the notes whose text holds some words. Deleted notes are left out. `read_note` gives the whole text of one.",
+      "params": [
+        {
+          "name": "folder",
+          "required": false,
+          "description": "The name of a folder; every folder when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "search",
+          "required": false,
+          "description": "Words the note's text must hold",
+          "schema": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Listed"
+              }
+            }
+          },
+          "required": [
+            "notes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "read_note",
+      "summary": "Read a note",
+      "x-readOnly": true,
+      "description": "The whole text of a note, by its id (`list_notes` gives the ids).",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "description": "The id of the note",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "read",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "pinned": {
+              "type": "boolean"
+            },
+            "edited": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "body",
+            "pinned",
+            "edited"
+          ]
+        }
+      }
+    },
+    {
+      "name": "create_note",
+      "summary": "Write a note",
+      "description": "Write a new note in a folder (the first folder when none is named). Its first line is its title.",
+      "params": [
+        {
+          "name": "body",
+          "required": true,
+          "description": "The text of the note; its first line is its title",
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        },
+        {
+          "name": "folder",
+          "required": false,
+          "description": "The name of the folder to put it in; the first folder when left out",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "created",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "folder": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "folder"
+          ]
+        }
+      }
+    },
+    {
+      "name": "append_to_note",
+      "summary": "Add to a note",
+      "description": "Add text to the end of a note, on a line of its own, by the note's id (`list_notes` gives the ids).",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "description": "The id of the note",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "description": "What to add",
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        }
+      ],
+      "result": {
+        "name": "appended",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title"
+          ]
+        }
+      }
+    },
+    {
+      "name": "notes_changed",
+      "summary": "Notes were written by an agent: the open windows read the board again.",
+      "params": []
     }
   ],
   "components": {
@@ -430,6 +594,38 @@
         },
         "required": [
           "notes"
+        ]
+      },
+      "Listed": {
+        "type": "object",
+        "description": "A note as an agent reads it in a list: its folder by name.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "edited": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "preview",
+          "folder",
+          "pinned",
+          "edited"
         ]
       }
     }

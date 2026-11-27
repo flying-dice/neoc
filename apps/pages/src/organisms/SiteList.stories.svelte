@@ -1,7 +1,8 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Settings, Site } from 'app:rpc'
+  type Settings = VosApp.Pages.Settings
+  type Site = VosApp.Pages.Site
   import SiteList from './SiteList.svelte'
   import { NO_FOLDER, SETTINGS, SITES } from '../lib/fakeApi'
   import type { Editing, SiteDraft } from '../lib/pages.svelte'

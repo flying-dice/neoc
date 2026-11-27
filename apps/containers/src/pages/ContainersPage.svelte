@@ -8,7 +8,7 @@
   import { isUp } from '../lib/format'
 
   interface Props {
-    /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
+    /** This window's state; the composition root builds it with the real `rpc` and `events`, a story with a fake. */
     containers: Containers
     /** How often the logs that are shown are read again while their container runs, in milliseconds. */
     logsEvery?: number

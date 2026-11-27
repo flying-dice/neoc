@@ -1,4 +1,4 @@
-//! `app.id`, `app.openWindow`, `app.notify`, `app.emit`, `app.agents`.
+//! `app.id`, `app.open_window`, `app.notify`, `app.agents`.
 
 use super::{json::Json, shared};
 use crate::vm::{Effect, Shared};
@@ -26,26 +26,23 @@ impl IntoLuaRet for ThisApp {
 }
 
 mlua_ir::unknown_reason!(
-    /// Why the data of a window or an event has no declared shape.
+    /// Why the params of a window have no declared shape.
     PageData = "JSON the app hands its own page: its shape is the app's"
 );
 
-/// What `app.openWindow` hands the page: named JSON values.
+/// What `app.open_window` hands the page: named JSON values.
 pub type WindowParams = Json<BTreeMap<String, Unknown<PageData>>>;
 
-/// The data of an event: any JSON value.
-pub type EventData = Json<Unknown<PageData>>;
-
 pub(super) fn open_window(sh: &Shared, params: Option<WindowParams>) -> mlua::Result<()> {
-    sh.writable("app.openWindow")?;
+    sh.writable("app.open_window")?;
     let params = match params.map(|params| params.value) {
         None => Value::Null,
         Some(named @ Value::Object(_)) => named,
         // an empty table reads as `[]`: no parameters
         Some(Value::Array(none)) if none.is_empty() => Value::Null,
-        // an app has one window, so there is no name to give: `app.openWindow("settings")` is a mistake
+        // an app has one window, so there is no name to give: `app.open_window("settings")` is a mistake
         Some(_) => return Err(mlua::Error::runtime(
-            "app.openWindow: `params` is a table of named values (an app has one window: it takes no name)",
+            "app.open_window: `params` is a table of named values (an app has one window: it takes no name)",
         )),
     };
     sh.push_effect(Effect::OpenWindow { name: Shared::WINDOW.to_owned(), params })
@@ -81,45 +78,6 @@ pub(super) fn notify(sh: &Shared, notification: Notification) -> mlua::Result<()
         )));
     }
     sh.push_notification(vos_domain::Notification { app: sh.app.clone(), title, body })
-}
-
-/// The longest event name `app.emit` takes.
-const MAX_EVENT_NAME: usize = 64;
-/// The most JSON bytes of data one event carries: it travels to every open client of the app.
-pub const MAX_EVENT_BYTES: usize = 64 * 1024;
-/// The most events that may wait to be sent: a loop that emits faster than the host sends gets an error, not an
-/// unbounded queue.
-const MAX_QUEUED_EVENTS: usize = 256;
-
-/// `app.emit(name, data?)`: it is a change to the world like `app.notify`, so a `readOnly` tool may not.
-pub(super) fn emit(sh: &Shared, name: String, data: Option<EventData>) -> mlua::Result<()> {
-    sh.writable("app.emit")?;
-    let valid = !name.is_empty()
-        && name.len() <= MAX_EVENT_NAME
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'));
-    if !valid {
-        return Err(mlua::Error::runtime(format!(
-            "app.emit: an event name is 1 to {MAX_EVENT_NAME} letters, digits, . _ : or -"
-        )));
-    }
-    if name.starts_with("host:") {
-        return Err(mlua::Error::runtime("app.emit: names starting with `host:` are the host's own"));
-    }
-    let data = data.map_or(Value::Null, |data| data.value);
-    if data.to_string().len() > MAX_EVENT_BYTES {
-        return Err(mlua::Error::runtime(format!(
-            "app.emit: the data of an event is at most {MAX_EVENT_BYTES} bytes of JSON"
-        )));
-    }
-    let mut effects = sh.effects.lock();
-    let waiting = effects.iter().filter(|e| matches!(e, Effect::Emit { .. })).count();
-    if waiting >= MAX_QUEUED_EVENTS {
-        return Err(mlua::Error::runtime(format!(
-            "app.emit: {MAX_QUEUED_EVENTS} events are already waiting to be sent"
-        )));
-    }
-    effects.push(Effect::Emit { name, data });
-    Ok(())
 }
 
 /// What an app may know of an agent contact: never grants, tokens or launch commands.

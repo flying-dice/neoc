@@ -99,7 +99,7 @@ for (const id of FIXTURE_APPS) {
       await expect(frame(page).getByTestId(`${id}-app`)).toBeVisible()
       const title = unique('From the agent')
       await expect(frame(page).locator('li', { hasText: title })).toHaveCount(0)
-      // the agent calls the app's tool over MCP; the tool tells the open window with app.emit: no reload, no click
+      // the agent calls the app's tool over MCP; the tool tells the open window with its `tasks_changed` notification: no reload, no click
       const answer = await callTool(`${id}__add_task`, { title })
       expect(answer).toContain('tasks')
       await expect(frame(page).locator('li', { hasText: title })).toBeVisible()
@@ -194,9 +194,9 @@ for (const id of FIXTURE_APPS) {
       errors.splice(0, errors.length, ...errors.filter((e) => !refused.includes(e)))
     })
 
-    test(`AF13 (${id}): the router refuses a call the definition does not allow`, async ({ page }) => {
+    test(`AF13 (${id}): the bus refuses a call the contract does not allow`, async ({ page }) => {
       await openDesktop(page)
-      // what a client could send if it ignored its generated types: the shell forwards it, the router answers
+      // what a client could send if it ignored its generated types: the shell forwards it, the bus holds it to the contract
       const answer = (method: string, args: unknown): Promise<{ code?: number; message: string }> =>
         page.evaluate(
           async ([app, m, a]) => {
@@ -212,14 +212,14 @@ for (const id of FIXTURE_APPS) {
           },
           [id, method, args] as const
         )
-      expect(await answer('add', { title: 5 })).toEqual({
+      expect(await answer('_add', { title: 5 })).toEqual({
         code: -32602,
-        message: 'Invalid params: params.title must be a string, not a number'
+        message: 'Invalid params: /title: 5 is not of type "string"'
       })
-      expect(await answer('add', {})).toEqual({ code: -32602, message: 'Invalid params: params.title is required' })
-      expect(await answer('toggle', { id: 0 })).toEqual({
+      expect(await answer('_add', {})).toEqual({ code: -32602, message: 'Invalid params: "title" is a required property' })
+      expect(await answer('_toggle', { id: 0 })).toEqual({
         code: -32602,
-        message: 'Invalid params: params.id must be at least 1'
+        message: 'Invalid params: /id: 0 is less than the minimum of 1'
       })
       expect(await answer('delete', {})).toEqual({ code: -32601, message: 'Method not found: delete' })
       // and the window is unharmed: it still lists what is there
@@ -229,7 +229,7 @@ for (const id of FIXTURE_APPS) {
 
     test(`AF14 (${id}): the app declares what its page needs and the host applies it`, async ({ page }) => {
       const declared = id === 'tasks-react'
-      // the page's policy is the host's, built from `x-app`: nothing external unless the app named it, and never scripts
+      // the page's policy is the host's, built from `vos.csp` and `vos.permissions` in its package.json: nothing external unless the app named it, and never scripts
       const response = await page.request.get(`/apps/${id}/static/`)
       const csp = response.headers()['content-security-policy'] ?? ''
       expect(csp).toContain('sandbox allow-scripts')
@@ -478,7 +478,7 @@ test('AF15: a page whose script throws while it loads is reported with its own m
   const dir = mkdtempSync(join(tmpdir(), 'vos-broken-'))
   try {
     const files: Record<string, string> = {
-      'app.luau': 'return { ping = function() return "pong" end }\n',
+      'app.luau': 'RPC.on_request("ping", function() return "pong" end)\n',
       'static/index.html':
         '<!doctype html>\n<html lang="en"><head><title>Broken</title><script src="/apps/bridge.js"></script></head>' +
         '<body><div id="root"></div><script type="module" src="./boom.js"></script></body></html>\n',
@@ -548,7 +548,7 @@ test('AF10: an app whose handlers never answer is stuck alone: the shell, anothe
         }
         w.__hung = [
           ...(w.__hung ?? []),
-          ...Array.from({ length: count }, () => w.__rpc('hang').catch((e: unknown) => String(e)))
+          ...Array.from({ length: count }, () => w.__rpc('_hang').catch((e: unknown) => String(e)))
         ]
       }, 10)
   await startHung()
@@ -591,7 +591,7 @@ test('AF11: uninstalling an app answers the calls its handlers still hold, so th
       __direct: Promise<string>[]
     }
     w.__direct = Array.from({ length: 5 }, () =>
-      w.__vos.host.api.call('app.call', { app, method: 'hang', args: null }).then(
+      w.__vos.host.api.call('app.call', { app, method: '_hang', args: null }).then(
         () => 'answered',
         (e: unknown) => `refused: ${e instanceof Error ? e.message : String(e)}`
       )

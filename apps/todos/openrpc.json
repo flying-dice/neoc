@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Todos",
-    "version": "0.1.0",
-    "description": "Lists of things to do, for you and your agents: add a todo, give it a day, flag it, tick it off."
-  },
-  "x-app": {
-    "id": "todos",
-    "icon": "checkmark",
-    "tint": "blue",
-    "description": "Lists of things to do, for you and your agents: add a todo, give it a day, flag it, tick it off.",
-    "window": {
-      "w": 860,
-      "h": 600,
-      "minW": 420,
-      "minH": 420
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "board",
+      "name": "_board",
       "summary": "Every list and its todos: the open ones in the order they were added, then the completed ones, the most recently completed first.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "addList",
+      "name": "_add_list",
       "summary": "Add a list, and answer with the board as it now stands.",
       "params": [
         {
@@ -64,7 +51,7 @@
       ]
     },
     {
-      "name": "removeList",
+      "name": "_remove_list",
       "summary": "Delete a list and the todos in it.",
       "params": [
         {
@@ -89,7 +76,7 @@
       ]
     },
     {
-      "name": "add",
+      "name": "_add",
       "summary": "Add a todo to a list.",
       "params": [
         {
@@ -139,7 +126,7 @@
       ]
     },
     {
-      "name": "update",
+      "name": "_update",
       "summary": "Change a todo: only what is given changes.",
       "params": [
         {
@@ -197,7 +184,7 @@
       ]
     },
     {
-      "name": "toggle",
+      "name": "_toggle",
       "summary": "Complete a todo, or bring a completed one back.",
       "params": [
         {
@@ -222,7 +209,7 @@
       ]
     },
     {
-      "name": "remove",
+      "name": "_remove",
       "summary": "Delete a todo.",
       "params": [
         {
@@ -245,6 +232,158 @@
           "message": "There is no such todo."
         }
       ]
+    },
+    {
+      "name": "list_todos",
+      "summary": "List the todos",
+      "x-readOnly": true,
+      "description": "The todos that are still to do, with the list each is in, its notes, the day it is due (2026-06-09, empty for none) and whether it is flagged. Give `list` for one list only, and `completed` for the completed todos instead.",
+      "params": [
+        {
+          "name": "list",
+          "required": false,
+          "description": "The name of a list; every list when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "completed",
+          "required": false,
+          "description": "True for the completed todos instead of the open ones",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "todos": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Listed"
+              }
+            }
+          },
+          "required": [
+            "todos"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add_todo",
+      "summary": "Add a todo",
+      "description": "Add a todo to a list (the first list when none is named), with optional notes, a day it is due and a flag.",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "description": "What has to be done",
+          "schema": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        {
+          "name": "list",
+          "required": false,
+          "description": "The name of the list to add it to; the first list when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "notes",
+          "required": false,
+          "description": "Anything worth remembering about it",
+          "schema": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        {
+          "name": "due",
+          "required": false,
+          "description": "The day it is due, as 2026-06-09",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "flagged",
+          "required": false,
+          "description": "True to flag it",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "added",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "list": {
+              "type": "string",
+              "description": "The name of the list it went to."
+            }
+          },
+          "required": [
+            "id",
+            "list"
+          ]
+        }
+      }
+    },
+    {
+      "name": "complete_todo",
+      "summary": "Complete a todo",
+      "description": "Tick a todo off, by its id (`list_todos` gives the ids).",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "description": "The id of the todo",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "completed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "done": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "done"
+          ]
+        }
+      }
+    },
+    {
+      "name": "todos_changed",
+      "summary": "The todos changed",
+      "description": "Sent when a tool of an agent changed the todos: the open windows read the board again.",
+      "params": []
     }
   ],
   "components": {
@@ -338,6 +477,45 @@
         "required": [
           "lists",
           "todos"
+        ]
+      },
+      "Listed": {
+        "type": "object",
+        "description": "A todo as an agent reads it: its list by name.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "list": {
+            "type": "string",
+            "description": "The name of the list it is in."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Empty when there are none."
+          },
+          "due": {
+            "type": "string",
+            "description": "The day it is due, as 2026-06-09; empty when it has none."
+          },
+          "flagged": {
+            "type": "boolean"
+          },
+          "done": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "list",
+          "notes",
+          "due",
+          "flagged",
+          "done"
         ]
       }
     }

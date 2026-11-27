@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Pages: static sites served from folders of this machine, by an nginx container this app owns. A Svelte client on the kit, the sites and settings kept in Luau and turned into the container through vnd:bollard, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "Host websites from folders of this machine: give each site a port, a name, or both. They are served by nginx, in a container in Docker which this app makes and keeps.",
+  "vos": {
+    "title": "Pages",
+    "icon": "globe",
+    "tint": "green",
+    "window": {
+      "w": 760,
+      "h": 620,
+      "minW": 420,
+      "minH": 440
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6014 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

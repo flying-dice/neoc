@@ -1,6 +1,7 @@
 <!-- @organism ServerHeader — the web server at the top of the window: how it is doing, and, when it has sites to serve and is not serving them, why and the button that tries again -->
 <script lang="ts">
-  import type { Server, Site } from 'app:rpc'
+  type Server = VosApp.Pages.Server
+  type Site = VosApp.Pages.Site
   import { StateDot } from '@vos/docker'
   import { attentionOf, serverLabel, serverTone } from '../lib/format'
 

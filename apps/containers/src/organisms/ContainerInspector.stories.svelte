@@ -2,7 +2,9 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
-  import type { Container, Details, Logs } from 'app:rpc'
+  type Container = VosApp.Containers.Container
+  type Details = VosApp.Containers.Details
+  type Logs = VosApp.Containers.Logs
   import ContainerInspector from './ContainerInspector.svelte'
   import type { Action, Tab } from '../lib/containers.svelte'
   import { container } from '../lib/fakeApi'

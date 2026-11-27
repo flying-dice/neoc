@@ -1,6 +1,6 @@
 <!-- @organism FolderSidebar — All Notes, the person's folders and Recently Deleted, each with how many notes it holds, and the field a new folder is named in; a tap on one shows it -->
 <script lang="ts">
-  import type { Folder } from 'app:rpc'
+  type Folder = VosApp.Notes.Folder
   import Composer from '../molecules/Composer.svelte'
   import { ALL, DELETED, folderView, sameView, type View } from '../lib/views'
 

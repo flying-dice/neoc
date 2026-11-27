@@ -1,7 +1,8 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Server, Settings } from 'app:rpc'
+  type Server = VosApp.Dns.Server
+  type Settings = VosApp.Dns.Settings
   import ServerHeader from './ServerHeader.svelte'
   import { IMAGE, PORT_TAKEN, SETTINGS } from '../lib/fakeApi'
 

@@ -1,5 +1,7 @@
 /** What the organisms' stories draw: a home lab as one reading of it, written out (the page's stories run a fake backend). */
-import type { Detail, Overview, ProcessRow } from 'app:rpc'
+type Detail = VosApp.Processes.Detail
+type Overview = VosApp.Processes.Overview
+type ProcessRow = VosApp.Processes.ProcessRow
 import { MACHINE, PROGRAMS } from '../lib/fakeApi'
 
 /** The machine after two readings: every rate is there. */

@@ -1,20 +1,13 @@
 /**
  * A backend written in TypeScript: `server/main.ts` beside the page, compiled to Luau by TypeScriptToLua as part of the
- * same build. The developer writes
+ * same build. The developer writes what a Luau backend does, against the globals the host gives it:
  *
  *     import { db } from 'vos:app'
- *     import type { Handlers } from '../.app/server/rpc'
- *     const handlers: Handlers = { add: (ctx, params) => ... }
- *     export default handlers
+ *     RPC.on_request('add', (params, ctx) => ...)
  *
- * and the plugin generates, into `.app/server/`:
- *   - `vos.d.ts`: the host's declarations of everything a backend may import (`vos:app`, the `std:`, `lib:` and `vnd:` modules)
- *     and the global `app`: a copy of `types/generated/vos.d.ts`, which is generated from the Luau declarations;
- *   - `rpc.d.ts` and `rpc.lua`: the types of the definition and the `Handlers` interface, and the router that holds every call
- *     and every result to the definition. The router is the Luau one (`emit-luau.ts`), the same text a Luau backend gets;
- *   - `entry.ts`: the backend's entry, the handlers of `server/main.ts` behind the router. It is where a handler that is
- *     missing or of the wrong shape is a type error;
- *   - `tsconfig.json`: the TypeScript settings of the backend, which `server/tsconfig.json` extends for the editor.
+ * `types/vos.backend.d.ts` (`emit-backend-ts.ts`) types those globals for the app, and `types/tsconfig.backend.json` says how
+ * the backend is checked: by the build, which compiles with it, and by the editor, through the `server/tsconfig.json`
+ * that extends it. A type error is a failed build; a wrong method name, params or result in `RPC` is one.
  *
  * The compiler's output is one Luau chunk, the app's `app.luau`: TypeScriptToLua bundles the modules itself, so darklua,
  * luau-lsp and StyLua have no part in a TypeScript backend.
@@ -31,135 +24,36 @@
  *     `getinfo`): the bundle starts with a local `debug` that answers with no stack, so `throw new Error("...")` and
  *     `String(error)` work.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import * as tstl from 'typescript-to-lua'
-import type { Definition } from './definition.ts'
-import { contractTypes } from './emit-client.ts'
-import { emitLuauRouter } from './emit-luau.ts'
-import { jsDoc, lineComment } from './escape.ts'
-import { findDefinitions } from './luau-tools.ts'
-import { pascal, tsKey } from './names.ts'
 
-/** Where the generated files of a TypeScript backend go, under the generated folder. */
-export const SERVER_DIR = 'server'
+/** The backend's entry, relative to the project. */
+export const BACKEND_TS = 'server/main.ts'
+/** What the build writes for a TypeScript backend, under the generated folder: its declarations and how it is checked. */
+export const BACKEND_DECLARATIONS = 'vos.backend.d.ts'
+export const BACKEND_TSCONFIG = 'tsconfig.backend.json'
 
 /** The chunk the compiler writes: the whole backend. Never on disk: the build takes it from memory. */
 const BUNDLE = 'app.lua'
 
 /** A path as TypeScript and JSON write it: `/` between folders on every platform. */
-const posix = (path: string): string => path.replaceAll('\\', '/')
+export const posix = (path: string): string => path.replaceAll('\\', '/')
 
 /**
  * The folder TypeScript finds `@typescript-to-lua/language-extensions` in (the types of what the compiler adds to the
  * language: `LuaMultiReturn`, `LuaTable`), which the host's declarations reference: the plugin's own copy, so a project
  * needs nothing installed for it.
  */
-function typeRoot(): string {
+export function typeRoot(): string {
   return posix(resolve(dirname(createRequire(import.meta.url).resolve('@typescript-to-lua/language-extensions/package.json')), '../..'))
-}
-
-/** The host's TypeScript declarations: next to the Luau ones (`VOS_DEFINITIONS`, else `types/generated/` above the project). */
-export function findTypeScriptDefinitions(project: string): string {
-  const file = join(dirname(findDefinitions(project)), 'vos.d.ts')
-  if (!existsSync(file)) throw new Error(`${file} not found: the host's TypeScript declarations are generated next to its Luau ones (bun run codegen)`)
-  return file
 }
 
 /** The modules the declarations declare (`declare module "std:fs"`): the host answers them, so the compiler leaves their `require` alone. */
 export function declaredModules(declarations: string): string[] {
   return [...declarations.matchAll(/^declare module "([^"]+)" \{$/gm)].map((m) => m[1] as string)
-}
-
-/** `.app/server/rpc.d.ts`: the types of the definition, the `Handlers` interface the developer implements, and the router. */
-export function emitServerTypes(definition: Definition, source: string): string {
-  const out: string[] = []
-  out.push(`// GENERATED by @vos/vite-plugin from ${lineComment(source)}: do not edit (\`bun run generate\` writes it).`)
-  out.push(`// The backend's side of the app's RPC, in TypeScript: ${lineComment(definition.title)} ${lineComment(definition.version)}.`)
-  out.push('')
-  out.push("/** What a handler gets: who is calling (the person's own client) and when. */")
-  out.push('export type Context = vos_app_Context')
-  out.push('')
-  out.push(...contractTypes(definition))
-  out.push('')
-  out.push('/** The handlers of the definition: the implementation the developer writes, one function per method. */')
-  out.push('export interface Handlers {')
-  for (const method of definition.methods) {
-    const type = pascal(method.name)
-    const text = [method.summary, method.description].filter((t) => t !== undefined).join('\n\n') || undefined
-    const params = method.params.length > 0 ? `, params: ${type}Params` : ''
-    // `this: void`: the router calls a handler as a plain function, so the compiler writes it without a `self`
-    out.push(`${jsDoc(text, '  ')}  ${tsKey(method.name)}(this: void, ctx: Context${params}): ${type}Result`)
-  }
-  out.push('}')
-  out.push('')
-  out.push('/** The handlers behind the checks of the definition: what the backend\'s entry returns to the host. */')
-  out.push('export function router(this: void, handlers: Handlers): vos_app_Handlers')
-  out.push('')
-  return out.join('\n')
-}
-
-/**
- * `.app/server/rpc.lua`: the module `rpc.d.ts` declares. TypeScriptToLua puts a `.lua` file that has a declaration file
- * beside it into the bundle as it is; the text is Luau (the host runs nothing else), under the name the compiler looks for.
- * Its type annotations name types (`Handlers`, `vos_app_Handlers`) that only the Luau backend's `rpc.luau` defines: Luau
- * compiles them away, and nothing type checks this file (the TypeScript side is checked against `rpc.d.ts`).
- */
-export function emitServerRouter(definition: Definition, source: string): string {
-  return `-- GENERATED by @vos/vite-plugin from ${lineComment(source)}: do not edit. The router of the app's RPC, for a backend in TypeScript.\n${emitLuauRouter(definition)}`
-}
-
-/** `.app/server/entry.ts`: the backend's entry, which the build compiles: the developer's handlers, behind the router. */
-export function emitServerEntry(generated: string, backend: string): string {
-  const main = posix(relative(join(generated, SERVER_DIR), backend)).replace(/\.ts$/, '')
-  return `// GENERATED by @vos/vite-plugin: do not edit. The backend's entry: the handlers ${lineComment(backend)} exports by default, behind the router.
-import handlers from ${JSON.stringify(main.startsWith('.') ? main : `./${main}`)}
-import { router } from './rpc'
-
-export = router(handlers)
-`
-}
-
-/**
- * `.app/server/tsconfig.json`: how the backend's TypeScript is checked, by the build and (through the one line of
- * `server/tsconfig.json` that extends it) by the editor. `types` is empty so that nothing of the page's world (`@types/*`,
- * the DOM) is in scope: a backend has TypeScript's own library, the host's modules and the global `app`. `typeRoots` is
- * where this machine has the compiler's own types (the file is generated, never committed).
- * `module: preserve` is what lets the generated entry return the handlers themselves (`export =`).
- */
-export function emitServerTsconfig(generated: string, backend: string): string {
-  const up = posix(relative(join(generated, SERVER_DIR), '.'))
-  const config = {
-    compilerOptions: {
-      target: 'ESNext',
-      lib: ['ESNext'],
-      module: 'preserve',
-      moduleResolution: 'bundler',
-      strict: true,
-      types: [],
-      typeRoots: [typeRoot()],
-      noEmit: true,
-      rootDir: up
-    },
-    include: [`${up}/${posix(dirname(backend))}/**/*.ts`, './*.ts'],
-    // a test beside the backend is the test runner's, not the app's
-    exclude: [`${up}/${posix(dirname(backend))}/**/*.test.ts`, `${up}/${posix(dirname(backend))}/**/*.spec.ts`]
-  }
-  return `${JSON.stringify(config, null, 2)}\n`
-}
-
-/** The files of a TypeScript backend, relative to the project. */
-export function serverFiles(project: string, definition: Definition, source: string, generated: string, backend: string): { path: string; contents: string }[] {
-  const dir = `${generated}/${SERVER_DIR}`
-  return [
-    { path: `${dir}/vos.d.ts`, contents: readFileSync(findTypeScriptDefinitions(project), 'utf8') },
-    { path: `${dir}/rpc.d.ts`, contents: emitServerTypes(definition, source) },
-    { path: `${dir}/rpc.lua`, contents: emitServerRouter(definition, source) },
-    { path: `${dir}/entry.ts`, contents: emitServerEntry(generated, backend) },
-    { path: `${dir}/tsconfig.json`, contents: emitServerTsconfig(generated, backend) }
-  ]
 }
 
 /** What the bundle starts with: see the module's doc. */
@@ -292,17 +186,16 @@ export class BackendError extends Error {
 }
 
 /**
- * The Luau text of the backend: `.app/server/entry.ts` and everything it imports, type checked and compiled into one chunk
- * that returns the handlers behind the router. The generated files must be there (`generate`). Throws a [`BackendError`]
- * that names every problem: a type error (a handler that does not match the definition is one), and what TypeScriptToLua
- * does not compile.
+ * The Luau text of the backend: `server/main.ts` and everything it imports, type checked against `types/` and compiled into
+ * one chunk. The generated files must be there (`generate`). Throws a [`BackendError`] that names every problem: a type
+ * error (an `RPC` call or handler that does not match the contract is one), and what TypeScriptToLua does not compile.
  */
-export function compileBackend(project: string, generated: string, backend: string): string {
-  const dir = resolve(project, generated, SERVER_DIR)
-  const declarations = readFileSync(join(dir, 'vos.d.ts'), 'utf8')
+export function compileBackend(project: string, generated: string): string {
+  const dir = resolve(project, generated)
+  const declarations = readFileSync(join(dir, BACKEND_DECLARATIONS), 'utf8')
   let bundle: string | undefined
   const result = tstl.transpileProject(
-    join(dir, 'tsconfig.json'),
+    join(dir, BACKEND_TSCONFIG),
     {
       noEmit: false,
       noEmitOnError: true,
@@ -310,7 +203,7 @@ export function compileBackend(project: string, generated: string, backend: stri
       outDir: join(dir, 'out'),
       luaTarget: tstl.LuaTarget.Luau,
       luaBundle: BUNDLE,
-      luaBundleEntry: join(dir, 'entry.ts'),
+      luaBundleEntry: resolve(project, BACKEND_TS),
       luaLibImport: tstl.LuaLibImportKind.RequireMinimal,
       noHeader: true,
       // a traceback through source maps needs the `debug` library
@@ -323,7 +216,7 @@ export function compileBackend(project: string, generated: string, backend: stri
     }
   )
   const problems = result.diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error).map((d) => describe(project, d))
-  if (problems.length > 0) throw new BackendError(backend, problems)
-  if (bundle === undefined) throw new BackendError(backend, ['the compiler wrote no bundle'])
+  if (problems.length > 0) throw new BackendError(BACKEND_TS, problems)
+  if (bundle === undefined) throw new BackendError(BACKEND_TS, ['the compiler wrote no bundle'])
   return bundle
 }

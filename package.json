@@ -6,7 +6,8 @@
     "client",
     "packages/*",
     "apps/*",
-    "e2e/apps/*"
+    "e2e/apps/*",
+    "crates/vos-lua/tests/fixtures/typescript"
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",

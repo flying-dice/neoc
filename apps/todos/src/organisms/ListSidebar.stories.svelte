@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { List } from 'app:rpc'
+  type List = VosApp.Todos.List
   import ListSidebar from './ListSidebar.svelte'
   import { REMINDERS } from '../lib/fakeApi'
   import { listView, smart, type SmartId, type View } from '../lib/views'

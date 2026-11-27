@@ -37,13 +37,23 @@ fn role(hint: Option<&str>) -> Role {
     }
 }
 
+/// `lib:tracing` opens the script's own spans: a span of its own around each of its calls would only stand between
+/// the script's span and its parent.
+fn spanned(call: &Call) -> bool {
+    call.module != Some("lib:tracing")
+}
+
 impl Host for Neoc {
     fn enter(&self, call: &Call) -> Option<Box<dyn Any>> {
-        Some(Box::new(span(call).entered()))
+        spanned(call).then(|| Box::new(span(call).entered()) as Box<dyn Any>)
     }
 
     fn wrap(&self, call: &Call, body: Body) -> Body {
-        Box::pin(leaf(role(call.hint), body.instrument(span(call))))
+        if spanned(call) {
+            Box::pin(leaf(role(call.hint), body.instrument(span(call))))
+        } else {
+            Box::pin(leaf(role(call.hint), body))
+        }
     }
 }
 

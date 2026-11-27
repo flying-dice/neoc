@@ -12,13 +12,12 @@
 --
 -- A function that changes something answers with an outcome: a status, a sentence for what the person needs to know,
 -- and the overview as it now stands, so the window that asked draws what the machine has.
-local rpc = require("../.app/rpc")
 local sm = require("vnd:service_manager")
 
 local manager = {}
 
 -- Why a call failed, as a sentence for the person, and which of the app's statuses it is.
-local function sentence(err: vnd_service_manager_Error): (rpc.Status, string)
+local function sentence(err: vnd_service_manager_Error): (services_Status, string)
   if err.kind == "permission_denied" then
     return "denied",
       "The operating system did not allow this. Changing a service needs administrator rights, which this app does not raise on its own."
@@ -38,11 +37,11 @@ local function sentence(err: vnd_service_manager_Error): (rpc.Status, string)
   return "failed", if err.message ~= "" then err.message else "The service manager refused, and did not say why."
 end
 
-local function variables(environment: { [string]: string }?): { rpc.Variable }?
+local function variables(environment: { [string]: string }?): { services_Variable }?
   if environment == nil then
     return nil
   end
-  local listed: { rpc.Variable } = {}
+  local listed: { services_Variable } = {}
   for name, value in environment do
     table.insert(listed, { name = name, value = value })
   end
@@ -52,7 +51,7 @@ local function variables(environment: { [string]: string }?): { rpc.Variable }?
   return listed
 end
 
-local function serviceOf(service: vnd_service_manager_Service): rpc.Service
+local function serviceOf(service: vnd_service_manager_Service): services_Service
   return {
     label = service.label,
     description = service.description,
@@ -80,7 +79,7 @@ local function open(): (vnd_service_manager_Manager?, string?)
   return opened, nil
 end
 
-local function describe(opened: vnd_service_manager_Manager): rpc.Manager
+local function describe(opened: vnd_service_manager_Manager): services_Manager
   local capabilities = opened:capabilities()
   return {
     available = true,
@@ -93,7 +92,7 @@ local function describe(opened: vnd_service_manager_Manager): rpc.Manager
   }
 end
 
-local function unavailable(problem: string): rpc.Overview
+local function unavailable(problem: string): services_Overview
   return {
     manager = {
       available = false,
@@ -109,7 +108,7 @@ local function unavailable(problem: string): rpc.Overview
 end
 
 -- every service the manager has, with what the manager can do; a manager that cannot list is an answer too
-function manager.overview(): rpc.Overview
+function manager.overview(): services_Overview
   local opened, problem = open()
   if not opened then
     return unavailable(problem or "")
@@ -119,23 +118,23 @@ function manager.overview(): rpc.Overview
     local _, why = sentence(err)
     return unavailable(why)
   end
-  local services: { rpc.Service } = {}
+  local services: { services_Service } = {}
   for _, service in assert(listed) do
     table.insert(services, serviceOf(service))
   end
   return { manager = describe(opened), services = services }
 end
 
-local function outcome(status: rpc.Status, message: string): rpc.Outcome
+local function outcome(status: services_Status, message: string): services_Outcome
   return { status = status, message = message, overview = manager.overview() }
 end
 
-local function failure(err: vnd_service_manager_Error): rpc.Outcome
+local function failure(err: vnd_service_manager_Error): services_Outcome
   local status, message = sentence(err)
-  return outcome(status :: rpc.Status, message)
+  return outcome(status :: services_Status, message)
 end
 
-local function opened(): (vnd_service_manager_Manager?, rpc.Outcome?)
+local function opened(): (vnd_service_manager_Manager?, services_Outcome?)
   local found, problem = open()
   if not found then
     return nil, outcome("failed", problem or "")
@@ -144,7 +143,7 @@ local function opened(): (vnd_service_manager_Manager?, rpc.Outcome?)
 end
 
 -- start, stop or restart a service
-function manager.control(action: "start" | "stop" | "restart", label: string): rpc.Outcome
+function manager.control(action: "start" | "stop" | "restart", label: string): services_Outcome
   local found, refused = opened()
   if not found then
     return assert(refused)
@@ -162,8 +161,8 @@ end
 
 function manager.configure(
   label: string,
-  change: { autostart: boolean?, description: string?, restart: rpc.Restart? }
-): rpc.Outcome
+  change: { autostart: boolean?, description: string?, restart: services_Restart? }
+): services_Outcome
   local found, refused = opened()
   if not found then
     return assert(refused)
@@ -185,12 +184,12 @@ function manager.configure(
     if status == "denied" or status == "failed" then
       message ..= " Part of the change may already have been made; the details show what the machine has now."
     end
-    return outcome(status :: rpc.Status, message)
+    return outcome(status :: services_Status, message)
   end
   return outcome("done", "")
 end
 
-function manager.register(spec: vnd_service_manager_Spec): rpc.Outcome
+function manager.register(spec: vnd_service_manager_Spec): services_Outcome
   local found, refused = opened()
   if not found then
     return assert(refused)
@@ -199,7 +198,7 @@ function manager.register(spec: vnd_service_manager_Spec): rpc.Outcome
   return if err then failure(err) else outcome("done", "")
 end
 
-function manager.unregister(label: string): rpc.Outcome
+function manager.unregister(label: string): services_Outcome
   local found, refused = opened()
   if not found then
     return assert(refused)

@@ -1,34 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Tasks (React)",
-    "version": "0.1.0",
-    "description": "A fixture: a task list whose client is written in React, on a Luau backend."
-  },
-  "x-app": {
-    "id": "tasks-react",
-    "icon": "checkmark",
-    "tint": "blue",
-    "description": "A fixture: a task list whose client is written in React, on a Luau backend.",
-    "window": {
-      "w": 420,
-      "h": 480,
-      "minW": 320,
-      "minH": 320
-    },
-    "csp": {
-      "resourceDomains": [
-        "https://cdn.example.com",
-        "https://*.images.example.org"
-      ]
-    },
-    "permissions": {
-      "camera": {}
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "list",
+      "name": "_list",
       "summary": "Every task, oldest first.",
       "params": [],
       "result": {
@@ -42,7 +20,7 @@
       }
     },
     {
-      "name": "add",
+      "name": "_add",
       "summary": "Add a task, and answer with the whole list.",
       "params": [
         {
@@ -72,7 +50,7 @@
       ]
     },
     {
-      "name": "toggle",
+      "name": "_toggle",
       "summary": "Tick a task off, or back on, and answer with the whole list.",
       "params": [
         {
@@ -95,7 +73,7 @@
       }
     },
     {
-      "name": "hang",
+      "name": "_hang",
       "summary": "Waits until an agent's `release_all` tool lets it go (a handler that waits on something that never answers: the journeys use it).",
       "params": [],
       "result": {
@@ -106,7 +84,7 @@
       }
     },
     {
-      "name": "release",
+      "name": "_release",
       "summary": "Lets the calls of `hang` that are waiting return.",
       "params": [],
       "result": {
@@ -117,7 +95,7 @@
       }
     },
     {
-      "name": "whoami",
+      "name": "_whoami",
       "summary": "Who is calling, and which app answered.",
       "params": [],
       "result": {
@@ -140,7 +118,7 @@
       }
     },
     {
-      "name": "saveDocument",
+      "name": "_save_document",
       "summary": "Write a text file into the app's Documents (the folders above it are made). The Files journeys use it to give the host's Files page something to browse.",
       "params": [
         {
@@ -174,6 +152,64 @@
           "message": "The file could not be written."
         }
       ]
+    },
+    {
+      "name": "add_task",
+      "summary": "Add a task",
+      "description": "Add a task to the list.",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "description": "What has to be done",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "added",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "tasks": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "tasks"
+          ]
+        }
+      }
+    },
+    {
+      "name": "list_tasks",
+      "summary": "List the tasks",
+      "x-readOnly": true,
+      "description": "The tasks on the list, with whether each is done.",
+      "params": [],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "tasks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          },
+          "required": [
+            "tasks"
+          ]
+        }
+      }
+    },
+    {
+      "name": "tasks_changed",
+      "summary": "The list changed outside the window (an agent added a task): read it again.",
+      "params": []
     }
   ],
   "components": {

@@ -1,0 +1,15 @@
+{
+  "name": "@vos-fixtures/typescript",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "A backend in TypeScript that tries what the compiler's output needs from an app's environment.",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@vos/vite-plugin": "workspace:*",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

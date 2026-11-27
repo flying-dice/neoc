@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Processes: how busy this machine is and the programs running on it, a Svelte client on the kit, the machine measured from Luau through vnd:sysinfo. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "How busy this machine is, and the programs running on it: look at one, and stop it.",
+  "vos": {
+    "title": "Processes",
+    "icon": "cpu",
+    "tint": "indigo",
+    "window": {
+      "w": 960,
+      "h": 640,
+      "minW": 360,
+      "minH": 420
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6022 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

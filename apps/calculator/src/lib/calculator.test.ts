@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { PressParams, Screen } from 'app:rpc'
+type PressParams = VosApp.Calculator.PressParams
+type Screen = VosApp.Calculator.Screen
 import { Calculator, type CalculatorRpc, type KeyStroke } from './calculator.svelte'
 import { createFailingApi, createFakeApi } from './fakeApi'
 

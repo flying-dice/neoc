@@ -4,7 +4,7 @@
  *  - the tokens come with the shared preview (`@vos/ui/styles.css`, the sheet `/kit/tokens.css` is generated from);
  *  - the `ui-*` elements are defined from the kit's source (`@vos/kit`), before any story is imported (the frame's
  *    `/kit/kit.js` is this same file, bundled);
- *  - there is no bridge and no `app:rpc`: the parts take what they show as props.
+ *  - there is no bridge and no app client (`@<app id>/rpc`): the parts take what they show as props.
  */
 import '@vos/kit'
 

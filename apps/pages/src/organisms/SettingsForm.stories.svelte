@@ -1,7 +1,8 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Engine, Server } from 'app:rpc'
+  type Engine = VosApp.Pages.Engine
+  type Server = VosApp.Pages.Server
   import SettingsForm from './SettingsForm.svelte'
   import { IMAGE } from '../lib/fakeApi'
 

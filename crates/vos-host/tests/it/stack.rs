@@ -33,16 +33,16 @@ use vos_sqlite::AppDb;
 
 const CASE: &str = "STACK_CASE";
 
-/// An app with one tool per recursion: through a `lib:cache` eviction callback, a `string.gsub` callback, a
+/// An app with one handler per recursion: through a `lib:cache` eviction callback, a `string.gsub` callback, a
 /// `__tostring` and a `__index`. Each reports whether the recursion ended in an error and how deep it got.
 const APP: &str = r#"
     local Cache = require("lib:cache").Cache
     local function probe(name, nest)
-      app.tool { name = name, run = function()
+      RPC.on_request(name, function()
         local depth = 0
         local ok, e = pcall(nest, function() depth = depth + 1 end)
         return { ok = ok, depth = depth, err = tostring(e) }
-      end }
+      end)
     end
     probe("on_evict", function(count)
       local cache
@@ -65,7 +65,6 @@ const APP: &str = r#"
       local t = setmetatable({}, { __index = function(t, k) count() return t[k] end })
       return t.x
     end)
-    return {}
 "#;
 
 async fn run_case(case: &str) -> String {
@@ -76,7 +75,7 @@ async fn run_case(case: &str) -> String {
     let data = Arc::new(AppDb::open(None, &[]).unwrap());
     let vm = AppVm::load(&AppId::parse("stack").unwrap(), package, data, VmConfig::default()).await.unwrap();
     let ctx = CallContext { actor: Actor::agent("claude", "Claude"), now_ms: 0 };
-    let out = vm.call_tool(case, json!({}), &ctx, false).await.unwrap();
+    let out = vm.call_handler(case, json!({}), &ctx).await.unwrap();
     assert_eq!(out["ok"], false, "{case}: the recursion never ended: {out}");
     assert!(out["depth"].as_u64().unwrap() >= 50, "{case}: stopped too early: {out}");
     format!("{case}: depth {} err {}", out["depth"], out["err"])

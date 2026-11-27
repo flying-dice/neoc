@@ -2,7 +2,8 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import Board from './Board.svelte'
-  import type { Issue, Status } from 'app:rpc'
+  type Issue = VosApp.Projects.Issue
+  type Status = VosApp.Projects.Status
   import { column } from '../lib/catalog'
   import { ISSUES } from '../lib/samples'
 

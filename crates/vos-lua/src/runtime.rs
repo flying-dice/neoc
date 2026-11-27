@@ -2,9 +2,14 @@
 //!
 //! An app that fails (it does not load, or a call raises) fails alone: its error is returned
 //! to that caller with the app's file and line, and no other VM, and not the host, is touched.
+//!
+//! The apps also reach each other here ([`Hub`]): `RPC.send_request` runs a handler in another app's VM, and an app's
+//! public notification (`RPC.send_notification` of a name without a leading `_`) is delivered to every other app that
+//! listens to it (`RPC.on_notification`), after its open pages are told.
 
-use crate::vm::{AppVm, Effect, VmConfig, VmError};
+use crate::vm::{AppPeers, AppVm, Effect, VmConfig, VmError};
 use async_trait::async_trait;
+use neoc_vm::lifecycle::BoxFuture;
 use neoc_vm::lifecycle::Life;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
@@ -13,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use vos_application::{
     panics,
     ports::{
-        AgentRoster, AppData, AppPackage, AppRuntime, AppTools, CallContext, LoadedApp, Notifier, PortResult,
+        AgentRoster, AppBus, AppData, AppPackage, AppRuntime, AppTools, CallContext, Notifier, PortResult,
         Shell,
     },
     FileStore, NoFiles, PortError,
@@ -21,9 +26,7 @@ use vos_application::{
 use vos_domain::{Actor, AppId, QualifiedToolName, ToolSpec};
 
 pub struct LuaRuntime {
-    vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
-    notifier: Arc<dyn Notifier>,
-    shell: Arc<dyn Shell>,
+    hub: Arc<Hub>,
     roster: Option<Arc<dyn AgentRoster>>,
     /// Where each app's `app.files` live (none unless the host gives a store).
     files: Arc<dyn FileStore>,
@@ -57,12 +60,178 @@ impl AppTools for LateTools {
     }
 }
 
+/// The RPC bus, bound after the runtime is built (the use case that implements it is built on the runtime), weakly. A
+/// runtime nothing binds (an adapter's tests) is its own bus: requests reach the backends only, notifications the
+/// shell and the backends.
+#[derive(Default)]
+struct LateBus(std::sync::OnceLock<std::sync::Weak<dyn AppBus>>);
+
+impl LateBus {
+    fn bound(&self) -> Option<Arc<dyn AppBus>> {
+        self.0.get().and_then(std::sync::Weak::upgrade)
+    }
+}
+
+/// The running apps, and where what they ask for goes: shared by the runtime and, weakly, by every app's VM (its
+/// `RPC.send_request`), so the apps' backends reach the bus through it.
+struct Hub {
+    vms: RwLock<HashMap<AppId, Arc<AppVm>>>,
+    notifier: Arc<dyn Notifier>,
+    shell: Arc<dyn Shell>,
+    bus: LateBus,
+}
+
+/// The time a call is made, for `ctx.now`.
+fn now_ms() -> u64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+}
+
+impl Hub {
+    fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
+        self.vms
+            .read()
+            .get(app)
+            .cloned()
+            .ok_or_else(|| PortError::NotFound(format!("app `{app}` is not running")))
+    }
+
+    /// Forward what the app asked for during a call: notifications and its window go to their ports.
+    async fn forward(&self, app: &AppId, vm: &AppVm) -> PortResult<()> {
+        self.deliver(app, vm.take_effects(), vm.life()).await
+    }
+
+    /// Deliver effects already taken from the VM, so a caller need not keep the VM alive while the ports work. Boxed:
+    /// a notification delivered to another app's listener can make that app ask for more.
+    fn deliver<'a>(
+        &'a self,
+        app: &'a AppId,
+        effects: Vec<Effect>,
+        life: &'a Life,
+    ) -> BoxFuture<'a, PortResult<()>> {
+        Box::pin(async move {
+            for effect in effects {
+                // An app that was unloaded (or replaced) while a call was in flight has nothing more to say: what it
+                // queued is dropped, not delivered to a shell and a notification list it no longer belongs to.
+                if life.is_closed() {
+                    break;
+                }
+                // one effect whose port panics costs only that effect: the rest of the batch is still delivered (see
+                // `vos_application::panics`)
+                let delivered = panics::caught(async {
+                    match effect {
+                        Effect::Notify(n) => self.notifier.notify(n).await?,
+                        Effect::Publish { name, params } => self.publish(app, &name, params).await,
+                        Effect::HandlersChanged => {
+                            if let Some(bus) = self.bus.bound() {
+                                bus.handlers_changed(app).await;
+                            }
+                        }
+                        Effect::OpenWindow { name, params } => {
+                            let params = match params {
+                                Value::Object(map) => map,
+                                _ => Map::new(),
+                            };
+                            self.shell.open_window(app, &name, params).await;
+                        }
+                    }
+                    Ok::<(), PortError>(())
+                })
+                .await;
+                match delivered {
+                    Ok(result) => result?,
+                    Err(message) => {
+                        tracing::error!(%app, %message, "delivering what the app asked for panicked; the rest is still delivered");
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// `RPC.send_notification`: onto the bus. A bus that refuses it (the app is still loading, say)
+    /// leaves it to the runtime, which delivers it the same way.
+    async fn publish(&self, from: &AppId, name: &str, params: Value) {
+        if let Some(bus) = self.bus.bound() {
+            match bus.publish(from, name, params.clone()).await {
+                Ok(()) => return,
+                // the contract refused it: it goes nowhere
+                Err(error @ PortError::Rpc { .. }) => {
+                    tracing::warn!(app = %from, notification = name, %error, "the app's contract refused a notification");
+                    return;
+                }
+                // the bus could not take it (the app is still loading): the runtime delivers it the same way
+                Err(error) => {
+                    tracing::debug!(app = %from, notification = name, %error, "the bus refused a notification");
+                }
+            }
+        }
+        self.deliver_notification(from, name, params).await;
+    }
+
+    /// An app's notification, from its page or its backend: to the open pages (the shell hands it to the app's frames
+    /// and, unless it is a `_name`, to the frames that subscribed to the app), then to every backend that listens
+    /// (`RPC.on_notification`), one app after the other in id order, each told it came from `from`. A `_name` reaches
+    /// only `from`'s own listeners. A listener that fails is logged; it costs the others nothing.
+    async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) {
+        self.shell.emit_event(from, name, params.clone()).await;
+        let private = name.starts_with('_');
+        let mut listening: Vec<(AppId, Arc<AppVm>)> = self
+            .vms
+            .read()
+            .iter()
+            .filter(|(id, vm)| (!private || *id == from) && vm.listens(from, name))
+            .map(|(id, vm)| (id.clone(), vm.clone()))
+            .collect();
+        listening.sort_by(|a, b| a.0.cmp(&b.0));
+        for (id, vm) in listening {
+            let ctx = CallContext { actor: Actor::app(from.as_str()), now_ms: now_ms() };
+            let heard = until_unloaded(&id, &vm, async {
+                vm.deliver(from, name, params.clone(), &ctx).await.map_err(|e| port_error(&id, e))
+            })
+            .await;
+            if let Err(error) = heard {
+                tracing::warn!(app = %id, %from, notification = name, %error, "a listener of a notification failed");
+            }
+            if let Err(error) = self.forward(&id, &vm).await {
+                tracing::warn!(app = %id, %error, "could not forward what a listener asked for");
+            }
+        }
+    }
+
+    /// `RPC.send_request`: onto the bus, as `from`. With no bus bound, the handler of `to`'s backend answers, if it has one.
+    async fn request(&self, from: &AppId, to: &AppId, method: &str, params: Value) -> PortResult<Value> {
+        if let Some(bus) = self.bus.bound() {
+            return bus.request(Actor::app(from.as_str()), to, method, params).await;
+        }
+        let vm = self.vm(to)?;
+        let ctx = CallContext { actor: Actor::app(from.as_str()), now_ms: now_ms() };
+        let out = until_unloaded(to, &vm, async {
+            vm.call_handler(method, params, &ctx).await.map_err(|e| port_error(to, e))
+        })
+        .await;
+        self.forward(to, &vm).await?;
+        out
+    }
+}
+
+/// What an app's VM holds of the hub: weakly, so the VMs the hub holds do not keep it alive.
+struct Peers(std::sync::Weak<Hub>);
+
+#[async_trait]
+impl AppPeers for Peers {
+    async fn request(&self, from: &AppId, to: &AppId, method: &str, params: Value) -> PortResult<Value> {
+        match self.0.upgrade() {
+            Some(hub) => hub.request(from, to, method, params).await,
+            None => Err(PortError::NotFound(format!("app `{to}` is not running"))),
+        }
+    }
+}
+
 impl LuaRuntime {
     pub fn new(notifier: Arc<dyn Notifier>, shell: Arc<dyn Shell>) -> Self {
         Self {
-            vms: RwLock::default(),
-            notifier,
-            shell,
+            hub: Arc::new(Hub { vms: RwLock::default(), notifier, shell, bus: LateBus::default() }),
             roster: None,
             files: Arc::new(NoFiles),
             tools: Arc::default(),
@@ -74,6 +243,12 @@ impl LuaRuntime {
     pub fn with_roster(mut self, roster: Arc<dyn AgentRoster>) -> Self {
         self.roster = Some(roster);
         self
+    }
+
+    /// Put every app's backend on the RPC bus (`RPC.send_request`, `RPC.send_notification`). Once: a second call is
+    /// ignored.
+    pub fn bind_bus(&self, bus: std::sync::Weak<dyn AppBus>) {
+        let _ = self.hub.bus.0.set(bus);
     }
 
     /// Give every app the tools of every running app (`app.tools.all`, `app.tools.call`). Once: a second call is
@@ -90,7 +265,7 @@ impl LuaRuntime {
     }
 
     fn vm(&self, app: &AppId) -> PortResult<Arc<AppVm>> {
-        self.vms.read().get(app).cloned().ok_or_else(|| PortError::NotFound(app.to_string()))
+        self.hub.vms.read().get(app).cloned().ok_or_else(|| PortError::NotFound(app.to_string()))
     }
 }
 
@@ -112,60 +287,8 @@ async fn until_unloaded<T>(
     }
 }
 
-/// Forward what the app asked for during a call: notifications, events and its window go to their ports.
-async fn forward_effects(
-    notifier: &dyn Notifier,
-    shell: &dyn Shell,
-    app: &AppId,
-    vm: &AppVm,
-) -> PortResult<()> {
-    deliver_effects(notifier, shell, app, vm.take_effects(), vm.life()).await
-}
-
-/// Deliver effects already taken from the VM, so a caller need not keep the VM alive while the ports work.
-async fn deliver_effects(
-    notifier: &dyn Notifier,
-    shell: &dyn Shell,
-    app: &AppId,
-    effects: Vec<Effect>,
-    life: &Life,
-) -> PortResult<()> {
-    for effect in effects {
-        // An app that was unloaded (or replaced) while a call was in flight has nothing more to say: what it
-        // queued is dropped, not delivered to a shell and a notification list it no longer belongs to.
-        if life.is_closed() {
-            break;
-        }
-        // one effect whose port panics costs only that effect: the rest of the batch is still delivered (see
-        // `vos_application::panics`)
-        let delivered = panics::caught(async {
-            match effect {
-                Effect::Notify(n) => notifier.notify(n).await?,
-                Effect::Emit { name, data } => shell.emit_event(app, &name, data).await,
-                Effect::OpenWindow { name, params } => {
-                    let params = match params {
-                        Value::Object(map) => map,
-                        _ => Map::new(),
-                    };
-                    shell.open_window(app, &name, params).await;
-                }
-            }
-            Ok::<(), PortError>(())
-        })
-        .await;
-        match delivered {
-            Ok(result) => result?,
-            Err(message) => {
-                tracing::error!(%app, %message, "delivering what the app asked for panicked; the rest is still delivered");
-            }
-        }
-    }
-    Ok(())
-}
-
 fn port_error(app: &AppId, e: VmError) -> PortError {
     match e {
-        VmError::NoSuchTool(t) => PortError::NotFound(t),
         VmError::Script(ref script) | VmError::Load { error: ref script, .. } => {
             tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
@@ -186,19 +309,20 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
 
 #[async_trait]
 impl AppRuntime for LuaRuntime {
-    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<LoadedApp> {
+    async fn load(&self, app: &AppId, package: AppPackage, data: Arc<dyn AppData>) -> PortResult<()> {
         let config = VmConfig {
             roster: self.roster.clone().unwrap_or_else(|| VmConfig::default().roster),
             files: self.files.files(app),
             host_tools: self.tools.clone(),
+            peers: Arc::new(Peers(Arc::downgrade(&self.hub))),
             refused_modules: Vec::new(),
             test_hooks: false,
         };
         // An app that serves a port cannot be replaced by a version that serves the same one while the old
         // still holds it: stop what the old version started (listeners, tasks, workers) before the new one
-        // starts. Its tools and handlers keep working until the new one has loaded, so a version that fails to
+        // starts. Its handlers keep working until the new one has loaded, so a version that fails to
         // load leaves the old one answering, without its background work.
-        let running = self.vms.read().get(app).cloned();
+        let running = self.hub.vms.read().get(app).cloned();
         if let Some(old) = running {
             // The old VM's background work stops before the new version is known to load, and a failed reload
             // leaves it answering without that work, with requests to any server it starts again running
@@ -206,13 +330,12 @@ impl AppRuntime for LuaRuntime {
             old.stop_background();
         }
         let vm = AppVm::load(app, package, data, config).await.map_err(|e| port_error(app, e))?;
-        let loaded = LoadedApp { tools: vm.tools() };
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
+        self.hub.forward(app, &vm).await?;
         // a call that comes from inside the VM (a request to the app's own server, a task) queues effects too:
         // forward them when it ends or pauses. The pump is one of the app's own tasks, so it goes with the app.
         let vm = Arc::new(vm);
         let (signal, weak) = (vm.effects_signal(), Arc::downgrade(&vm));
-        let (notifier, shell, id) = (self.notifier.clone(), self.shell.clone(), app.clone());
+        let (hub, id) = (Arc::downgrade(&self.hub), app.clone());
         let life = vm.life().clone();
         life.clone().spawn(async move {
             loop {
@@ -222,10 +345,11 @@ impl AppRuntime for LuaRuntime {
                 let Some(vm) = weak.upgrade() else { break };
                 let effects = vm.take_effects();
                 drop(vm);
+                let Some(hub) = hub.upgrade() else { break };
                 // a panic in a port while forwarding is logged and the pump waits for the next signal: the app's
-                // later notifications and events still go out (see `vos_application::panics`)
+                // later notifications still go out (see `vos_application::panics`)
                 let forwarded = panics::caught(async {
-                    if let Err(error) = deliver_effects(&*notifier, &*shell, &id, effects, &life).await {
+                    if let Err(error) = hub.deliver(&id, effects, &life).await {
                         tracing::warn!(app = %id, %error, "could not forward what the app asked for");
                     }
                 })
@@ -236,17 +360,17 @@ impl AppRuntime for LuaRuntime {
             }
         });
         // only a VM that loaded completely replaces a running one (hot reload keeps the old one on failure)
-        let replaced = self.vms.write().insert(app.clone(), vm);
+        let replaced = self.hub.vms.write().insert(app.clone(), vm);
         // the VM a reload replaces stops like an unloaded one: what it started (tasks, servers, workers) is
         // aborted, so the new version does not share its port or its database with a ghost
         if let Some(old) = replaced {
             old.shutdown();
         }
-        Ok(loaded)
+        Ok(())
     }
 
     async fn unload(&self, app: &AppId) -> PortResult<()> {
-        let removed = self.vms.write().remove(app);
+        let removed = self.hub.vms.write().remove(app);
         if let Some(vm) = removed {
             // an in-flight call keeps its own Arc until it ends: stop everything the app started first (its
             // listeners are closed, its tasks and workers aborted), so nothing outlives the uninstall
@@ -257,23 +381,6 @@ impl AppRuntime for LuaRuntime {
             }
         }
         Ok(())
-    }
-
-    async fn call_tool(
-        &self,
-        app: &AppId,
-        tool: &str,
-        args: Value,
-        ctx: CallContext,
-        read_only: bool,
-    ) -> PortResult<Value> {
-        let vm = self.vm(app)?;
-        let out = until_unloaded(app, &vm, async {
-            vm.call_tool(tool, args, &ctx, read_only).await.map_err(|e| port_error(app, e))
-        })
-        .await;
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
-        out
     }
 
     async fn call_handler(
@@ -288,7 +395,36 @@ impl AppRuntime for LuaRuntime {
             vm.call_handler(method, args, &ctx).await.map_err(|e| port_error(app, e))
         })
         .await;
-        forward_effects(&*self.notifier, &*self.shell, app, &vm).await?;
+        self.hub.forward(app, &vm).await?;
         out
+    }
+
+    async fn call_handler_read_only(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+    ) -> PortResult<Value> {
+        let vm = self.vm(app)?;
+        let out = until_unloaded(app, &vm, async {
+            vm.call_handler_with(method, args, &ctx, true).await.map_err(|e| port_error(app, e))
+        })
+        .await;
+        self.hub.forward(app, &vm).await?;
+        out
+    }
+
+    fn has_handler(&self, app: &AppId, method: &str) -> bool {
+        self.vm(app).is_ok_and(|vm| vm.has_handler(method))
+    }
+
+    fn handlers(&self, app: &AppId) -> Vec<String> {
+        self.vm(app).map_or_else(|_| Vec::new(), |vm| vm.handlers())
+    }
+
+    async fn deliver_notification(&self, from: &AppId, name: &str, params: Value) -> PortResult<()> {
+        self.hub.deliver_notification(from, name, params).await;
+        Ok(())
     }
 }

@@ -1,7 +1,9 @@
 <!-- @organism ProcessList — the processes of the machine: how busy it is at the top, what to look for and in what order, and a row for each process, the one that is shown on the right marked -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import type { Overview, ProcessRef, ProcessRow } from 'app:rpc'
+  type Overview = VosApp.Processes.Overview
+  type ProcessRef = VosApp.Processes.ProcessRef
+  type ProcessRow = VosApp.Processes.ProcessRow
   import ProcessRowItem from '../molecules/ProcessRow.svelte'
   import { processesSummary } from '../lib/format'
   import { same, type Sort } from '../lib/processes.svelte'

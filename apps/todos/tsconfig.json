@@ -9,5 +9,7 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["src", ".app/*.d.ts"]
+  "include": ["src", "types/**/*.d.ts"],
+  // the backend's declarations (types/vos.backend.d.ts) are checked from server/tsconfig.json, not with the page
+  "exclude": ["types/vos.backend.d.ts"]
 }

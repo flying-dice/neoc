@@ -1,6 +1,6 @@
 <!-- @organism ProjectHeader — the project that is shown: its colour, name and key, the control that picks its board, its issues or its pages, and the way to delete it, after an alert asks -->
 <script lang="ts">
-  import type { Project } from 'app:rpc'
+  type Project = VosApp.Projects.Project
   import { TABS, type Tab } from '../lib/catalog'
 
   interface Props {

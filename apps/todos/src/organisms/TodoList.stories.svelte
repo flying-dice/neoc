@@ -2,7 +2,8 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn, waitFor } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
-  import type { List, Todo } from 'app:rpc'
+  type List = VosApp.Todos.List
+  type Todo = VosApp.Todos.Todo
   import TodoList from './TodoList.svelte'
   import { REMINDERS, todo } from '../lib/fakeApi'
 

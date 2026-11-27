@@ -27,8 +27,16 @@ impl World {
     }
     /// The absolute wire path of `inner` in the temporary directory.
     fn at(&self, inner: &str) -> String {
-        format!("{}/{inner}", self.dir().to_str().unwrap()).trim_end_matches('/').to_owned()
+        format!("{}/{inner}", wire(&self.dir())).trim_end_matches('/').to_owned()
     }
+}
+
+/// A native absolute path as the wire has it: `/` between names and at the start (`/C:/Users/me` on Windows, whose
+/// `canonicalize` answers the long form `\\?\C:\...`).
+fn wire(native: &Path) -> String {
+    let text = native.to_str().unwrap();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(text).replace('\\', "/");
+    format!("/{}", text.trim_start_matches('/'))
 }
 
 fn names(listing: &Listing) -> Vec<&str> {
@@ -245,7 +253,13 @@ async fn a_listing_stops_at_its_cap_and_says_there_was_more() {
 
 #[test]
 fn the_home_directory_is_offered_as_a_path_to_list() {
-    assert_eq!(LocalFiles::new(Some(Path::new("/home/me"))).home().unwrap().to_string(), "/home/me");
+    let (native, wire) =
+        if cfg!(windows) { (r"C:\Users\me", "/C:/Users/me") } else { ("/home/me", "/home/me") };
+    assert_eq!(LocalFiles::new(Some(Path::new(native))).home().unwrap().to_string(), wire);
+    // the long form of a Windows path is the same path
+    if cfg!(windows) {
+        assert_eq!(LocalFiles::new(Some(Path::new(r"\\?\C:\Users\me"))).home().unwrap().to_string(), wire);
+    }
     assert!(LocalFiles::new(None).home().is_none());
     assert!(LocalFiles::new(Some(Path::new("relative/home"))).home().is_none());
 }

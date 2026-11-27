@@ -1,7 +1,8 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Agent, Chat } from 'app:rpc'
+  type Agent = VosApp.Agents.Agent
+  type Chat = VosApp.Agents.Chat
   import ChatSidebar from './ChatSidebar.svelte'
   import { SCRIPTED } from '../lib/fakeApi'
 

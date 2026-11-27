@@ -8,7 +8,7 @@
   import { FILTERS, counts, isUp } from '../lib/format'
 
   interface Props {
-    /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
+    /** This window's state; the composition root builds it with the real backend and host, a story with a fake. */
     services: Services
     /** How often the services are asked of the operating system again, in milliseconds: another program changes them. */
     every?: number

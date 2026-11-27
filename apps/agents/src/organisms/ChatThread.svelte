@@ -1,6 +1,7 @@
 <!-- @organism ChatThread — one chat: its title, what was said and done in it (kept scrolled to the newest), and the composer under it -->
 <script lang="ts">
-  import type { Conversation, Item } from 'app:rpc'
+  type Conversation = VosApp.Agents.Conversation
+  type Item = VosApp.Agents.Item
   import { A2UI_ACTIVITY, surfacesOf, type UserAction } from '../lib/a2ui'
   import { dataOf, pretty } from '../lib/items'
   import A2uiSurface from '../molecules/A2uiSurface.svelte'

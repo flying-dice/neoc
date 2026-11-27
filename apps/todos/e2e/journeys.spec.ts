@@ -152,7 +152,7 @@ test.describe('Todos journeys', () => {
     await openTodos(page)
     await show(page, 'all')
     await expect(row(page, title)).toHaveCount(0)
-    // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
+    // the agent calls the app's tools over MCP; a tool tells the open window with a notification: no reload, no click
     const added = JSON.parse(await callTool(`${ID}__add_todo`, { title, notes: 'Said the agent', flagged: true })) as { id: number; list: string }
     expect(added.list).toBe('Reminders')
     await expect(row(page, title)).toBeVisible()

@@ -38,6 +38,7 @@ pub mod lib {
     pub use neoc_vm_lib_template as template;
     pub use neoc_vm_lib_test as test;
     pub use neoc_vm_lib_text as text;
+    pub use neoc_vm_lib_tracing as tracing;
     pub use neoc_vm_lib_unicode as unicode;
     pub use neoc_vm_lib_url as url;
     pub use neoc_vm_lib_vcr as vcr;

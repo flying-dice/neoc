@@ -1,0 +1,42 @@
+{
+  "name": "@vos-apps/telemetry",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "The traces and logs the host recorded: where an app's call went, and what failed on the way.",
+  "vos": {
+    "title": "Telemetry",
+    "icon": "network",
+    "tint": "teal",
+    "window": {
+      "w": 1100,
+      "h": 700,
+      "minW": 480,
+      "minH": 420
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./src",
+    "storybook": "storybook dev -p 6026 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "1.4.4",
+    "@vos/storybook": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
+    "storybook": "10.6.7",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

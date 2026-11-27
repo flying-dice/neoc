@@ -1,6 +1,6 @@
 <!-- @molecule ContainerRow — one container in a list: how it is doing, its name, image and Docker's words for it, its published ports, and the button that starts or stops it; a tap on the rest looks at it -->
 <script lang="ts">
-  import type { Container } from 'app:rpc'
+  type Container = VosApp.Containers.Container
   import { StateDot } from '@vos/docker'
   import { imageLabel, isUp, stateLabel, toneOf } from '../lib/format'
 

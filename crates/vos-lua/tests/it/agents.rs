@@ -35,15 +35,13 @@ impl AgentRoster for Cards {
 
 async fn with_roster(body: &str) -> AppVm {
     let config = VmConfig { roster: Arc::new(Cards), ..VmConfig::default() };
-    AppVm::load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{body}")), &[]), db(), config)
-        .await
-        .unwrap()
+    AppVm::load(&id("probe"), package(&format!("{MANIFEST}\n{body}"), &[]), db(), config).await.unwrap()
 }
 
 #[tokio::test]
 async fn the_roster_is_listed_as_cards_without_grants_or_tokens() {
-    let vm = with_roster(r#"app.tool { name = "who", run = function() return app.agents:list() end }"#).await;
-    let out = vm.call_tool("who", json!({}), &agent_ctx(0), false).await.unwrap();
+    let vm = with_roster(r#"RPC.on_request("who", function() return app.agents:list() end)"#).await;
+    let out = common::serve(&vm, "who", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(
         out,
         json!([

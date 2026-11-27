@@ -4,9 +4,9 @@
 //! `neoc_vm::script_env`): the prelude's polyfills, the `app` capability table and a `require` that
 //! knows only `vos:app`, the framework the host carries (`vos:docker`) and the library's modules. Nothing in it is
 //! budgeted (no CPU, memory or time limits: the host is a
-//! homelab's own and apps are meant to do real work); it then runs the app's entry, which returns the app's
-//! handlers. After that the host calls into it: handlers and tools. One call runs in a VM at a time (an app is
-//! single-threaded by design); the VM lives as long as its `AppVm`.
+//! homelab's own and apps are meant to do real work); it then runs the app's entry, which serves the app's
+//! handlers on the bus (`RPC.on_request`). After that the host calls into it: the handlers it served on the bus. One call runs in a VM at a time
+//! (an app is single-threaded by design); the VM lives as long as its `AppVm`.
 
 use crate::{
     api,
@@ -40,19 +40,11 @@ use vos_application::{
     ports::{AgentCard, AgentRoster, AppData, AppPackage, AppTools, CallContext, PortResult},
     AppFiles, Files, NoFiles,
 };
-use vos_domain::{tool_schema, Actor, AppId, Notification, QualifiedToolName, ToolSpec};
+use vos_domain::{Actor, AppId, Notification, QualifiedToolName, ToolSpec};
 
 /// The prelude (`lua/prelude.lua`, copied by `bun run codegen`): `utf8`, which Luau has and the app's
 /// environment does not copy from the engine. Run once in each app's environment before the app.
 const PRELUDE: &str = include_str!("../../../types/generated/prelude.lua");
-
-/// A value's type as Luau's `type()` names it (the engine tells integers from other numbers; a script does not).
-fn lua_type(value: &LuaValue) -> &'static str {
-    match value {
-        LuaValue::Integer(_) | LuaValue::Number(_) => "number",
-        other => other.type_name(),
-    }
-}
 
 /// The longest name a handler may have (and so the longest `rpc` method a client may call).
 pub const MAX_HANDLER_NAME: usize = 128;
@@ -65,23 +57,15 @@ pub enum VmError {
     /// App code raised an error.
     #[error("{0}")]
     Script(ScriptError),
-    /// The tool called `ctx:fail(message)`.
+    /// The handler called `ctx:fail(message)`.
     #[error("{0}")]
     ToolFailed(String),
-    #[error("no such tool `{0}`")]
-    NoSuchTool(String),
     /// The handler (or the generated router) failed with a JSON-RPC error code: `error("RPC-<code> message", 0)`.
     #[error("{message}")]
     Rpc { code: i32, message: String, data: Option<Value> },
     /// A client called a handler the backend does not have.
     #[error("method not found: {0}")]
     NoSuchHandler(String),
-    /// The entry returned something that is not a table of handler functions.
-    #[error("the entry must return the app's handlers, a table of functions by name: {0}")]
-    BadHandlers(String),
-    /// The caller's arguments do not fit the tool's input schema.
-    #[error("invalid input: {0}")]
-    InvalidInput(String),
     /// A value could not cross between Lua and JSON (a function, a cycle, a number with no JSON form).
     #[error("cannot convert a value between Lua and JSON: {0}")]
     BadValue(String),
@@ -120,12 +104,14 @@ pub struct VmConfig {
     pub files: Arc<dyn AppFiles>,
     /// The tools of every running app (`app.tools.all`, `app.tools.call`); none unless the host gives them.
     pub host_tools: Arc<dyn AppTools>,
+    /// The other apps' backends (`RPC.send_request`); none unless the host gives them.
+    pub peers: Arc<dyn AppPeers>,
     /// Library modules this VM does not offer, on top of [`crate::NOT_FOR_APPS`] (its `std:thread` workers neither).
     /// The host leaves it empty and there is no setting for it: a test uses it to show that a capability works
     /// for an app that cannot `require` a module (`app.files` without `std:fs`).
     pub refused_modules: Vec<String>,
     /// Give the app's chunks a `hook(name, fn)` global that [`AppVm::emit`] calls: how the adapter's tests reach
-    /// app code without declaring a tool. It is not part of the app API (`app` has no event hook, and the host
+    /// app code without serving a method. It is not part of the app API (`app` has no event hook, and the host
     /// emits nothing), the host leaves it off and there is no setting for it.
     pub test_hooks: bool,
 }
@@ -156,12 +142,29 @@ impl AppTools for NoTools {
     }
 }
 
+/// The other apps' backends, as one app's backend reaches them: `RPC.send_request(app, method, params)` runs a handler
+/// of another app's backend, told that this app called (`ctx.actor` is the app).
+#[async_trait::async_trait]
+pub trait AppPeers: Send + Sync {
+    async fn request(&self, from: &AppId, to: &AppId, method: &str, params: Value) -> PortResult<Value>;
+}
+
+/// No other apps: what an app sees when the host gives none (tests of other things).
+struct NoPeers;
+#[async_trait::async_trait]
+impl AppPeers for NoPeers {
+    async fn request(&self, _from: &AppId, to: &AppId, _method: &str, _params: Value) -> PortResult<Value> {
+        Err(vos_application::PortError::NotFound(format!("app `{to}` is not running")))
+    }
+}
+
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
             roster: Arc::new(NoRoster),
             files: Arc::new(NoFiles),
             host_tools: Arc::new(NoTools),
+            peers: Arc::new(NoPeers),
             refused_modules: Vec::new(),
             test_hooks: false,
         }
@@ -177,21 +180,18 @@ pub const MAX_QUEUED_NOTIFICATIONS: usize = 64;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Notify(Notification),
-    /// `app.openWindow(params?)`.
+    /// `app.open_window(params?)`.
     OpenWindow {
         name: String,
         params: Value,
     },
-    /// `app.emit(name, data)`: an event for the app's open clients.
-    Emit {
+    /// `RPC.send_notification(name, params?)`: the app's notification, for whoever listens.
+    Publish {
         name: String,
-        data: Value,
+        params: Value,
     },
-}
-
-pub(crate) struct ToolDecl {
-    pub spec: ToolSpec,
-    pub run: Function,
+    /// `RPC.on_request`: the app's handlers on the bus changed, so its agent tools follow.
+    HandlersChanged,
 }
 
 /// Everything the `app` API closures share with the VM's owner.
@@ -206,10 +206,13 @@ pub(crate) struct Shared {
     pub roster: Arc<dyn AgentRoster>,
     /// Every running app's tools: what `app.tools.all` lists and `app.tools.call` runs.
     pub host_tools: Arc<dyn AppTools>,
-    pub tools: Mutex<Vec<ToolDecl>>,
+    /// The other apps' backends: where `app.request` sends.
+    pub peers: Arc<dyn AppPeers>,
+    /// What `RPC.on_notification(app, name, fn)` registered: listeners of apps' notifications, by app and name.
+    pub listeners: Mutex<HashMap<(String, String), Vec<Function>>>,
     /// What `hook(name, fn)` registered (only with [`VmConfig::test_hooks`]).
     pub handlers: Mutex<HashMap<String, Function>>,
-    /// The app's backend: the functions its entry returned, by name. Its page's `rpc(name, args)` calls one.
+    /// The app's backend handlers on the bus, by method (`RPC.on_request`).
     pub rpc_handlers: Mutex<HashMap<String, Function>>,
     pub test_hooks: bool,
     pub effects: Mutex<Vec<Effect>>,
@@ -226,17 +229,17 @@ pub(crate) struct Shared {
     /// change to the world raises. It is the holder's own state (see [`Turn`]): set when a call takes the gate,
     /// cleared when it lets it go.
     pub read_only: Arc<AtomicBool>,
-    /// How many read-only calls are *active*: a `readOnly` tool, a task it started (`task.spawn`, and a
+    /// How many read-only calls are *active*: a read-only call, a task it started (`task.spawn`, and a
     /// `task.delay` or `task.defer` once it has begun) or a request that was itself made read-only by this count,
     /// that is running, queued for the VM, or waiting at something in flight (the network, a worker, a lock),
     /// but not one that is asleep at a timer (`task.wait`, a `std:time` sleep), which sends nothing and starts
     /// nothing until the timer ends and it has taken its turn back ([`Turn::quiet`]). A request that arrives
     /// from outside while this is above zero (a request to the app's own listener, say, which carries no origin)
     /// runs read-only too, because whoever sent it may be one of them. The taint lasts exactly as long as some
-    /// read-only call is acting, not as long as one is alive, so a read-only tool that leaves a poller behind
+    /// read-only call is acting, not as long as one is alive, so a read-only call that leaves a poller behind
     /// does not make the app's webhooks read-only for the poller's life; and it applies to nothing else: a task
-    /// or a tool carries its own origin ([`Inherited`]), so a long-lived read-only poller does not make an
-    /// unrelated writable tool's `task.delay` read-only.
+    /// or a call carries its own origin ([`Inherited`]), so a long-lived read-only poller does not make an
+    /// unrelated writable call's `task.delay` read-only.
     pub read_only_active: AtomicUsize,
     /// The next [`Baton::id`]: unique among this VM's turns.
     pub next_turn: AtomicU64,
@@ -244,7 +247,7 @@ pub(crate) struct Shared {
     pub life: Life,
     /// Woken when a call that nobody made through the host (a request to the app's own server, a task's next
     /// slice) ends or pauses at a wait, and when any call that has raised a notification pauses at a wait, so the
-    /// runtime forwards the effects it queued (`app.notify`, `app.emit`, `app.openWindow`).
+    /// runtime forwards the effects it queued (`app.notify`, `RPC.send_notification`, `app.open_window`).
     pub effects_signal: Arc<Notify>,
     /// The app's background work has been stopped (a reload began, or the app is being unloaded): its listeners are
     /// gone, so what still reaches its own server is a straggler of work that was cut off, and a straggler whose
@@ -253,7 +256,7 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
-    /// The database as the running call may use it: a read-only handle inside a `readOnly` tool.
+    /// The database as the running call may use it: a read-only handle inside a read-only call.
     pub fn database(&self) -> Arc<dyn AppData> {
         if self.read_only.load(Ordering::SeqCst) {
             self.db.read_only()
@@ -262,7 +265,7 @@ impl Shared {
         }
     }
 
-    /// The app's files as the running call may use them: a handle that refuses writes inside a `readOnly` tool.
+    /// The app's files as the running call may use them: a handle that refuses writes inside a read-only call.
     pub fn files(&self) -> Files {
         if self.read_only.load(Ordering::SeqCst) {
             self.files.read_only()
@@ -271,13 +274,13 @@ impl Shared {
         }
     }
 
-    /// The call may change the world: refused inside a tool declared `readOnly`, which may only read. A
-    /// `readOnly` tool that could open a window, notify, emit an event or change the shell would write behind
-    /// the guarantee that lets agents run it without a prompt.
+    /// The call may change the world: refused inside a read-only call (an agent's call of a method the contract marks
+    /// `x-readOnly`), which may only read. A read-only call that could open a window, notify, send a notification
+    /// or change the shell would write behind the guarantee that lets agents run it without a prompt.
     pub fn writable(&self, what: &str) -> mlua::Result<()> {
         if self.read_only.load(Ordering::SeqCst) {
             return Err(mlua::Error::runtime(format!(
-                "{what} is not allowed in a tool declared readOnly: a readOnly tool cannot write"
+                "{what} is not allowed in a read-only call: a read-only call cannot write"
             )));
         }
         Ok(())
@@ -310,7 +313,7 @@ impl Shared {
         Ok(())
     }
 
-    /// The window `app.openWindow` asks the shell for. An app has one window, the frame that shows its page: it is
+    /// The window `app.open_window` asks the shell for. An app has one window, the frame that shows its page: it is
     /// called `main`, and that is the only name the shell is ever asked for.
     pub const WINDOW: &'static str = "main";
 
@@ -320,7 +323,6 @@ impl Shared {
 
     /// Release every Lua value the host holds, before the VM goes away.
     fn release(&self) {
-        self.tools.lock().clear();
         self.handlers.lock().clear();
         self.rpc_handlers.lock().clear();
         self.modules.lock().clear();
@@ -339,7 +341,7 @@ fn inherits_read_only(from: &Inherited) -> bool {
 
 /// Where a call came from, which decides what restricts it.
 enum Via {
-    /// Through the host (a tool, a handler): `read_only` is what the caller requires.
+    /// Through the host (a handler): `read_only` is what the caller requires.
     Host { read_only: bool },
     /// Work a call started (a deferred or delayed function): it is as restricted as that call was.
     Task(Inherited),
@@ -349,7 +351,7 @@ enum Via {
 }
 
 /// A call in progress: it holds the VM's gate, so one call runs in the VM at a time and `db:tx`, the
-/// `readOnly` flag are unambiguous. Ending a call, or abandoning it (its caller gave up),
+/// read-only flag are unambiguous. Ending a call, or abandoning it (its caller gave up),
 /// rolls back a transaction it left open, so the database's write gate is free the moment the call is over.
 ///
 /// It is also the call's *baton* (see `neoc_vm::lifecycle`): at a wait that does not use the VM
@@ -367,7 +369,7 @@ pub(crate) struct Turn {
     /// effects are forwarded by the runtime's pump when it ends.
     inbound: bool,
     /// The call may not change anything. This belongs to the call, and everything it starts inherits it: a
-    /// task a `readOnly` tool spawns stays read-only for as long as it lives, whenever it runs. While the
+    /// task a read-only call spawns stays read-only for as long as it lives, whenever it runs. While the
     /// call holds the gate this is [`Shared::read_only`]; while it waits it is not (the next call's is). A
     /// coroutine continuation another call resumes (a host call left waiting by the task's first slice) is that
     /// call's: it takes the resumer's restrictions, as `coroutine.resume` runs the coroutine in the resumer.
@@ -481,9 +483,9 @@ impl Baton for Turn {
         self.shared.read_only.store(false, Ordering::SeqCst);
         self.held = None;
         // a background call that pauses has run some script since the last time it let go of the VM: what it asked
-        // of the host (an event for its page, a notification) is for the host to send now, not when the call is
-        // finally over, which for a loop is never. A tool or a handler is over when it returns, so it says nothing at
-        // a wait, except that a notification it raised is not for later: a tool that notifies and then works for a
+        // of the host (a notification for its page, a notification for the person) is for the host to send now, not when the call is
+        // finally over, which for a loop is never. A handler is over when it returns, so it says nothing at
+        // a wait, except that a notification it raised is not for later: a handler that notifies and then works for a
         // minute (an agent's build, a download) would otherwise tell the person when it is done, not when it said.
         // The gate is free by now.
         if self.inbound || self.has_notifications_waiting() {
@@ -595,7 +597,7 @@ fn app_worker_engine(offered: Arc<Vec<&'static str>>) -> WorkerEngineFn {
     })
 }
 
-/// A script's error as the VM reports it: `ctx:fail` is a failed tool call, anything else a script error.
+/// A script's error as the VM reports it: `ctx:fail` is a failed call, anything else a script error.
 pub(crate) fn script(e: &mlua::Error) -> VmError {
     if let Some((code, message)) = rpc_failure(e) {
         return VmError::Rpc { code, message, data: None };
@@ -614,7 +616,7 @@ impl AppVm {
         db: Arc<dyn AppData>,
         config: VmConfig,
     ) -> Result<Self> {
-        let VmConfig { roster, files, host_tools, refused_modules, test_hooks } = config;
+        let VmConfig { roster, files, host_tools, peers, refused_modules, test_hooks } = config;
         let offered = Arc::new(crate::require::offered_modules(&refused_modules));
         let load_err =
             |e: &mlua::Error| VmError::Load { app: app.to_string(), error: ScriptError::from_lua(e) };
@@ -646,7 +648,8 @@ impl AppVm {
             offered,
             roster,
             host_tools,
-            tools: Mutex::default(),
+            peers,
+            listeners: Mutex::default(),
             handlers: Mutex::default(),
             rpc_handlers: Mutex::default(),
             test_hooks,
@@ -687,44 +690,12 @@ impl AppVm {
         let entry = self.shared.package.entry.clone();
         let source =
             self.shared.package.files.get(&entry).cloned().ok_or_else(|| VmError::NoEntry(entry.clone()))?;
-        let returned: LuaValue = load_source(&self.lua, source.as_slice())
+        // what the entry returns, if anything, is of no use: it serves its methods on the bus
+        load_source(&self.lua, source.as_slice())
             .set_name(self.shared.chunk_name(&entry))
             .set_environment(env)
-            .call_async(())
+            .call_async::<()>(())
             .await?;
-        self.keep_handlers(returned)?;
-        Ok(())
-    }
-
-    /// What the entry returned is the backend: a table of functions by name (an app with nothing for its page to
-    /// call returns `{}`). Anything else, nothing included, is a mistake the author should hear about at load.
-    fn keep_handlers(&self, returned: LuaValue) -> std::result::Result<(), VmError> {
-        let table = match returned {
-            LuaValue::Table(t) => t,
-            LuaValue::Nil => return Err(VmError::BadHandlers("it returned nothing".to_owned())),
-            other => return Err(VmError::BadHandlers(format!("it returned a {}", lua_type(&other)))),
-        };
-        let mut handlers = HashMap::new();
-        for pair in table.pairs::<LuaValue, LuaValue>() {
-            let (key, value) = pair.map_err(|e| VmError::BadHandlers(e.to_string()))?;
-            let LuaValue::String(name) = key else {
-                return Err(VmError::BadHandlers(format!("a key is a {}, not a name", lua_type(&key))));
-            };
-            let name = name.to_string_lossy();
-            let LuaValue::Function(handler) = value else {
-                return Err(VmError::BadHandlers(format!(
-                    "`{name}` is a {}, not a function",
-                    lua_type(&value)
-                )));
-            };
-            if name.is_empty() || name.len() > MAX_HANDLER_NAME {
-                return Err(VmError::BadHandlers(format!(
-                    "a handler name is 1 to {MAX_HANDLER_NAME} characters"
-                )));
-            }
-            handlers.insert(name, handler);
-        }
-        *self.shared.rpc_handlers.lock() = handlers;
         Ok(())
     }
 
@@ -740,7 +711,8 @@ impl AppVm {
 
     /// Run a top-level call: wait for the previous one, then run `body` holding the VM's gate (see [`Turn`]).
     ///
-    /// `read_only`: the call may not change anything (a `readOnly` tool); whatever it starts may not either.
+    /// `read_only`: the call may not change anything (an agent's call of a read-only method); whatever it starts may not
+    /// either.
     ///
     /// A panic in a host function the call reached, which the script did not catch, ends the call with
     /// [`VmError::Panicked`] instead of unwinding into the caller (`neoc_vm::panics`). It stops the call
@@ -759,12 +731,6 @@ impl AppVm {
         }
     }
 
-    // ---- what the app declared ------------------------------------------------------------------------
-
-    pub fn tools(&self) -> Vec<ToolSpec> {
-        self.shared.tools.lock().iter().map(|t| t.spec.clone()).collect()
-    }
-
     /// Everything the app asked the host to do since the last call to this.
     pub fn take_effects(&self) -> Vec<Effect> {
         let mut effects = self.shared.effects.lock();
@@ -774,45 +740,27 @@ impl AppVm {
 
     // ---- calls into the app -----------------------------------------------------------------------------
 
-    /// What a handler or a tool's `run` is called with: `ctx.actor`, `ctx.now`, `ctx:fail(message)`.
+    /// What a handler is called with: `ctx.actor`, `ctx.now`, `ctx:fail(message)`.
     fn ctx_value(&self, ctx: &CallContext) -> mlua::Result<LuaValue> {
         api::Context::new(ctx).into_lua_ret(&self.lua, "vos:app.Context")
     }
 
-    /// `app.tool`'s `run(input, ctx)`. Arguments are validated against the tool's schema first.
-    ///
-    /// The call is read-only when the tool is declared `readOnly` or when the caller requires it
-    /// (`require_read_only`, from the `AppRuntime` port): the caller can only tighten, never loosen.
-    pub async fn call_tool(
+    /// A request on the bus for this backend's handler of `name`: `handler(params, ctx)`, as a call of its own. It is
+    /// the person's own client asking, so the call may write (an agent's call of a read-only method is the one that
+    /// cannot).
+    pub async fn call_handler(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
+        self.call_handler_with(name, args, ctx, false).await
+    }
+
+    /// `call_handler`, with every write refused when `read_only` (an agent's call of a handler that said it changes
+    /// nothing).
+    pub async fn call_handler_with(
         &self,
         name: &str,
         args: Value,
         ctx: &CallContext,
-        require_read_only: bool,
+        read_only: bool,
     ) -> Result<Value> {
-        let (schema, run, read_only) = {
-            let tools = self.shared.tools.lock();
-            let t = tools
-                .iter()
-                .find(|t| t.spec.name == name)
-                .ok_or_else(|| VmError::NoSuchTool(name.to_owned()))?;
-            (t.spec.input_schema.clone(), t.run.clone(), t.spec.read_only || require_read_only)
-        };
-        let input = tool_schema::validate_args(&schema, &args).map_err(VmError::InvalidInput)?;
-        self.in_call(read_only, async {
-            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
-            let arg = json_to_lua(&self.lua, &input).map_err(convert)?;
-            let ctx = self.ctx_value(ctx).map_err(convert)?;
-            let out: LuaValue = run.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
-            lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
-        })
-        .await
-    }
-
-    /// The page's `rpc(method, args)`: run the handler the entry returned under that name as `handler(ctx, args)`,
-    /// as a call of its own. It is the person's own client asking, so the call may write (an agent's tool is the
-    /// one that can be `readOnly`).
-    pub async fn call_handler(&self, name: &str, args: Value, ctx: &CallContext) -> Result<Value> {
         let handler = self
             .shared
             .rpc_handlers
@@ -820,12 +768,48 @@ impl AppVm {
             .get(name)
             .cloned()
             .ok_or_else(|| VmError::NoSuchHandler(name.chars().take(MAX_HANDLER_NAME).collect()))?;
-        self.in_call(false, async {
+        self.in_call(read_only, async {
             let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
             let arg = json_to_lua(&self.lua, &args).map_err(convert)?;
             let ctx = self.ctx_value(ctx).map_err(convert)?;
-            let out: LuaValue = handler.call_async((ctx, arg)).await.map_err(|e| script(&e))?;
+            let out: LuaValue = handler.call_async((arg, ctx)).await.map_err(|e| script(&e))?;
             lua_to_json(&out).map_err(|e| VmError::BadValue(e.to_string()))
+        })
+        .await
+    }
+
+    /// Whether the backend has a handler for `method` on the bus.
+    pub fn has_handler(&self, method: &str) -> bool {
+        self.shared.rpc_handlers.lock().contains_key(method)
+    }
+
+    /// The methods the backend serves on the bus (`RPC.on_request`), in name order: its public ones are its agent
+    /// tools.
+    pub fn handlers(&self) -> Vec<String> {
+        let mut methods: Vec<String> = self.shared.rpc_handlers.lock().keys().cloned().collect();
+        methods.sort();
+        methods
+    }
+
+    /// Whether the app listens to `name` of `from` (`RPC.on_notification`): the runtime delivers only to those that do.
+    pub fn listens(&self, from: &AppId, name: &str) -> bool {
+        self.shared.listeners.lock().contains_key(&(from.to_string(), name.to_owned()))
+    }
+
+    /// An app's notification: run every listener the app registered for it (`RPC.on_notification(from, name, fn)`)
+    /// as `fn(params, ctx)`, in the order they were registered, as one call of its own. `ctx.actor` is the app that
+    /// sent it. A listener that raises ends the delivery with its error; the ones before it have run.
+    pub async fn deliver(&self, from: &AppId, name: &str, params: Value, ctx: &CallContext) -> Result<()> {
+        let listeners = self.shared.listeners.lock().get(&(from.to_string(), name.to_owned())).cloned();
+        let Some(listeners) = listeners else { return Ok(()) };
+        self.in_call(false, async {
+            let convert = |e: mlua::Error| VmError::BadValue(e.to_string());
+            for listener in listeners {
+                let arg = json_to_lua(&self.lua, &params).map_err(convert)?;
+                let ctx = self.ctx_value(ctx).map_err(convert)?;
+                listener.call_async::<()>((arg, ctx)).await.map_err(|e| script(&e))?;
+            }
+            Ok(())
         })
         .await
     }

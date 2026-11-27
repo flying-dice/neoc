@@ -13,7 +13,7 @@
     "./fake-docker": "./e2e/fakeDocker.ts"
   },
   "scripts": {
-    "typecheck": "vos generate && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "bun -e \"import { writeKitTypes } from '@vos/vite-plugin'; writeKitTypes('.')\" && svelte-check --tsconfig ./tsconfig.json",
     "storybook": "storybook dev -p 6021 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

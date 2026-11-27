@@ -14,7 +14,7 @@
   const CLOSE = '<' + '/script>'
 
   /** What the app's page does in these stories, in place of the host's static content and bridge: it does the handshake,
-   *  asks its backend for a greeting, and shows the answer, or the error the backend gave, and what the host tells it. */
+   *  asks its backend for a greeting (`vos/request`: a page reaches its backend through the bus), and shows the answer, or the error the backend gave, and what the host tells it. */
   const client = (
     method: string
   ): string => `<!doctype html><html lang="en"><title>Calculator</title><body style="font:16px system-ui;margin:16px">
@@ -27,9 +27,9 @@
     if (m.id === 1) {
       document.getElementById('context').textContent = 'theme ' + m.result.hostContext.theme
       send({ method: 'ui/notifications/initialized', params: {} })
-      send({ id: 2, method: ${JSON.stringify(method)}, params: {} })
+      send({ id: 2, method: 'vos/request', params: { app: 'calculator', method: ${JSON.stringify(method)}, params: {} } })
     } else if (m.id === 2 || m.id === 3) out('error' in m ? 'Error: ' + m.error.message : 'Hello, ' + m.result)
-    else if (m.method === 'vos/event' && m.params.name === 'host:reconnected') send({ id: 3, method: ${JSON.stringify(method)}, params: {} })
+    else if (m.method === 'vos/event' && m.params.name === 'host:reconnected') send({ id: 3, method: 'vos/request', params: { app: 'calculator', method: ${JSON.stringify(method)}, params: {} } })
     else if (m.method === 'vos/event') out('event ' + m.params.name + ': ' + m.params.data)
     else if (m.method === 'ui/notifications/host-context-changed')
       document.getElementById('context').textContent = 'theme ' + m.params.theme

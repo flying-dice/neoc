@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Container } from 'app:rpc'
+  type Container = VosApp.Containers.Container
   import ContainerRow from './ContainerRow.svelte'
   import { container } from '../lib/fakeApi'
 

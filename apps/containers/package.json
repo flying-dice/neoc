@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Containers: the Docker containers and Compose stacks of this machine, a Svelte client on the kit, Docker reached from Luau through vnd:bollard, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "The Docker containers and Compose stacks of this machine: see what runs, start, stop and restart it, read its logs.",
+  "vos": {
+    "title": "Containers",
+    "icon": "rectangle.stack",
+    "tint": "teal",
+    "window": {
+      "w": 980,
+      "h": 640,
+      "minW": 440,
+      "minH": 420
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6012 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

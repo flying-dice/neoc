@@ -1,17 +1,18 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
-//! A backend written in TypeScript under the real runtime. The fixture (`fixtures/typescript`, an app project with an
-//! `openrpc.json` and `server/main.ts`) is built by the product's own pipeline: `@vos/vite-plugin` generates its types
-//! and router and compiles it with `TypeScriptToLua`. What is held here is that the compiler's output runs in an app's
+//! A backend written in TypeScript under the real runtime. The fixture (`fixtures/typescript`, an app project with a
+//! `package.json`, an `openrpc.json` and `server/main.ts`) is built by its own build: `@vos/vite-plugin` writes its types
+//! and compiles it with `TypeScriptToLua`. What is held here is that the compiler's output runs in an app's
 //! environment, which is Luau without `debug`, `os` and `print`: its runtime library, the bitwise operators, an
-//! `Error`, and the host's modules and `app` API called the way the generated declarations say.
+//! `Error`, and the host's modules and API called the way the generated declarations say. The calls are the page's, on
+//! the bus, held to the fixture's contract.
 
 use crate::common;
 
-use common::{built_project, db, id, user_ctx};
+use common::{db, Served};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use vos_application::{
-    ports::{AppRuntime, Notifier, PortResult},
+    ports::{Notifier, PortResult},
     testing::RecordingShell,
     PortError,
 };
@@ -28,20 +29,19 @@ impl Notifier for Quiet {
     }
 }
 
-async fn probe() -> LuaRuntime {
+async fn probe() -> Served {
     let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()));
-    runtime.load(&id(APP), built_project("crates/vos-lua/tests/fixtures/typescript"), db()).await.unwrap();
-    runtime
+    Served::load(runtime, APP, "crates/vos-lua/tests/fixtures/typescript", db()).await.unwrap()
 }
 
-async fn call(rt: &LuaRuntime, method: &str, args: Value) -> PortResult<Value> {
-    rt.call_handler(&id(APP), method, args, user_ctx(0)).await
+async fn call(app: &Served, method: &str, args: Value) -> PortResult<Value> {
+    app.page(&format!("_{method}"), args).await
 }
 
 #[tokio::test]
 async fn what_the_compiler_writes_runs_in_an_apps_environment() {
     let vm = probe().await;
-    let lines = call(&vm, "probe", Value::Null).await.unwrap();
+    let lines = call(&vm, "probe", json!({})).await.unwrap();
     assert_eq!(
         lines,
         json!([
@@ -87,7 +87,7 @@ async fn a_handler_fails_a_call_as_a_luau_one_does() {
         assert!(message.contains(said), "{how}: {message}");
         assert!(!message.contains("0x"), "{how}: {message}");
     }
-    // the router holds a TypeScript backend to the definition too
+    // the bus holds a TypeScript backend to its contract too
     let refused = call(&vm, "raise", json!({ "how": "politely" })).await.unwrap_err();
     assert!(matches!(refused, PortError::Rpc { code: -32602, .. }), "{refused:?}");
     // and the app goes on

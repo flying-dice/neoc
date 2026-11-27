@@ -1,34 +1,58 @@
 /**
- * The Luau side, from the definition: `.app/rpc.luau` in the app's project. It holds the types of the definition, the
- * `Handlers` interface the developer implements (one function per method, typed from the definition), the schemas the
- * router holds every call and every result to, and `router(handlers)`. The developer's `server/main.luau` returns the
- * handlers:
+ * Types for the backend's ambient API: the global `RPC` the host's VM gives every app (`RPC.send_request`,
+ * `RPC.on_request`, `RPC.send_notification`, `RPC.on_notification`), typed for this app and the apps it depends on. The
+ * output is one luau-lsp definitions file, `types/vos.d.luau`: the host's own declarations
+ * (`types/generated/vos.d.luau`, or `VOS_DEFINITIONS`) with
  *
- *     local rpc = require("../.app/rpc")
- *     local handlers: rpc.Handlers = { add = function(ctx, params) ... end }
- *     return handlers
+ *   - each app's types as global types under its id: `app1_Item`, `app1_AddParams`, `app1_AddResult` (as the host names
+ *     its own, `vos_app_Context`); the app's own every method, a dependency's its public ones;
+ *   - the four functions of `RPC` overloaded by app id and method, so a wrong app, method, params or result is a
+ *     type error.
  *
- * and the generated `.app/entry.luau` (what the build bundles, and the entry the host runs) returns `router(handlers)`: a
- * table of the checked handlers by method name, which the host dispatches a client's call to. A handler fails a call with a
- * coded error, `error("RPC-32602 Title cannot be empty", 0)`.
+ * Nothing here runs and nothing is required: the backend calls the globals, and the host's bus holds every request and
+ * notification to the contract whatever the types say. Check a backend with `luau-lsp analyze
+ * --definitions:@vos=types/vos.d.luau server/main.luau`.
+ *
+ *     RPC.on_request("add", function(params: app1_AddParams, ctx: vos_app_Context): app1_AddResult ... end)
+ *     local item, err = RPC.send_request("app1", "add", { text = "milk" })   -- item: app1_AddResult?
  */
-import { LUAU_KEYWORDS, type Definition, type Schema } from './definition.ts'
-import { lineComment, luauDoc, luauString } from './escape.ts'
-import { LUAU_RUNTIME } from './luau-runtime.ts'
-import { pascal } from './names.ts'
-import { paramsSchema } from './emit-client.ts'
+import { paramsObject, pascal, type Contract, type Method, type Schema } from './contract.ts'
+import type { Dependency } from './emit-ts.ts'
 
-/** A field name as Luau writes it: bare, or `["end"]` for a reserved word (a property or param may be any identifier). */
-const key = (name: string): string => (LUAU_KEYWORDS.has(name) ? `[${luauString(name)}]` : name)
+export const LUAU_KEYWORDS = new Set([
+  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or',
+  'repeat', 'return', 'then', 'true', 'until', 'while'
+])
 
-/** `T?`, parenthesised when `T` is more than a name (and left alone when it already allows nil). */
+export function luauString(s: string): string {
+  let out = '"'
+  for (const ch of s) {
+    const code = ch.codePointAt(0) as number
+    if (ch === '\\') out += '\\\\'
+    else if (ch === '"') out += '\\"'
+    else if (ch === '\n') out += '\\n'
+    else if (ch === '\r') out += '\\r'
+    else if (ch === '\t') out += '\\t'
+    else if (code < 0x20 || code === 0x7f) out += `\\${code}`
+    else out += ch
+  }
+  return `${out}"`
+}
+
+const luauDoc = (text: string | undefined, indent: string): string =>
+  text === undefined ? '' : `${text.split(/\r?\n/).map((line) => (line === '' ? `${indent}---` : `${indent}--- ${line}`)).join('\n')}\n`
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
+/** A field name as a Luau table writes it: bare, or `["end"]`. */
+const key = (name: string): string => (IDENTIFIER.test(name) && !LUAU_KEYWORDS.has(name) ? name : `[${luauString(name)}]`)
+
 const optional = (type: string): string => (type.endsWith('?') ? type : /^[\w.]+$/.test(type) ? `${type}?` : `(${type})?`)
 
-/** The Luau type of a schema. */
-export function luauType(schema: Schema): string {
+/** The Luau type of a schema; `prefix` names another app's types (`App1_Item`): Luau has no namespaces. */
+export function luauType(schema: Schema, prefix = ''): string {
   switch (schema.kind) {
     case 'string':
-      return schema.enum ? schema.enum.map((o) => luauString(o)).join(' | ') : 'string'
+      return schema.enum ? schema.enum.map(luauString).join(' | ') : 'string'
     case 'number':
       return 'number'
     case 'boolean':
@@ -36,118 +60,98 @@ export function luauType(schema: Schema): string {
     case 'null':
       return 'nil'
     case 'array':
-      return `{ ${luauType(schema.items)} }`
+      return `{ ${luauType(schema.items, prefix)} }`
     case 'object': {
       const fields = Object.entries(schema.properties).map(([name, property]) => {
-        const type = luauType(property)
+        const type = luauType(property, prefix)
         return `${key(name)}: ${schema.required.includes(name) ? type : optional(type)}`
       })
       return fields.length === 0 ? '{ [string]: never }' : `{ ${fields.join(', ')} }`
     }
     case 'ref':
-      return schema.name
+      return `${prefix}${schema.name}`
     case 'nullable':
-      return optional(luauType(schema.inner))
+      return optional(luauType(schema.inner, prefix))
   }
 }
 
-/** A schema as the Luau table the checker reads. */
-function luauSchema(schema: Schema): string {
-  switch (schema.kind) {
-    case 'string': {
-      const parts = ['kind = "string"']
-      if (schema.enum) parts.push(`enum = { ${schema.enum.map((o) => luauString(o)).join(', ')} }`)
-      if (schema.minLength !== undefined) parts.push(`minLength = ${schema.minLength}`)
-      if (schema.maxLength !== undefined) parts.push(`maxLength = ${schema.maxLength}`)
-      return `{ ${parts.join(', ')} }`
-    }
-    case 'number': {
-      const parts = ['kind = "number"', `integer = ${schema.integer}`]
-      if (schema.minimum !== undefined) parts.push(`minimum = ${schema.minimum}`)
-      if (schema.maximum !== undefined) parts.push(`maximum = ${schema.maximum}`)
-      return `{ ${parts.join(', ')} }`
-    }
-    case 'boolean':
-    case 'null':
-      return `{ kind = "${schema.kind}" }`
-    case 'array':
-      return `{ kind = "array", items = ${luauSchema(schema.items)} }`
-    case 'object': {
-      const properties = Object.entries(schema.properties).map(([name, property]) => `${key(name)} = ${luauSchema(property)}`)
-      const required = schema.required.map((name) => luauString(name))
-      const list = (items: string[]): string => (items.length === 0 ? '{}' : `{ ${items.join(', ')} }`)
-      return `{ kind = "object", properties = ${list(properties)}, required = ${list(required)} }`
-    }
-    case 'ref':
-      return `{ kind = "ref", name = ${luauString(schema.name)} }`
-    case 'nullable':
-      return `{ kind = "nullable", inner = ${luauSchema(schema.inner)} }`
-  }
+const docOf = (m: Method): string | undefined => [m.summary, m.description].filter((t) => t !== undefined).join('\n\n') || undefined
+
+/** An app's global types are named under its id: `my-app` is `my_app_<Type>`. */
+export const typePrefix = (id: string): string => `${id.replace(/-/g, '_')}_`
+
+/** An app this backend knows: its own (every method) or a dependency (its public ones). */
+interface Known {
+  id: string
+  contract: Contract
+  own: boolean
 }
 
-/** `.app/entry.luau`: the backend's entry, which the build bundles: the developer's handlers, behind the router. */
-export function emitLuauEntry(): string {
-  return `--!strict
--- GENERATED by @vos/vite-plugin: do not edit. The backend's entry: the handlers of server/main.luau, behind the router.
-local rpc = require("./rpc")
-local handlers = require("../server/main")
-return rpc.router(handlers)
-`
+const visible = (known: Known, methods: Method[]): Method[] => methods.filter((m) => known.own || !m.private)
+
+/** An app's types, as global types under its prefix. */
+function appTypes(known: Known): string[] {
+  const p = typePrefix(known.id)
+  const out: string[] = [`-- ===== the app ${known.id}${known.own ? ' (this one)' : ''} =====`, '']
+  for (const [name, schema] of Object.entries(known.contract.components)) out.push(`${luauDoc(schema.description, '')}export type ${p}${name} = ${luauType(schema, p)}`)
+  for (const m of visible(known, [...known.contract.requests, ...known.contract.notifications])) {
+    const doc = luauDoc(docOf(m), '')
+    if (m.params.length > 0) out.push(`${doc}export type ${p}${pascal(m.name)}Params = ${luauType(paramsObject(m), p)}`)
+    if (m.kind === 'request') out.push(`${m.params.length > 0 ? '' : doc}export type ${p}${pascal(m.name)}Result = ${luauType(m.result, p)}`)
+  }
+  out.push('')
+  return out
 }
 
-export function emitLuau(definition: Definition, source: string): string {
-  const out: string[] = []
-  out.push('--!strict')
-  out.push(`-- GENERATED by @vos/vite-plugin from ${lineComment(source)}: do not edit (\`bun run generate\` writes it).`)
-  out.push(`-- The Luau side of the app's RPC: ${lineComment(definition.title)} ${lineComment(definition.version)}.`)
-  out.push('')
-  out.push('--- What a handler gets: who is calling (the person\'s own client) and when.')
-  out.push('export type Context = vos_app_Context')
-  out.push('')
-  for (const [name, schema] of Object.entries(definition.components)) {
-    out.push(`${luauDoc(schema.description, '')}export type ${name} = ${luauType(schema)}`)
-  }
-  for (const method of definition.methods) {
-    const type = pascal(method.name)
-    if (method.params.length > 0) {
-      out.push(`export type ${type}Params = ${luauType(paramsSchema(definition, method.name))}`)
-    }
-    out.push(`export type ${type}Result = ${luauType(method.result)}`)
-  }
-  out.push('')
-  out.push('--- The handlers of the definition: the implementation the developer writes, one function per method.')
-  out.push('export type Handlers = {')
-  for (const method of definition.methods) {
-    const type = pascal(method.name)
-    const text = [method.summary, method.description].filter((t) => t !== undefined).join('\n\n') || undefined
-    const params = method.params.length > 0 ? `, params: ${type}Params` : ''
-    out.push(`${luauDoc(text, '  ')}  ${method.name}: (ctx: Context${params}) -> ${type}Result,`)
-  }
-  out.push('}')
-  out.push('')
-  out.push(emitLuauRouter(definition))
-  return out.join('\n')
+const paramsOf = (id: string, m: Method): string => (m.params.length > 0 ? `${typePrefix(id)}${pascal(m.name)}Params` : '{}')
+
+/** The four functions of `RPC`, overloaded for the apps this backend knows; `undefined` keeps the host's own. */
+function busFunctions(apps: Known[]): Record<'send_request' | 'on_request' | 'send_notification' | 'on_notification', string | undefined> {
+  const own = apps.find((a) => a.own)
+  const join = (items: string[]): string | undefined => (items.length === 0 ? undefined : items.join(' & '))
+  const send = apps.flatMap((a) =>
+    visible(a, a.contract.requests).map(
+      (r) =>
+        `((app: ${luauString(a.id)}, method: ${luauString(r.name)}, params: ${paramsOf(a.id, r)}${r.params.length > 0 ? '' : '?'}) -> (${typePrefix(a.id)}${pascal(r.name)}Result?, vos_rpc_RequestError?))`
+    )
+  )
+  const serve = own
+    ? own.contract.requests.map(
+        (r) =>
+          `((method: ${luauString(r.name)}, handler: (params: ${paramsOf(own.id, r)}, ctx: vos_app_Context) -> ${typePrefix(own.id)}${pascal(r.name)}Result) -> ())`
+      )
+    : []
+  const notify = own
+    ? own.contract.notifications.map((n) => `((name: ${luauString(n.name)}, params: ${paramsOf(own.id, n)}${n.params.length > 0 ? '' : '?'}) -> ())`)
+    : []
+  const hear = apps.flatMap((a) =>
+    visible(a, a.contract.notifications).map(
+      (n) => `((app: ${luauString(a.id)}, name: ${luauString(n.name)}, listener: (params: ${paramsOf(a.id, n)}, ctx: vos_app_Context) -> ()) -> ())`
+    )
+  )
+  return { send_request: join(send), on_request: join(serve), send_notification: join(notify), on_notification: join(hear) }
 }
 
 /**
- * The part of `rpc.luau` that runs: the schemas of the definition as tables, then the checker and `router(handlers)`, and
- * the module's `return { router = router }`. A backend written in TypeScript gets the same text as its `rpc` module
- * (`typescript-backend.ts`), so both languages are held to the definition by one router.
+ * `types/vos.d.luau`: the host's declarations (`host`, the text of its `vos.d.luau`), with this app's and its
+ * dependencies' types, and the global `RPC`'s functions typed for them.
  */
-export function emitLuauRouter(definition: Definition): string {
-  const out: string[] = []
-  out.push('local COMPONENTS: { [string]: any } = {')
-  for (const [name, schema] of Object.entries(definition.components)) out.push(`  ${name} = ${luauSchema(schema)},`)
-  out.push('}')
-  out.push('')
-  out.push('local METHODS: { [string]: any } = {')
-  for (const method of definition.methods) {
-    out.push(`  ${method.name} = {`)
-    out.push(`    params = ${luauSchema(paramsSchema(definition, method.name))},`)
-    out.push(`    result = ${luauSchema(method.result)},`)
-    out.push('  },')
+export function emitLuauDefinitions(host: string, appId: string, contract: Contract, dependencies: Dependency[]): string {
+  const apps: Known[] = [{ id: appId, contract, own: true }, ...dependencies.map((d) => ({ id: d.id, contract: d.contract, own: false }))]
+  let text = host
+  for (const [name, overloads] of Object.entries(busFunctions(apps))) {
+    if (overloads === undefined) continue
+    // the host declares each function of `vos_rpc` on one line: `\t<name>: (...) -> ...,`
+    const line = new RegExp(`^(\t${name}: ).*,$`, 'm')
+    if (!line.test(text)) throw new Error(`the host's declarations have no \`RPC.${name}\` to type: they are older than this plugin`)
+    text = text.replace(line, (_all, start: string) => `${start}${overloads},`)
   }
-  out.push('}')
-  out.push(LUAU_RUNTIME)
-  return out.join('\n')
+  const types = apps.flatMap(appTypes)
+  return [
+    `-- GENERATED by @vos/vite-plugin: do not edit. The host's declarations, typed for ${appId} and the apps it depends on.`,
+    '-- Check the backend with `luau-lsp analyze --definitions:@vos=types/vos.d.luau server/main.luau`. Nothing here runs.',
+    '',
+    ...types,
+    text
+  ].join('\n')
 }

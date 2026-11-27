@@ -1,9 +1,21 @@
-import type { Api, Host, Item, Keychain as Store, Overview } from 'app:rpc'
+type Item = VosApp.Keychain.Item
+type Store = VosApp.Keychain.Keychain
+type Overview = VosApp.Keychain.Overview
 
-/** What the window needs of the backend: the overview, the two ways of changing it, and one password at a time. */
-export type KeychainRpc = Pick<Api, 'overview' | 'add' | 'reveal' | 'remove'>
-/** Where the backend's events are heard (`host.on`). */
-export type KeychainEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the overview, the two ways of changing it, and one password at a time (the
+ * app's private methods on the bus, `_overview` ...: `App.svelte` sends them).
+ */
+export interface KeychainRpc {
+  overview(): Promise<Overview>
+  add(params: VosApp.Keychain.AddParams): Promise<Overview>
+  reveal(params: VosApp.Keychain.RevealParams): Promise<VosApp.Keychain.Secret>
+  remove(params: VosApp.Keychain.RemoveParams): Promise<Overview>
+}
+/** Where the window hears that the items changed: the backend's `changed`, and the host's `host:reconnected`. */
+export interface KeychainEvents {
+  on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** An item as it is typed, before it is added. */
 export interface ItemDraft {

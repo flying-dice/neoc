@@ -86,6 +86,10 @@ pub struct Manifest {
     /// The default window and its minimum size, for the shell to open the app with.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowDecl>,
+    /// The app's contract (`openrpc.json`), a path in the app ref: the RPC bus holds every request and notification of
+    /// the app to it and shows agents its public methods as it describes them. An app without one is held to nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
 }
 
 /// A manifest as it is written. It differs from [`Manifest`] in one thing: `ui` may be missing, which is how an app
@@ -113,6 +117,8 @@ struct ManifestWire {
     ui: Option<AppUi>,
     #[serde(default)]
     window: Option<WindowDecl>,
+    #[serde(default)]
+    contract: Option<String>,
 }
 
 impl TryFrom<ManifestWire> for Manifest {
@@ -132,6 +138,7 @@ impl TryFrom<ManifestWire> for Manifest {
             requires: wire.requires,
             ui,
             window: wire.window,
+            contract: wire.contract,
         })
     }
 }
@@ -398,6 +405,7 @@ mod tests {
                 requires: None,
                 ui: page(),
                 window: None,
+                contract: None,
             },
             files: vec![FileRef {
                 path: "main.lua".into(),
@@ -425,6 +433,7 @@ mod tests {
             requires: None,
             ui: page(),
             window: None,
+            contract: None,
         };
         assert!(manifest("app.luau").validate().is_ok());
         assert!(
@@ -451,6 +460,7 @@ mod tests {
             requires: Some(Requires { host: Some(">=1.0".into()) }),
             ui: page(),
             window: None,
+            contract: None,
         };
         assert!(m.validate().is_ok());
         m.requires = Some(Requires { host: Some(">=2.0".into()) });
@@ -486,6 +496,7 @@ mod tests {
             requires: None,
             ui: page(),
             window: None,
+            contract: None,
         };
         AppRef { manifest, files }
     }
@@ -565,6 +576,7 @@ mod tests {
             requires: None,
             ui: page(),
             window: Some(WindowDecl { w: 420, h: 480, min_w: 320, min_h: 320 }),
+            contract: None,
         };
         assert!(m.validate().is_ok());
         for bad in ["", "../x", "/static"] {
@@ -632,6 +644,7 @@ mod tests {
             requires: None,
             ui: page(),
             window: None,
+            contract: None,
         };
         assert_eq!(m.validate(), Err(DomainError::MigrationOrder));
         m.migrations[0].version = 1;

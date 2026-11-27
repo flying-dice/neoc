@@ -150,7 +150,7 @@ jobs:
       CLEAN_ARGS: ""
       BUN_VERSION: "1.4.5"
       # The versions the repository pins: LUAU_LSP_VERSION and DARKLUA_VERSION
-      # in packages/vite-plugin/src (luau-tools.ts, backend.ts).
+      # in scripts/lint-luau.ts and packages/vite-plugin/src/build.ts.
       LUAU_LSP_VERSION: "1.70.1"
       LUAU_LSP_SHA256: "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567"
       DARKLUA_VERSION: "0.18.0"

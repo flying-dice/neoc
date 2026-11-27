@@ -47,7 +47,7 @@ pub(crate) fn offered_modules(refused: &[String]) -> Vec<&'static str> {
 }
 
 /// What a `require` may name, for the error message of one that names something else.
-const ALLOWED: &str = "\"vos:app\", \"vos:docker\" and the std:, lib: and vnd: modules";
+const ALLOWED: &str = "\"vos:app\", \"vos:rpc\", \"vos:docker\" and the std:, lib: and vnd: modules";
 
 pub(crate) fn install(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table) -> mlua::Result<()> {
     let sh = sh.clone();
@@ -85,6 +85,9 @@ fn load(lua: &Lua, sh: &Arc<Shared>, env: &mlua::Table, spec: &str) -> mlua::Res
             .clone()
             .map(LuaValue::Table)
             .ok_or_else(|| mlua::Error::runtime("the app table is gone (the app was unloaded)"));
+    }
+    if spec == crate::api::RPC_MODULE {
+        return crate::api::rpc_table(lua).map(LuaValue::Table);
     }
     if spec == docker::MODULE {
         return carried(lua, sh, env, spec, docker::SOURCE);

@@ -65,6 +65,7 @@ neoc-vm-lib-tempfile = { path = "crates/neoc-vm-lib/tempfile" }
 neoc-vm-lib-template = { path = "crates/neoc-vm-lib/template" }
 neoc-vm-lib-test = { path = "crates/neoc-vm-lib/test" }
 neoc-vm-lib-text = { path = "crates/neoc-vm-lib/text" }
+neoc-vm-lib-tracing = { path = "crates/neoc-vm-lib/tracing" }
 neoc-vm-lib-unicode = { path = "crates/neoc-vm-lib/unicode" }
 neoc-vm-lib-url = { path = "crates/neoc-vm-lib/url" }
 neoc-vm-lib-vcr = { path = "crates/neoc-vm-lib/vcr" }

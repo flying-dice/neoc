@@ -140,13 +140,13 @@ wire! {
 // ---------------------------------------------------------------------------------------------------------
 
 wire! {
-    /// `window.open`: an app asked for its window (`app.openWindow`, e.g. from an agent's tool call). The shell
+    /// `window.open`: an app asked for its window (`app.open_window`, e.g. from an agent's tool call). The shell
     /// opens the app's window, or brings its open one forward.
     pub struct WindowOpen {
         pub app: String,
         /// The window kind (`"main"`).
         pub window: String,
-        /// What the app passed to `app.openWindow` for its page.
+        /// What the app passed to `app.open_window` for its page.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "codegen", ts(optional))]
         pub params: Option<Map<String, Value>>,
@@ -222,6 +222,8 @@ pub mod codes {
     pub const APP_ERROR: i32 = -32010;
     /// The client's `proto` is not served by this host.
     pub const UNSUPPORTED_PROTO: i32 = -32012;
+    /// An answer to a request on the bus that no longer waits: another handler answered first, or it was cancelled.
+    pub const EXPIRED: i32 = -32013;
     /// JSON-RPC: the method does not exist.
     pub const METHOD_NOT_FOUND: i32 = -32601;
     /// JSON-RPC: the params are malformed.
@@ -318,7 +320,7 @@ pub const METHODS: &[MethodSpec] = &[
         kind: MethodKind::Notification,
         params: "WindowOpen",
         result: None,
-        doc: "An app asked for its window (`app.openWindow`): open it, or bring it forward.",
+        doc: "An app asked for its window (`app.open_window`): open it, or bring it forward.",
     },
     MethodSpec {
         name: "notification.deliver",

@@ -1,15 +1,26 @@
 <script lang="ts">
-  import { api, host, type Task } from 'app:rpc'
+  type Task = VosApp.TasksSvelte.Task
 
-  // the journeys reach the backend with calls the screen has no control for (`hang`, `release`)
-  ;(window as unknown as { __rpc: (method: string, args?: unknown) => Promise<unknown> }).__rpc = (method, args) =>
-    (api as unknown as Record<string, (args?: unknown) => Promise<unknown>>)[method](args)
+  // the page's methods are the app's private ones on the bus
+  const api = {
+    list: (): Promise<Task[]> => RPC.send_request('tasks-svelte', '_list'),
+    add: (params: VosApp.TasksSvelte.AddParams): Promise<Task[]> => RPC.send_request('tasks-svelte', '_add', params),
+    toggle: (params: VosApp.TasksSvelte.ToggleParams): Promise<Task[]> => RPC.send_request('tasks-svelte', '_toggle', params)
+  }
+
+  // the journeys reach the backend with calls the screen has no control for (`_hang`, `_release`)
+  ;(window as unknown as { __rpc: (method: string, params?: unknown) => Promise<unknown> }).__rpc = (method, params) =>
+    (RPC as unknown as { send_request: (app: string, method: string, params?: unknown) => Promise<unknown> }).send_request(
+      'tasks-svelte',
+      method,
+      params
+    )
 
   let tasks = $state<Task[]>([])
   let title = $state('')
   let error = $state<string | null>(null)
-  let theme = $state(host.theme)
-  // where the app runs: `host.hosted` is true when the host page draws UI of its own (the shell)
+  let theme = $state(vos.host.theme)
+  // where the app runs: `vos.host.hosted` is true when the host page draws UI of its own (the shell)
   let where = $state('connecting')
 
   const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -35,14 +46,14 @@
   $effect(() => {
     void show(api.list())
     const stops = [
-      host.on('tasks.changed', () => void show(api.list())),
+      RPC.on_notification('tasks-svelte', 'tasks_changed', () => void show(api.list())),
       // the host connection came back: a change made while it was away reached nobody
-      host.on('host:reconnected', () => void show(api.list())),
-      host.onContext((context) => (theme = context.theme === 'dark' ? 'dark' : 'light'))
+      vos.host.on('host:reconnected', () => void show(api.list())),
+      vos.host.on_context((context) => (theme = context.theme === 'dark' ? 'dark' : 'light'))
     ]
-    void host.ready.then(() => {
-      theme = host.theme
-      where = host.hosted ? 'in the shell' : 'on its own'
+    void vos.host.ready.then(() => {
+      theme = vos.host.theme
+      where = vos.host.hosted ? 'in the shell' : 'on its own'
     })
     return () => stops.forEach((stop) => stop())
   })

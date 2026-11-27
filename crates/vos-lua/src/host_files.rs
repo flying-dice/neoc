@@ -47,12 +47,13 @@ impl LocalFiles {
 }
 
 /// A native absolute path as a [`HostPath`] (`/Users/me`, `/C:/Users/me`); `None` for one that is not absolute or
-/// not Unicode.
+/// not Unicode. A Windows path in its long form (`\\?\C:\Users\me`, what `canonicalize` answers) is the same path.
 fn wire_path(native: &Path) -> Option<HostPath> {
     if !native.is_absolute() {
         return None;
     }
-    let text = native.to_str()?.replace('\\', "/");
+    let text = native.to_str()?;
+    let text = text.strip_prefix(r"\\?\").unwrap_or(text).replace('\\', "/");
     HostPath::parse(&format!("/{}", text.trim_start_matches('/'))).ok()
 }
 

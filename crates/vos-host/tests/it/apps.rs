@@ -121,24 +121,24 @@ async fn background_work_tells_the_open_pages_on_its_own_and_outlives_them() {
     assert_eq!(ticks_in(&next), Some(first_tick + 1), "every tick is told, in order: {first} then {next}");
 
     // --- a call from the page reaches its handler, and the pause holds the count while the loop is still alive
-    let paused = rpc(&mut ws, 3, "app.call", page("toggle")).await;
+    let paused = rpc(&mut ws, 3, "app.call", page("_toggle")).await;
     assert_eq!(paused["result"], json!({"running": false}), "{paused}");
     let (held, running) = ticker_now(&agent).await;
     assert!(!running);
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(ticker_now(&agent).await.0, held, "paused: the loop runs but counts nothing");
-    let state = rpc(&mut ws, 4, "app.call", page("state")).await;
+    let state = rpc(&mut ws, 4, "app.call", page("_state")).await;
     assert_eq!(
         state["result"],
         json!({"ticks": held, "running": false}),
         "what the page reads is what the tool reads"
     );
-    let resumed = rpc(&mut ws, 5, "app.call", page("toggle")).await;
+    let resumed = rpc(&mut ws, 5, "app.call", page("_toggle")).await;
     assert_eq!(resumed["result"], json!({"running": true}));
     ticks_above(&agent, held).await;
 
     // --- an error in a handler is that call's error answer, and the loop is untouched (AGOS-54 #6)
-    let failed = rpc(&mut ws, 6, "app.call", page("fail")).await;
+    let failed = rpc(&mut ws, 6, "app.call", page("_fail")).await;
     assert_eq!(failed["error"]["code"], -32010, "{failed}");
     assert!(failed["error"]["message"].as_str().unwrap().contains("always fails"), "{failed}");
     let (before, _) = ticker_now(&agent).await;
@@ -151,7 +151,7 @@ async fn background_work_tells_the_open_pages_on_its_own_and_outlives_them() {
 
     // --- a page opened later reads the app as it is now, and hears the ticks from here on
     let mut ws = browser(&r).await;
-    let state = rpc(&mut ws, 7, "app.call", page("state")).await;
+    let state = rpc(&mut ws, 7, "app.call", page("_state")).await;
     assert!(state["result"]["ticks"].as_u64().unwrap() >= later, "{state}");
     notification_where(&mut ws, "app.event", |p| ticks_in(p).is_some_and(|n| n > later)).await;
 
@@ -160,7 +160,7 @@ async fn background_work_tells_the_open_pages_on_its_own_and_outlives_them() {
     assert!(reply.get("error").is_none(), "{reply}");
     assert_eq!(next_notification(&mut ws, "app.uninstalled").await["app"], "ticker");
     assert!(!tool_names(&agent).await.iter().any(|n| n.starts_with("ticker__")));
-    let gone = rpc(&mut ws, 9, "app.call", page("state")).await;
+    let gone = rpc(&mut ws, 9, "app.call", page("_state")).await;
     assert_eq!(gone["error"]["code"], -32002, "{gone}");
     ws.backlog.clear();
     tokio::time::sleep(Duration::from_millis(500)).await;

@@ -197,7 +197,7 @@ test.describe('Projects journeys', () => {
     const written = unique('Notes')
     await openProjects(page)
     await addProject(page, unique('Agents'), key)
-    // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
+    // the agent calls the app's tools over MCP; a tool tells the open window with a notification: no reload, no click
     const added = JSON.parse(await callTool(`${ID}__add_issue`, { project: key, title, type: 'bug', priority: 'high' })) as { key: string }
     expect(added.key).toBe(`${key}-1`)
     await expect(cardIn(page, 'todo', added.key)).toBeVisible()

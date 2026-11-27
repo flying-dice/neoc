@@ -1,6 +1,7 @@
 <!-- @organism Board — a project's issues in the three columns of its board, the most pressing first, with the field the next one is typed in; an issue is moved by dragging its card to another column, or with the button on the card -->
 <script lang="ts">
-  import type { Issue, Status } from 'app:rpc'
+  type Issue = VosApp.Projects.Issue
+  type Status = VosApp.Projects.Status
   import Composer from '../molecules/Composer.svelte'
   import IssueCard from '../molecules/IssueCard.svelte'
   import { STATUSES } from '../lib/catalog'

@@ -15,7 +15,7 @@
   import { settings } from '../lib/settings.svelte'
   import { windowManager } from '../lib/windowManager.svelte'
   import { focusFrame } from '../shell/frameFocus'
-  import { createHostBridge, eventFor, type HostBridge } from '../shell/hostBridge'
+  import { createHostBridge, routeToFrame, type HostBridge } from '../shell/hostBridge'
   import { contextChange, hostContextOf, type HostContext } from '../shell/hostContext'
   import { baseServices } from '../shell/hostServices'
 
@@ -133,8 +133,7 @@
     const listen = (e: MessageEvent): void => made.receive(e)
     window.addEventListener('message', listen)
     const stop = host.api.onNotification((method, params) => {
-      const event = eventFor(appId, method, params)
-      if (event) made.event(event.name, event.data)
+      routeToFrame(made, appId, method, params)
     })
     return () => {
       window.removeEventListener('message', listen)
@@ -161,6 +160,8 @@
     if (connection === 'offline') wasOffline = true
     else if (connection === 'online' && wasOffline) {
       wasOffline = false
+      // the host forgot the frame's handlers on the bus with the old connection
+      bridge?.rehandle()
       if (phase === 'ready') bridge?.event('host:reconnected', null)
     }
   })

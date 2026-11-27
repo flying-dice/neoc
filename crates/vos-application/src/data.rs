@@ -80,7 +80,7 @@ pub trait AppData: Send + Sync {
     async fn exec(&self, sql: String, params: Params) -> PortResult<ExecOutcome>;
     async fn begin(&self) -> PortResult<Box<dyn DataTx>>;
     /// A handle on the same database through which nothing can be written: every statement that would
-    /// change data or schema fails, and so does `migrate`. A tool declared `readOnly` runs through this.
+    /// change data or schema fails, and so does `migrate`. A read-only call runs through this.
     fn read_only(&self) -> Arc<dyn AppData>;
 }
 

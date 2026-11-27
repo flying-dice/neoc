@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["src", "e2e", ".app/*.d.ts"]
+  "include": ["src", "e2e", "types/*.d.ts"]
 }

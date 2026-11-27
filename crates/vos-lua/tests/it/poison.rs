@@ -7,7 +7,7 @@
 //! this host first ran on turned the same recursion into a catchable "C stack overflow" error). On Luau the engine
 //! answers `error in error handling` once, so the value reaches the caller as an ordinary error, whichever path it
 //! takes: the entry chunk, a tool, a handler of the app's page, an event or request handler, a task, a transaction
-//! body. A table the app hands over (given to `app.tool` or `app.notify`, or returned from a handler) is read raw,
+//! body. A table the app hands over (given to `app.notify`, or returned from a handler) is read raw,
 //! so its `__index` never runs.
 //!
 //! Each case runs in a child process (this test binary again, `poison::poison_case_child`) so that an abort would kill the
@@ -38,7 +38,7 @@ local booby = setmetatable({}, { __index = function() error(poison) end })
 "#;
 
 fn app(body: &str) -> String {
-    format!("{POISON}\napp.tool {{ name = 'ping', run = function() return 'pong' end }}\n{body}")
+    format!("{POISON}\nRPC.on_request('ping', function() return 'pong' end)\n{body}")
 }
 
 /// The text of an error the engine produced for the poison: `error in error handling`, once. A case that failed for
@@ -53,13 +53,13 @@ fn poisoned(e: &dyn std::fmt::Display) -> String {
 /// must still answer afterwards.
 async fn failing_tool(src: &str, tool: &str) -> String {
     let vm = load(&app(src)).await;
-    let e = vm.call_tool(tool, json!({}), &agent_ctx(0), false).await.unwrap_err();
+    let e = common::serve(&vm, tool, json!({}), &agent_ctx(0)).await.unwrap_err();
     ping(&vm).await;
     poisoned(&e)
 }
 
 async fn ping(vm: &vos_lua::AppVm) {
-    let out = vm.call_tool("ping", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(vm, "ping", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out, json!("pong"), "the app no longer answers");
 }
 
@@ -83,9 +83,10 @@ impl Notifier for Quiet {
     }
 }
 
-/// The app with these handlers (a Luau table), through the runtime the page's calls go through.
+/// The app with these handlers (the `RPC.on_request` calls that serve them), through the runtime the page's calls go
+/// through.
 async fn runtime_with(handlers: &str) -> LuaRuntime {
-    let src = format!("{}\nreturn {handlers}", app(""));
+    let src = app(handlers);
     let shell = Arc::new(vos_application::testing::RecordingShell::default());
     let runtime = LuaRuntime::new(Arc::new(Quiet), shell);
     runtime.load(&id("probe"), package(&src, &[]), db()).await.unwrap();
@@ -106,20 +107,8 @@ async fn run_case(name: &str) -> String {
             Ok(_) => panic!("the app loaded"),
             Err(e) => poisoned(&e),
         },
-        // a table handed to `app.tool` would raise the value if the host ran its `__index`: the definition is
-        // read raw, so the app's code does not run and the table is refused for what it holds (nothing)
-        "tool_spec_index" => match try_load("probe", &app("app.tool(booby)")).await {
-            Ok(_) => panic!("the app loaded"),
-            Err(e) => {
-                let text = e.to_string();
-                assert!(text.contains("name: expected a string, got nil"), "{text}");
-                text
-            }
-        },
         // a tool body raises the value
-        "tool_body" => {
-            failing_tool("app.tool { name = 'boom', run = function() error(poison) end }", "boom").await
-        }
+        "tool_body" => failing_tool("RPC.on_request('boom', function() error(poison) end)", "boom").await,
         // an event handler raises the value
         "event_handler" => {
             let vm = load(&app("hook('e', function() error(poison) end)")).await;
@@ -132,10 +121,10 @@ async fn run_case(name: &str) -> String {
             let vm = load(&app(
                 r#"local net, hyper = require("std:net"), require("vnd:hyper")
                    local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function() error(poison) end)
-                   app.tool { name = 'addr', run = function() return server:addr() end }"#,
+                   RPC.on_request('addr', function() return server:addr() end)"#,
             ))
             .await;
-            let addr = vm.call_tool("addr", json!({}), &agent_ctx(0), false).await.unwrap();
+            let addr = common::serve(&vm, "addr", json!({}), &agent_ctx(0)).await.unwrap();
             let answer = get(addr.as_str().unwrap()).await;
             ping(&vm).await;
             let status = answer.lines().next().unwrap_or_default().to_owned();
@@ -146,15 +135,15 @@ async fn run_case(name: &str) -> String {
         // a background task raises the value
         "task_body" => {
             let vm = load(&app(r#"local task = require("std:task")
-                   app.tool { name = 'spawn', run = function()
+                   RPC.on_request('spawn', function()
                      task.spawn(function() app.kv:set('ran', 'yes') error(poison) end) return 'ok'
-                   end }
-                   app.tool { name = 'ran', run = function() return app.kv:get('ran') end }"#))
+                   end)
+                   RPC.on_request('ran', function() return app.kv:get('ran') end)"#))
             .await;
-            vm.call_tool("spawn", json!({}), &agent_ctx(0), false).await.unwrap();
+            common::serve(&vm, "spawn", json!({}), &agent_ctx(0)).await.unwrap();
             // wait for the task to have run (it sets a key, then raises)
             for _ in 0..100 {
-                if vm.call_tool("ran", json!({}), &agent_ctx(0), false).await.unwrap() == json!("yes") {
+                if common::serve(&vm, "ran", json!({}), &agent_ctx(0)).await.unwrap() == json!("yes") {
                     ping(&vm).await;
                     return "the task ran and failed".into();
                 }
@@ -164,9 +153,11 @@ async fn run_case(name: &str) -> String {
         }
         // a handler the app's page calls raises the value
         "handler_body" => {
-            let runtime =
-                runtime_with("{ boom = function() error(poison) end, ok = function() return 'pong' end }")
-                    .await;
+            let runtime = runtime_with(
+                "RPC.on_request('boom', function() error(poison) end)
+                     RPC.on_request('ok', function() return 'pong' end)",
+            )
+            .await;
             let e = call_handler(&runtime, "boom").await.unwrap_err();
             assert_eq!(
                 call_handler(&runtime, "ok").await.unwrap(),
@@ -177,9 +168,11 @@ async fn run_case(name: &str) -> String {
         }
         // a handler returns a table whose reads raise the value
         "handler_return_value" => {
-            let runtime =
-                runtime_with("{ boom = function() return booby end, ok = function() return 'pong' end }")
-                    .await;
+            let runtime = runtime_with(
+                "RPC.on_request('boom', function() return booby end)
+                     RPC.on_request('ok', function() return 'pong' end)",
+            )
+            .await;
             // the host reads what a handler returned raw (no `__index`, no `__pairs`): the booby trap is an empty
             // table to it, so the call answers with one and the poison is never raised
             let out = call_handler(&runtime, "boom").await.unwrap();
@@ -193,21 +186,16 @@ async fn run_case(name: &str) -> String {
         }
         // a table handed to `app.notify` is read raw too: refused for the title it does not hold
         "notify_spec" => {
-            let vm =
-                load(&app("app.tool { name = 'n', run = function() app.notify(booby) return 'ok' end }"))
-                    .await;
-            let e = vm.call_tool("n", json!({}), &agent_ctx(0), false).await.unwrap_err().to_string();
+            let vm = load(&app("RPC.on_request('n', function() app.notify(booby) return 'ok' end)")).await;
+            let e = common::serve(&vm, "n", json!({}), &agent_ctx(0)).await.unwrap_err().to_string();
             ping(&vm).await;
             assert!(e.contains("missing field `title`"), "{e}");
             e
         }
         // the body of a transaction raises the value
         "tx_body" => {
-            failing_tool(
-                "app.tool { name = 'tx', run = function() app.db:tx(function() error(poison) end) end }",
-                "tx",
-            )
-            .await
+            failing_tool("RPC.on_request('tx', function() app.db:tx(function() error(poison) end) end)", "tx")
+                .await
         }
         other => panic!("no case {other}"),
     }
@@ -256,11 +244,6 @@ fn survives(case: &str) {
 #[test]
 fn entry_chunk_raising_the_poison_fails_the_load() {
     survives("entry_chunk");
-}
-
-#[test]
-fn a_table_given_to_app_tool_that_would_raise_the_poison_on_a_field_read_is_read_raw_and_refused() {
-    survives("tool_spec_index");
 }
 
 #[test]

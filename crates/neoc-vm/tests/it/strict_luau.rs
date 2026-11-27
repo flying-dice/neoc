@@ -4,7 +4,7 @@
 //! `crates/neoc/tests/cli.rs` runs with `neoc run`.
 //!
 //! luau-lsp does the checking. It is looked for on `PATH`, then at `~/.local/bin/luau-lsp`, as
-//! `packages/vite-plugin/src/luau-tools.ts` does. Where it is not installed the test says it was skipped and passes,
+//! `scripts/lint-luau.ts` does. Where it is not installed the test says it was skipped and passes,
 //! so `cargo test` needs nothing installed; with `NEOC_REQUIRE_LUAU_LSP` set a missing luau-lsp is a failure (a
 //! skipped check is not a pass).
 

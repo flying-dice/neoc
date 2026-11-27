@@ -109,21 +109,21 @@ async fn unload_frees_the_vm_and_hot_reload_swaps_in_new_code() {
 async fn one_call_runs_at_a_time_in_a_vm() {
     let src = r#"
         local order = {}
-        app.tool { name = "slow", run = function()
+        RPC.on_request("slow", function()
             table.insert(order, "a-start")
             app.db:all("select 1")      -- yields to the host
             table.insert(order, "a-end")
             return order
-        end }
-        app.tool { name = "fast", run = function()
+        end)
+        RPC.on_request("fast", function()
             table.insert(order, "b")
             return order
-        end }
+        end)
     "#;
     let vm = std::sync::Arc::new(load(src).await);
     let (a, b) = (vm.clone(), vm.clone());
-    let first = tokio::spawn(async move { a.call_tool("slow", json!({}), &agent_ctx(0), false).await });
-    let second = tokio::spawn(async move { b.call_tool("fast", json!({}), &agent_ctx(0), false).await });
+    let first = tokio::spawn(async move { common::serve(&a, "slow", json!({}), &agent_ctx(0)).await });
+    let second = tokio::spawn(async move { common::serve(&b, "fast", json!({}), &agent_ctx(0)).await });
     let (first, second) = (first.await.unwrap().unwrap(), second.await.unwrap().unwrap());
     // whichever ran first ran to completion before the other started
     let a_done = first == json!(["a-start", "a-end"]) || second == json!(["a-start", "a-end", "b"]);

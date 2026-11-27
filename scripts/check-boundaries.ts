@@ -208,7 +208,9 @@ function checkCode(rel: string, code: string, markup: string): void {
 
 let checked = 0
 for (const pattern of SOURCE_GLOBS) {
-  for await (const rel of new Glob(pattern).scan({ cwd: ROOT, dot: true })) {
+  for await (const scanned of new Glob(pattern).scan({ cwd: ROOT, dot: true })) {
+    // Bun's glob answers with the platform's separator; every rule here reads `/`
+    const rel = scanned.split(sep).join('/')
     if (SKIP.test(rel)) continue
     checked++
     const abs = join(ROOT, rel)

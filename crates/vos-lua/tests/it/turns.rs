@@ -2,7 +2,7 @@
 //! Whose turn it is in the VM, and what the call that holds it may do. Every test here failed before its fix.
 //!
 //! - a wait Lua cannot yield from (a `string.gsub` callback, a sort comparator, an `xpcall` handler: see `SPELLINGS`) fails
-//!   with a Lua error and must not lend the turn: the call keeps it, and a `readOnly` tool stays read-only;
+//!   with a Lua error and must not lend the turn: the call keeps it, and a `read-only` tool stays read-only;
 //! - a wait that failed to yield must not make the call give up the turn at the *next* thing it waits for: a host
 //!   call Lua could not suspend at is abandoned the moment the script goes on (every async host function is a
 //!   leaf, see `lifecycle`), so a coroutine resumed later gets an error from it, not a stale suspension;
@@ -15,8 +15,8 @@
 //!   read-only call is asleep at a timer or gone is not;
 //! - an emit that is cancelled mid-call hands the turn on.
 //!
-//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`app.emit`),
-//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`. It is
+//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`RPC.send_notification`),
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `read-only`. It is
 //! how a test sees, without a wait, whether the call that is running is still restricted.
 
 use crate::common;
@@ -108,7 +108,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
                   -- host calls give any other call the chance to run, if the turn had been lent
                   for _ = 1, 3 do app.db:one("select 1 as one") end
                   result.interleaved = counter ~= before
-                  local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
+                  local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("read-only", 1, true) ~= nil end
                   result.db_write = refused(function() app.db:exec("insert into t values (1)") end)
                   result.state_write = refused(function() state.v = 5 end)
                   result.kv_write = refused(function() app.kv:set("k", "v") end)
@@ -123,28 +123,28 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
     let src = format!(
         r#"
         local task, time, hyper = require("std:task"), require("std:time"), require("vnd:hyper")
-        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end }})
+        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end }})
         local counter = 0
         app.db:migrate {{ [1] = "create table t(a)" }}
-        app.tool {{ name = "bump", run = function() counter = counter + 1 return counter end }}
-        app.tool {{ name = "ro", readOnly = true, run = function()
+        RPC.on_request("bump", function() counter = counter + 1 return counter end)
+        RPC.on_request("ro", function()
           local out = {{}}
           {attempts}
           return out
-        end }}
-        app.tool {{ name = "rows", readOnly = true, run = function() return {{ n = app.db:one("select count(*) as n from t").n, v = state.v }} end }}
+        end)
+        RPC.on_request("rows", function() return {{ n = app.db:one("select count(*) as n from t").n, v = state.v }} end)
         "#
     );
     let vm = Arc::new(load(&src).await);
     // a writable tool is queued behind the read-only one for the whole run: it must not interleave with it
     let ro = {
         let vm = vm.clone();
-        tokio::spawn(async move { vm.call_tool("ro", json!({}), &agent_ctx(0), false).await })
+        tokio::spawn(async move { common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await })
     };
     tokio::time::sleep(Duration::from_millis(20)).await;
     let bump = {
         let vm = vm.clone();
-        tokio::spawn(async move { vm.call_tool("bump", json!({}), &agent_ctx(0), false).await })
+        tokio::spawn(async move { common::serve(&vm, "bump", json!({}), &agent_ctx(0)).await })
     };
     let out =
         tokio::time::timeout(Duration::from_secs(60), ro).await.expect("the tool finished").unwrap().unwrap();
@@ -169,7 +169,7 @@ async fn a_read_only_tool_stays_read_only_across_every_wait_inside_luas_own_mach
         assert_eq!(r["kv_write"], true, "{name}: {r}");
         assert_eq!(r["read"], 0, "{name}: {r}");
     }
-    let after = vm.call_tool("rows", json!({}), &agent_ctx(0), false).await.unwrap();
+    let after = common::serve_ro(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(after, json!({ "n": 0, "v": 0 }), "nothing was written");
 }
 
@@ -179,21 +179,21 @@ async fn a_wait_that_cannot_yield_lets_a_writable_tool_go_on_and_a_later_wait_st
     let src = r#"
         local task = require("std:task")
         local counter = 0
-        app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
-        app.tool { name = "w", run = function()
+        RPC.on_request("bump", function() counter = counter + 1 return counter end)
+        RPC.on_request("w", function()
           local ok = pcall(string.gsub, "a", "a", function() task.wait(0) end)
           local before = counter
           task.wait(0.2) -- yields for real: the turn is lent, bump runs meanwhile
           return { failed = not ok, bumped = counter - before }
-        end }
+        end)
     "#;
     let vm = Arc::new(load(src).await);
     let w = {
         let vm = vm.clone();
-        tokio::spawn(async move { vm.call_tool("w", json!({}), &agent_ctx(0), false).await })
+        tokio::spawn(async move { common::serve(&vm, "w", json!({}), &agent_ctx(0)).await })
     };
     tokio::time::sleep(Duration::from_millis(50)).await;
-    vm.call_tool("bump", json!({}), &agent_ctx(0), false).await.unwrap();
+    common::serve(&vm, "bump", json!({}), &agent_ctx(0)).await.unwrap();
     let out = w.await.unwrap().unwrap();
     assert_eq!(out, json!({ "failed": true, "bumped": 1 }));
 }
@@ -228,10 +228,10 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
     let src = format!(
         r#"
         local task, time, hyper = require("std:task"), require("std:time"), require("vnd:hyper")
-        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end }})
+        local state = setmetatable({{}}, {{ __index = {{ v = 0 }}, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end }})
         local counter = 0
         local result
-        local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("readOnly", 1, true) ~= nil end
+        local function refused(f) local ok, e = pcall(f) return (not ok) and tostring(e):find("read-only", 1, true) ~= nil end
         local function body()
           -- `late` is left with its query in flight, `failing` with a wait: both resumes fail at the C boundary
           local late = coroutine.create(function() return {later} end)
@@ -248,13 +248,13 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
             n = row and row.n,
             interleaved = counter ~= before,
             state_write_refused = refused(function() state.v = 42 end),
-            notify_refused = refused(function() app.notify {{ title = "from a readOnly call" }} end),
+            notify_refused = refused(function() app.notify {{ title = "from a read-only call" }} end),
           }}
         end
-        app.tool {{ name = "bump", run = function() counter = counter + 1 return counter end }}
-        app.tool {{ name = "ro", readOnly = true, run = function() {container} end }}
-        app.tool {{ name = "result", readOnly = true, run = function() return result or "none" end }}
-        app.tool {{ name = "v", readOnly = true, run = function() return state.v end }}
+        RPC.on_request("bump", function() counter = counter + 1 return counter end)
+        RPC.on_request("ro", function() {container} end)
+        RPC.on_request("result", function() return result or "none" end)
+        RPC.on_request("v", function() return state.v end)
         "#,
         later = later.replace("HEAVY", &format!("{HEAVY:?}")),
         wait = wait.replace("URL", &format!("{url:?}")),
@@ -262,13 +262,13 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
     let vm = Arc::new(load(&src).await);
     let ro = {
         let vm = vm.clone();
-        tokio::spawn(async move { vm.call_tool("ro", json!({}), &agent_ctx(0), false).await })
+        tokio::spawn(async move { common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await })
     };
     // a writable tool is queued behind the read-only work for as long as it runs
     tokio::time::sleep(Duration::from_millis(30)).await;
     let bump = {
         let vm = vm.clone();
-        tokio::spawn(async move { vm.call_tool("bump", json!({}), &agent_ctx(0), false).await })
+        tokio::spawn(async move { common::serve(&vm, "bump", json!({}), &agent_ctx(0)).await })
     };
     let mut out =
         tokio::time::timeout(Duration::from_secs(30), ro).await.expect("ro finished").unwrap().unwrap();
@@ -277,18 +277,18 @@ async fn stale_lend_case(container: &str, wait: &str, later: &str, url: &str) ->
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
-        out = vm.call_tool("result", json!({}), &agent_ctx(0), false).await.unwrap();
+        out = common::serve_ro(&vm, "result", json!({}), &agent_ctx(0)).await.unwrap();
         if out == json!("none") {
             out = json!("scheduled");
         }
     }
     tokio::time::timeout(Duration::from_secs(10), bump).await.expect("bump ran").unwrap().unwrap();
     assert_eq!(
-        vm.call_tool("v", json!({}), &agent_ctx(0), false).await.unwrap(),
+        common::serve_ro(&vm, "v", json!({}), &agent_ctx(0)).await.unwrap(),
         json!(0),
         "nothing was written"
     );
-    assert!(vm.take_effects().is_empty(), "nothing was queued");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued");
     out
 }
 
@@ -356,19 +356,22 @@ async fn detached_hold_case(resumer: &str, leaf: &str) -> serde_json::Value {
           outcome = {{ ok = ok, r = tostring(r) }}
           return outcome
         end
-        app.tool {{ name = "go", run = function() {resumer} end }}
-        app.tool {{ name = "outcome", readOnly = true, run = function() return outcome or "none" end }}
-        app.tool {{ name = "ping", run = function() return "pong" end }}
+        RPC.on_request("go", function() {resumer} end)
+        RPC.on_request("outcome", function() return outcome or "none" end)
+        RPC.on_request("ping", function() return "pong" end)
         "#
     );
     let vm = Arc::new(load(&src).await);
     let call = |tool: &'static str| {
         let vm = vm.clone();
         async move {
-            tokio::time::timeout(Duration::from_secs(5), vm.call_tool(tool, json!({}), &agent_ctx(0), false))
-                .await
-                .unwrap_or_else(|_| panic!("{tool} never finished: the app is wedged"))
-                .unwrap()
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                common::serve_with(&vm, tool, json!({}), &agent_ctx(0), tool == "outcome"),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{tool} never finished: the app is wedged"))
+            .unwrap()
         }
     };
     let mut out = call("go").await;
@@ -397,7 +400,7 @@ async fn a_host_call_a_detached_call_could_not_suspend_at_is_over_when_someone_r
     }
 }
 
-/// A write that a writable call's task could not suspend at is never run: a `readOnly` call that resumes the
+/// A write that a writable call's task could not suspend at is never run: a `read-only` call that resumes the
 /// coroutine gets the abandoned call's error, and the write did not happen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_write_a_task_could_not_suspend_at_is_never_run_by_a_later_read_only_call() {
@@ -411,23 +414,27 @@ async fn a_write_a_task_could_not_suspend_at_is_never_run_by_a_later_read_only_c
             local task = require("std:task")
             app.db:migrate {{ [1] = "create table t(a)" }}
             local co
-            app.tool {{ name = "start", run = function()
+            RPC.on_request("start", function()
               task.spawn(function()
                 co = coroutine.create(function() return {write} end)
                 pcall(string.gsub, "x", "x", function() coroutine.resume(co) end)
               end)
               return "started"
-            end }}
-            app.tool {{ name = "finish", readOnly = true, run = function()
+            end)
+            RPC.on_request("finish", function()
               local ok, err = coroutine.resume(co)
               return {{ ok = ok, err = tostring(err), untouched = {check} }}
-            end }}
+            end)
             "#
         );
         let vm = load(&src).await;
-        let call = |tool: &'static str| async {
-            tokio::time::timeout(Duration::from_secs(5), vm.call_tool(tool, json!({}), &agent_ctx(0), false))
-                .await
+        let vm = &vm;
+        let call = |tool: &'static str| async move {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                common::serve_with(vm, tool, json!({}), &agent_ctx(0), tool == "finish"),
+            )
+            .await
         };
         call("start").await.expect("start finished").unwrap();
         let out = call("finish").await.expect("finish did not wedge the app").unwrap();
@@ -445,33 +452,36 @@ async fn a_task_spawned_in_a_transaction_waits_for_it_instead_of_deadlocking() {
         local task = require("std:task")
         local seen = {}
         app.db:migrate { [1] = "create table t(a)" }
-        app.tool { name = "with_statement_after", run = function()
+        RPC.on_request("with_statement_after", function()
           app.db:tx(function()
             app.db:exec("insert into t values (1)")
             task.spawn(function() seen.a = #app.db:all("select a from t") end)
             app.db:exec("insert into t values (2)")
           end)
           return "done"
-        end }
-        app.tool { name = "nothing_after", run = function()
+        end)
+        RPC.on_request("nothing_after", function()
           app.db:tx(function()
             app.db:exec("insert into t values (3)")
             task.spawn(function() seen.b = #app.db:all("select a from t") end)
           end)
           return "done"
-        end }
-        app.tool { name = "unrelated", readOnly = true, run = function()
+        end)
+        RPC.on_request("unrelated", function()
           return { rows = #app.db:all("select a from t"), seen = seen }
-        end }
+        end)
     "#;
     let vm = load(src).await;
     let patience = Duration::from_secs(5);
     let run = |tool: &'static str| {
         let vm = &vm;
         async move {
-            let r = tokio::time::timeout(patience, vm.call_tool(tool, json!({}), &agent_ctx(0), false))
-                .await
-                .unwrap_or_else(|_| panic!("{tool} deadlocked"));
+            let r = tokio::time::timeout(
+                patience,
+                common::serve_with(vm, tool, json!({}), &agent_ctx(0), tool == "unrelated"),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{tool} deadlocked"));
             r.unwrap()
         }
     };
@@ -494,23 +504,23 @@ async fn a_task_spawned_in_a_transaction_that_writes_waits_for_it_too() {
     let src = r#"
         local task = require("std:task")
         app.db:migrate { [1] = "create table t(a)" }
-        app.tool { name = "w", run = function()
+        RPC.on_request("w", function()
           app.db:tx(function()
             app.db:exec("insert into t values (1)")
             task.spawn(function() app.db:exec("insert into t values (100)") end)
             app.db:exec("insert into t values (2)")
           end)
           return "done"
-        end }
-        app.tool { name = "rows", readOnly = true, run = function() return app.db:all("select a from t order by rowid") end }
+        end)
+        RPC.on_request("rows", function() return app.db:all("select a from t order by rowid") end)
     "#;
     let vm = load(src).await;
-    tokio::time::timeout(Duration::from_secs(5), vm.call_tool("w", json!({}), &agent_ctx(0), false))
+    tokio::time::timeout(Duration::from_secs(5), common::serve(&vm, "w", json!({}), &agent_ctx(0)))
         .await
         .expect("no deadlock")
         .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let rows = vm.call_tool("rows", json!({}), &agent_ctx(0), false).await.unwrap();
+    let rows = common::serve_ro(&vm, "rows", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(rows, json!([{ "a": 1 }, { "a": 2 }, { "a": 100 }]), "the task's write came after the commit");
 }
 
@@ -521,18 +531,18 @@ async fn a_task_spawned_by_a_read_only_tool_in_a_transaction_stays_read_only() {
         local task = require("std:task")
         local seen = "unset"
         app.db:migrate { [1] = "create table t(a)" }
-        app.tool { name = "ro", readOnly = true, run = function()
+        RPC.on_request("ro", function()
           app.db:tx(function()
             task.spawn(function() seen = tostring(select(2, pcall(function() app.db:exec("insert into t values (9)") end))) end)
           end)
           return "done"
-        end }
-        app.tool { name = "report", readOnly = true, run = function() return { seen = seen, n = app.db:one("select count(*) as n from t").n } end }
+        end)
+        RPC.on_request("report", function() return { seen = seen, n = app.db:one("select count(*) as n from t").n } end)
     "#;
     let vm = load(src).await;
-    vm.call_tool("ro", json!({}), &agent_ctx(0), false).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let report = vm.call_tool("report", json!({}), &agent_ctx(0), false).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report["n"], 0, "{report}");
     assert!(report["seen"].as_str().unwrap().to_lowercase().contains("read"), "{report}");
 }
@@ -543,24 +553,24 @@ async fn a_task_spawned_by_a_read_only_tool_in_a_transaction_stays_read_only() {
 async fn a_read_only_poller_does_not_make_a_writable_tools_delayed_write_read_only() {
     let src = r#"
         local task = require("std:task")
-        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
         local delayed, deferred = "unset", "unset"
-        app.tool { name = "ro", readOnly = true, run = function()
+        RPC.on_request("ro", function()
           task.spawn(function() while true do task.wait(0.02) end end) -- lives for as long as the app does
           return "ok"
-        end }
-        app.tool { name = "w", run = function()
+        end)
+        RPC.on_request("w", function()
           task.delay(0.05, function() delayed = tostring(pcall(function() state.v = 7 end)) end)
           task.defer(function() deferred = tostring(pcall(function() state.v = 8 end)) end)
           return "ok"
-        end }
-        app.tool { name = "report", readOnly = true, run = function() return { delayed = delayed, deferred = deferred, v = state.v } end }
+        end)
+        RPC.on_request("report", function() return { delayed = delayed, deferred = deferred, v = state.v } end)
     "#;
     let vm = load(src).await;
-    vm.call_tool("ro", json!({}), &agent_ctx(0), false).await.unwrap();
-    vm.call_tool("w", json!({}), &agent_ctx(0), false).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
+    common::serve(&vm, "w", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let report = vm.call_tool("report", json!({}), &agent_ctx(0), false).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report, json!({ "delayed": "true", "deferred": "true", "v": 7 }), "{report}");
 }
 
@@ -568,19 +578,19 @@ async fn a_read_only_poller_does_not_make_a_writable_tools_delayed_write_read_on
 async fn work_started_by_a_read_only_tool_stays_read_only_whenever_it_runs() {
     let src = r#"
         local task = require("std:task")
-        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
         local results = {}
-        app.tool { name = "ro", readOnly = true, run = function()
+        RPC.on_request("ro", function()
           task.delay(0.05, function() results.delay = tostring(pcall(function() state.v = 1 end)) end)
           task.defer(function() results.defer = tostring(pcall(function() state.v = 2 end)) end)
           return "ok"
-        end }
-        app.tool { name = "report", readOnly = true, run = function() return { results = results, v = state.v } end }
+        end)
+        RPC.on_request("report", function() return { results = results, v = state.v } end)
     "#;
     let vm = load(src).await;
-    vm.call_tool("ro", json!({}), &agent_ctx(0), false).await.unwrap();
+    common::serve_ro(&vm, "ro", json!({}), &agent_ctx(0)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let report = vm.call_tool("report", json!({}), &agent_ctx(0), false).await.unwrap();
+    let report = common::serve_ro(&vm, "report", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(report, json!({ "results": { "delay": "false", "defer": "false" }, "v": 0 }), "{report}");
 }
 
@@ -589,25 +599,25 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
     // the handler tries to write; the answer says whether it could
     let src = r#"
         local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
-        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+        local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
         local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
           local ok = pcall(function() state.v = state.v + 1 end)
           return { status = 200, body = tostring(ok) }
         end)
-        app.tool { name = "addr", run = function() return server:addr() end }
-        -- a readOnly tool that calls the app's own listener (and waits for the answer): the handler is its request
-        app.tool { name = "ro_calls_itself", readOnly = true, run = function()
+        RPC.on_request("addr", function() return server:addr() end)
+        -- a read-only tool that calls the app's own listener (and waits for the answer): the handler is its request
+        RPC.on_request("ro_calls_itself", function()
           local res = hyper.get("http://" .. server:addr() .. "/")
           return res.body
-        end }
+        end)
     "#;
     let vm = Arc::new(load(src).await);
-    let addr = vm.call_tool("addr", json!({}), &agent_ctx(0), false).await.unwrap();
+    let addr = common::serve(&vm, "addr", json!({}), &agent_ctx(0)).await.unwrap();
     let addr = addr.as_str().unwrap().to_owned();
     // nothing read-only is alive: a request from outside may write
     assert_eq!(get(&addr).await, "true");
-    // a readOnly tool is alive and made the request: it may not
-    let own = vm.call_tool("ro_calls_itself", json!({}), &agent_ctx(0), false).await.unwrap();
+    // a read-only tool is alive and made the request: it may not
+    let own = common::serve_ro(&vm, "ro_calls_itself", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(own, json!("false"));
     // and the restriction ended with the tool
     assert_eq!(get(&addr).await, "true");
@@ -616,10 +626,10 @@ async fn a_request_to_the_apps_own_server_is_read_only_while_a_read_only_call_wa
 // ---- the taint on requests to the app's own server lasts while a read-only call acts, not while it is alive -----
 
 /// An app whose server writes (`state`, see the top of this file) on every request and reports whether it could, by path, and the
-/// readOnly tools that reach the server in the ways a readOnly call might try to write through it.
+/// read-only tools that reach the server in the ways a read-only call might try to write through it.
 const OWN_SERVER_REACH: &str = r#"
     local task, net, hyper = require("std:task"), require("std:net"), require("vnd:hyper")
-    local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+    local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
     local seen = {}
     local server
     local function own(path) return "http://" .. server:addr() .. path end
@@ -632,47 +642,48 @@ const OWN_SERVER_REACH: &str = r#"
       seen[path] = ok
       return { status = 200, body = tostring(ok) }
     end)
-    app.tool { name = "addr", run = function() return server:addr() end }
+    RPC.on_request("addr", function() return server:addr() end)
     -- the tool asks the server to write and waits at the network for the answer
-    app.tool { name = "ro_asks", readOnly = true, run = function() return hyper.get(own("/asked")).body end }
+    RPC.on_request("ro_asks", function() return hyper.get(own("/asked")).body end)
     -- the same through a handler that asks again (the second request is made by a read-only handler)
-    app.tool { name = "ro_chain", readOnly = true, run = function() return hyper.get(own("/chain")).body end }
+    RPC.on_request("ro_chain", function() return hyper.get(own("/chain")).body end)
     -- the tool holds a slow request open (its handler sleeps at a timer) while others arrive
-    app.tool { name = "ro_slow", readOnly = true, run = function() return hyper.get(own("/slow")).body end }
+    RPC.on_request("ro_slow", function() return hyper.get(own("/slow")).body end)
     -- a task it started sleeps, wakes and asks the server to write after the tool has returned
-    app.tool { name = "ro_task_wakes", readOnly = true, run = function()
+    RPC.on_request("ro_task_wakes", function()
       task.spawn(function() task.wait(0.1) hyper.get(own("/woken")) end)
       return "returned"
-    end }
+    end)
     -- a task whose first slice already has the request in flight, and the tool then sleeps at a timer
-    app.tool { name = "ro_spawn_then_sleep", readOnly = true, run = function()
+    RPC.on_request("ro_spawn_then_sleep", function()
       task.spawn(function() hyper.get(own("/in_flight")) end)
       task.wait(0.3)
       return "slept"
-    end }
+    end)
     -- a task that waits at the network on the server for a long time, then asks again
-    app.tool { name = "ro_task_chain", readOnly = true, run = function()
+    RPC.on_request("ro_task_chain", function()
       task.spawn(function() hyper.get(own("/slow")) hyper.get(own("/after_slow")) end)
       return "returned"
-    end }
+    end)
     -- a forever poller that waits on a timer alone, with an interval far wider than the test, so it is never inside
     -- its wake-up window while a request arrives (a poller that also makes requests does taint them: documented)
-    app.tool { name = "ro_poller", readOnly = true, run = function()
+    RPC.on_request("ro_poller", function()
       task.spawn(function() while true do task.wait(3600) end end)
       return "returned"
-    end }
-    app.tool { name = "ro_sleeps", readOnly = true, run = function() task.wait(0.6) return "slept" end }
-    app.tool { name = "report", readOnly = true, run = function() return { seen = seen, v = state.v } end }
+    end)
+    RPC.on_request("ro_sleeps", function() task.wait(0.6) return "slept" end)
+    RPC.on_request("report", function() return { seen = seen, v = state.v } end)
 "#;
 
 async fn own_server() -> (Arc<vos_lua::AppVm>, String) {
     let vm = Arc::new(load(OWN_SERVER_REACH).await);
-    let addr = vm.call_tool("addr", json!({}), &agent_ctx(0), false).await.unwrap();
+    let addr = common::serve(&vm, "addr", json!({}), &agent_ctx(0)).await.unwrap();
     (vm, addr.as_str().unwrap().to_owned())
 }
 
+/// A read-only call: the own server's tools are the ones a read-only call might write through.
 async fn call(vm: &vos_lua::AppVm, tool: &str) -> serde_json::Value {
-    vm.call_tool(tool, json!({}), &agent_ctx(0), false).await.unwrap()
+    common::serve_ro(vm, tool, json!({}), &agent_ctx(0)).await.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -717,7 +728,7 @@ async fn a_request_that_arrives_while_a_read_only_call_holds_one_open_is_read_on
 async fn an_unrelated_request_can_write_while_a_read_only_poller_sleeps_and_after_the_tool_that_made_it_ended(
 ) {
     let (vm, addr) = own_server().await;
-    // a readOnly tool leaves a poller behind that lives as long as the app does
+    // a read-only tool leaves a poller behind that lives as long as the app does
     assert_eq!(call(&vm, "ro_poller").await, json!("returned"));
     tokio::time::sleep(Duration::from_millis(100)).await;
     for path in ["/webhook_1", "/webhook_2", "/webhook_3"] {
@@ -728,7 +739,7 @@ async fn an_unrelated_request_can_write_while_a_read_only_poller_sleeps_and_afte
         );
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    // and a readOnly call that is itself asleep at a timer sends and starts nothing
+    // and a read-only call that is itself asleep at a timer sends and starts nothing
     let sleeper = {
         let vm = vm.clone();
         tokio::spawn(async move { call(&vm, "ro_sleeps").await })

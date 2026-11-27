@@ -1,0 +1,42 @@
+{
+  "openrpc": "1.4.0",
+  "info": { "title": "Notes", "version": "1.0.0" },
+  "methods": [
+    {
+      "name": "add_note", "summary": "Add Note", "description": "Add a note",
+      "params": [{ "name": "body", "required": true, "description": "The note text", "schema": { "type": "string" } }],
+      "result": { "name": "added", "schema": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } }
+    },
+    {
+      "name": "append", "summary": "Append to Note", "description": "Append text on a new line at the end of a note",
+      "params": [
+        { "name": "id", "required": true, "description": "Note id", "schema": { "type": "integer" } },
+        { "name": "text", "required": true, "schema": { "type": "string" } }
+      ],
+      "result": { "name": "appended", "schema": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } }
+    },
+    {
+      "name": "search", "summary": "Search Notes", "description": "Find notes whose text contains the query", "x-readOnly": true,
+      "params": [
+        { "name": "query", "required": true, "schema": { "type": "string" } },
+        { "name": "limit", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 } }
+      ],
+      "result": { "name": "found", "schema": { "type": "array" } }
+    },
+    { "name": "_list", "params": [], "result": { "name": "notes", "schema": { "type": "array" } } },
+    {
+      "name": "_get",
+      "params": [{ "name": "id", "required": true, "schema": { "type": "integer" } }],
+      "result": { "name": "note", "schema": {} }
+    },
+    {
+      "name": "_save",
+      "params": [
+        { "name": "id", "required": true, "schema": { "type": "integer" } },
+        { "name": "body", "required": true, "schema": { "type": "string" } }
+      ],
+      "result": { "name": "saved", "schema": {} }
+    },
+    { "name": "notes.changed", "params": [{ "name": "id", "required": true, "schema": { "type": "integer" } }] }
+  ]
+}

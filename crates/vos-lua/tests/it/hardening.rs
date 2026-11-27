@@ -4,7 +4,7 @@
 //! - an unload or a reload ends what the app was doing at its next host call;
 //! - bounded conversion of what the app hands back (tool results, handler results): a cyclic or exponentially
 //!   shared table is an error, not a stack overflow or an allocation;
-//! - a `readOnly` call changes nothing: no data, no window, no notifications, no events;
+//! - a `read-only` call changes nothing: no data, no window, no notifications, no events;
 //! - the SQL sandbox holds against `VACUUM INTO` and `ATTACH` through `db:all`.
 
 use crate::common;
@@ -49,17 +49,17 @@ fn rig() -> Rig {
 }
 
 impl Rig {
-    /// Load `src` as a backend with no handlers (`common::backend`).
-    async fn load(&self, app: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
-        self.load_entry(app, &common::backend(src)).await
-    }
-    /// Load `src` as it is: an entry that returns its own handlers.
-    async fn load_entry(&self, app: &str, src: &str) -> PortResult<vos_application::ports::LoadedApp> {
+    /// Load `src` as a backend (`common::backend`).
+    async fn load(&self, app: &str, src: &str) -> PortResult<()> {
         let data: Arc<dyn AppData> = self.db.clone();
         self.runtime.load(&id(app), package(src, &[]), data).await
     }
     async fn tool(&self, app: &str, tool: &str) -> PortResult<Value> {
-        self.runtime.call_tool(&id(app), tool, json!({}), agent_ctx(0), false).await
+        common::serve_rt(&self.runtime, &id(app), tool, json!({}), agent_ctx(0)).await
+    }
+    /// [`Rig::tool`], read-only: every write the call tries is refused.
+    async fn tool_ro(&self, app: &str, tool: &str) -> PortResult<Value> {
+        common::serve_rt_with(&self.runtime, &id(app), tool, json!({}), agent_ctx(0), true).await
     }
 }
 
@@ -70,15 +70,13 @@ const MANIFEST: &str = "-- probe";
 async fn unloading_stops_a_runaway_call_and_the_vm_is_freed() {
     // nothing budgets the call: only the unload can end it
     let rig = rig();
-    let src = format!(
-        "{MANIFEST}\napp.tool {{ name = \"spin\", run = function() while true do app.kv:get(\"k\") end end }}"
-    );
+    let src =
+        format!("{MANIFEST}\nRPC.on_request(\"spin\", function() while true do app.kv:get(\"k\") end end)");
     rig.load("probe", &src).await.unwrap();
     let (runtime, started) = (rig.runtime.clone(), std::time::Instant::now());
-    let call =
-        tokio::spawn(
-            async move { runtime.call_tool(&id("probe"), "spin", json!({}), agent_ctx(0), false).await },
-        );
+    let call = tokio::spawn(async move {
+        common::serve_rt(&runtime, &id("probe"), "spin", json!({}), agent_ctx(0)).await
+    });
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(!call.is_finished(), "the call is running");
     assert!(Arc::strong_count(&rig.db) > 1, "and the VM holds the database");
@@ -103,22 +101,22 @@ async fn a_tool_result_that_expands_to_gigabytes_is_an_error_not_an_allocation()
     let src = format!(
         r#"{MANIFEST}
         -- 2^30 paths to the leaf, a handful of table allocations
-        app.tool {{ name = "dag", readOnly = true, run = function()
+        RPC.on_request("dag", function()
           local t = {{ 1 }}
           for i = 1, 30 do t = {{ t, t }} end
           return t
-        end }}
-        app.tool {{ name = "text", readOnly = true, run = function()
+        end)
+        RPC.on_request("text", function()
           local s = string.rep("x", 1000000)
           local t = {{}}
           for i = 1, 40 do t[i] = s end
           return t
-        end }}
-        app.tool {{ name = "cycle", readOnly = true, run = function()
+        end)
+        RPC.on_request("cycle", function()
           local t = {{}}
           t.me = t
           return t
-        end }}"#
+        end)"#
     );
     rig.load("probe", &src).await.unwrap();
     for (tool, why) in
@@ -131,27 +129,25 @@ async fn a_tool_result_that_expands_to_gigabytes_is_an_error_not_an_allocation()
     }
 }
 
-/// What a handler hands back to the app's page is converted under the same bounds as a tool's result.
+/// What a handler hands back to the app's page is converted under the same bounds as any other result.
 #[tokio::test]
 async fn a_handler_result_that_contains_itself_or_expands_to_gigabytes_is_an_error_not_an_allocation() {
     let rig = rig();
     let src = format!(
         r#"{MANIFEST}
-        return {{
-          cycle = function() local n = {{ type = "Stack", key = "n" }} n.children = {{ n }} return n end,
-          dag = function()
-            local t = {{ 1 }}
-            for i = 1, 25 do t = {{ t, t }} end
-            return {{ type = "Stack", key = "n", props = {{ data = t }} }}
-          end,
-          deep = function()
-            local n = {{ key = "leaf" }}
-            for i = 1, 5000 do n = {{ key = "k" .. i, children = {{ n }} }} end
-            return n
-          end,
-        }}"#
+        RPC.on_request("cycle", function() local n = {{ type = "Stack", key = "n" }} n.children = {{ n }} return n end)
+        RPC.on_request("dag", function()
+          local t = {{ 1 }}
+          for i = 1, 25 do t = {{ t, t }} end
+          return {{ type = "Stack", key = "n", props = {{ data = t }} }}
+        end)
+        RPC.on_request("deep", function()
+          local n = {{ key = "leaf" }}
+          for i = 1, 5000 do n = {{ key = "k" .. i, children = {{ n }} }} end
+          return n
+        end)"#
     );
-    rig.load_entry("probe", &src).await.unwrap();
+    rig.load("probe", &src).await.unwrap();
     let user = CallContext { actor: vos_domain::Actor::user("You"), now_ms: 0 };
     for (handler, why) in
         [("cycle", "contains itself"), ("dag", "more than 100000 values"), ("deep", "nested too deeply")]
@@ -174,8 +170,8 @@ async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     let src = format!(
         r#"{MANIFEST}
         local function try(f) local ok, err = pcall(f); return {{ ok = ok, err = (not ok) and tostring(err) or nil }} end
-        app.tool {{ name = "main", run = function() app.openWindow({{ a = 1 }}) return true end }}
-        app.tool {{ name = "other", run = function() return try(function() app.openWindow("evil") end) end }}"#
+        RPC.on_request("main", function() app.open_window({{ a = 1 }}) return true end)
+        RPC.on_request("other", function() return try(function() app.open_window("evil") end) end)"#
     );
     rig.load("probe", &src).await.unwrap();
     rig.tool("probe", "main").await.unwrap();
@@ -187,62 +183,60 @@ async fn open_window_asks_for_the_apps_one_window_and_refuses_any_other_name() {
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1, "nothing was asked of the shell");
 }
 
-// ---- blocker 4 and major 15: a readOnly call changes nothing -------------------------------------------------
+// ---- blocker 4 and major 15: a read-only call changes nothing -------------------------------------------------
 
 const READ_ONLY_APP: &str = r#"
     app.db:migrate { [1] = "create table log(id integer primary key, msg text)" }
     local n = 0
     local function try(f) local ok, err = pcall(f); return { ok = ok, err = (not ok) and tostring(err) or nil } end
-    app.tool { name = "open", readOnly = true, run = function() return try(function() app.openWindow() end) end }
-    app.tool { name = "notify", readOnly = true, run = function() return try(function() app.notify { title = "hi" } end) end }
-    app.tool { name = "emit", readOnly = true, run = function() return try(function() app.emit("changed") end) end }
-    -- not declared readOnly: allowed to do all of it (but the caller may still require a read-only run)
-    app.tool { name = "everything", run = function()
-      app.openWindow()
+    RPC.on_request("open", function() return try(function() app.open_window() end) end)
+    RPC.on_request("notify", function() return try(function() app.notify { title = "hi" } end) end)
+    RPC.on_request("emit", function() return try(function() RPC.send_notification("changed") end) end)
+    -- not read-only: allowed to do all of it (but the caller may still require a read-only run)
+    RPC.on_request("everything", function()
+      app.open_window()
       app.notify { title = "hi" }
-      app.emit("changed")
+      RPC.send_notification("changed")
       app.db:exec("insert into log(msg) values ('did everything')")
       n = n + 1
       return n
-    end }
-    app.tool { name = "count", readOnly = true, run = function() return app.db:one("select count(*) as n from log").n end }
+    end)
+    RPC.on_request("count", function() return app.db:one("select count(*) as n from log").n end)
 "#;
 
 #[tokio::test]
-async fn a_read_only_tool_cannot_open_the_window_notify_or_emit() {
+async fn a_read_only_call_cannot_open_the_window_notify_or_send_a_notification() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     for tool in ["open", "notify", "emit"] {
-        let out = rig.tool("probe", tool).await.unwrap();
+        let out = rig.tool_ro("probe", tool).await.unwrap();
         assert_eq!(out["ok"], false, "{tool} must be refused: {out}");
-        assert!(out["err"].as_str().unwrap().contains("readOnly"), "{tool}: {out}");
+        assert!(out["err"].as_str().unwrap().contains("read-only"), "{tool}: {out}");
     }
     assert!(rig.shell.windows.lock().unwrap().is_empty(), "the shell was not asked for the window");
-    assert!(rig.shell.events.lock().unwrap().is_empty(), "no event reached the app's pages");
-    assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
+    assert!(rig.shell.events.lock().unwrap().is_empty(), "no notification reached the app's pages");
+    assert_eq!(rig.tool_ro("probe", "count").await.unwrap(), json!(0), "the table is unchanged");
 
-    // and a tool that is not readOnly still can
+    // and a call that is not read-only still can
     assert_eq!(rig.tool("probe", "everything").await.unwrap(), json!(1));
     assert_eq!(rig.shell.windows.lock().unwrap().len(), 1);
     assert_eq!(rig.shell.events.lock().unwrap().len(), 1);
-    assert_eq!(rig.tool("probe", "count").await.unwrap(), json!(1));
+    assert_eq!(rig.tool_ro("probe", "count").await.unwrap(), json!(1));
 }
 
 #[tokio::test]
-async fn a_caller_can_require_a_read_only_run_of_a_tool_that_is_not_declared_read_only() {
+async fn a_caller_can_require_a_read_only_run_of_a_handler_that_writes() {
     let rig = rig();
     rig.load("probe", &format!("{MANIFEST}\n{READ_ONLY_APP}")).await.unwrap();
     let ctx = agent_ctx(0);
-    let err = rig
-        .runtime
-        .call_tool(&id("probe"), "everything", json!({}), ctx.clone(), true)
+    let err = common::serve_rt_with(&rig.runtime, &id("probe"), "everything", json!({}), ctx.clone(), true)
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("readOnly"), "the port's requirement is enforced by the adapter: {err}");
+    assert!(err.contains("read-only"), "the port's requirement is enforced by the adapter: {err}");
     assert!(rig.shell.windows.lock().unwrap().is_empty());
     // the requirement lasts one call
-    let ok = rig.runtime.call_tool(&id("probe"), "everything", json!({}), ctx, false).await.unwrap();
+    let ok = common::serve_rt(&rig.runtime, &id("probe"), "everything", json!({}), ctx).await.unwrap();
     assert_eq!(ok, json!(1));
 }
 
@@ -384,7 +378,7 @@ async fn a_cancelled_call_gives_up_its_transaction_at_once() {
 #[tokio::test]
 async fn db_migrate_inside_a_transaction_is_an_error_not_a_self_deadlock() {
     let src = r#"
-      app.tool { name = "m", run = function()
+      RPC.on_request("m", function()
         local ok, why = pcall(function()
           app.db:tx(function()
             app.db:exec("create table if not exists t(a)")
@@ -394,10 +388,10 @@ async fn db_migrate_inside_a_transaction_is_an_error_not_a_self_deadlock() {
         -- the transaction is gone and the database is free: a migration works now
         app.db:migrate { [1] = "create table m(a)" }
         return { ok = ok, why = tostring(why) }
-      end }
+      end)
     "#;
     let vm = load(src).await;
-    let out = tokio::time::timeout(PROMPTLY, vm.call_tool("m", json!({}), &agent_ctx(0), false))
+    let out = tokio::time::timeout(PROMPTLY, common::serve(&vm, "m", json!({}), &agent_ctx(0)))
         .await
         .expect("no self-deadlock")
         .unwrap();
@@ -412,19 +406,17 @@ async fn db_migrate_inside_a_transaction_is_an_error_not_a_self_deadlock() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hot_reload_retires_the_vm_it_replaces() {
     let rig = rig();
-    let v1 = format!(
-        "{MANIFEST}\napp.tool {{ name = \"spin\", run = function() while true do app.kv:get(\"k\") end end }}"
-    );
+    let v1 =
+        format!("{MANIFEST}\nRPC.on_request(\"spin\", function() while true do app.kv:get(\"k\") end end)");
     rig.load("probe", &v1).await.unwrap();
     let (runtime, started) = (rig.runtime.clone(), Instant::now());
-    let call =
-        tokio::spawn(
-            async move { runtime.call_tool(&id("probe"), "spin", json!({}), agent_ctx(0), false).await },
-        );
+    let call = tokio::spawn(async move {
+        common::serve_rt(&runtime, &id("probe"), "spin", json!({}), agent_ctx(0)).await
+    });
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(!call.is_finished(), "the call is running on the old VM");
 
-    let v2 = format!("{MANIFEST}\napp.tool {{ name = \"spin\", run = function() return 1 end }}");
+    let v2 = format!("{MANIFEST}\nRPC.on_request(\"spin\", function() return 1 end)");
     rig.load("probe", &v2).await.unwrap();
     let ended = tokio::time::timeout(PROMPTLY, call).await.expect("the replaced VM's call stops").unwrap();
     assert!(ended.unwrap_err().to_string().contains("unloaded"));

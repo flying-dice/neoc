@@ -1,6 +1,6 @@
 <!-- @organism ProjectSidebar — the projects, each with how many of its issues are still open, and the button that starts a new one; a tap on a project shows it -->
 <script lang="ts">
-  import type { Project } from 'app:rpc'
+  type Project = VosApp.Projects.Project
 
   interface Props {
     projects: readonly Project[]

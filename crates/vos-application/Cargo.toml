@@ -18,6 +18,8 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
+# the RPC bus holds every request and notification to the app's OpenRPC contract (its params and results are JSON Schema)
+jsonschema = { version = "0.61", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true }   # test runtime only

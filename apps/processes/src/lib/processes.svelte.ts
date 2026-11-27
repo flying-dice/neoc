@@ -1,9 +1,23 @@
-import type { Api, Detail, Host, Overview, ProcessRef, ProcessRow, Snapshot } from 'app:rpc'
+type Detail = VosApp.Processes.Detail
+type Overview = VosApp.Processes.Overview
+type ProcessRef = VosApp.Processes.ProcessRef
+type ProcessRow = VosApp.Processes.ProcessRow
+type Snapshot = VosApp.Processes.Snapshot
 
-/** What the window needs of the backend: a reading, choosing a process, letting it go, and ending it. */
-export type ProcessesRpc = Pick<Api, 'snapshot' | 'select' | 'release' | 'terminate'>
-/** Where the backend's events are heard (`host.on`). */
-export type ProcessesEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: a reading, choosing a process, letting it go, and ending it (the app's private
+ * methods on the bus, `_snapshot` ...: `App.svelte` sends them).
+ */
+export interface ProcessesRpc {
+  snapshot(params?: VosApp.Processes.SnapshotParams): Promise<Snapshot>
+  select(params: VosApp.Processes.SelectParams): Promise<VosApp.Processes.Selection>
+  release(params: VosApp.Processes.ReleaseParams): Promise<VosApp.Processes.Released>
+  terminate(params: VosApp.Processes.TerminateParams): Promise<VosApp.Processes.Sent>
+}
+/** Where the window hears the host: its connection came back (`host:reconnected`). */
+export interface ProcessesEvents {
+  on(name: 'host:reconnected', fn: () => void): () => void
+}
 
 /** The two things the window shows: the machine as a whole, and its programs. */
 export type View = 'overview' | 'processes'

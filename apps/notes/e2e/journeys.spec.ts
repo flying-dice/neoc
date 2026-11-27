@@ -33,6 +33,9 @@ async function openNotes(page: Page): Promise<void> {
 /** Start a note, type it, and wait until the list has it under its title: it is saved. */
 async function write(page: Page, body: string): Promise<void> {
   await part(page, 'new').click()
+  // the new note is open once its text is empty: until then the text is the note that was open, and what is typed
+  // there is lost when the new one opens
+  await expect(text(page)).toHaveValue('')
   await expect(text(page)).toBeEditable()
   await text(page).fill(body)
   await expect(row(page, body.split('\n')[0] ?? body)).toBeVisible()
@@ -170,7 +173,7 @@ test.describe('Notes journeys', () => {
     const title = unique('From the agent')
     await openNotes(page)
     await expect(row(page, title)).toHaveCount(0)
-    // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
+    // the agent calls the app's tools over MCP; a tool tells the open window with a notification: no reload, no click
     const made = JSON.parse(await callTool(`${ID}__create_note`, { body: `${title}\nSaid the agent` })) as { id: number; folder: string }
     expect(made.folder).toBe('Notes')
     await expect(row(page, title)).toContainText('Said the agent')

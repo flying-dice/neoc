@@ -8,11 +8,17 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{
-    sync::{Arc, OnceLock},
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
+use tokio::sync::oneshot;
+use tracing::Instrument;
 use vos_application::{
-    ports::{EventSink, Notifier, PortResult, ServerEvent, Shell},
+    ports::{EventSink, Notifier, PageHandlers, PortResult, ServerEvent, Shell},
     AgentError, AgentPatch, AgentService, AppError, AppInfo, AppService, AppStatus, DeviceService,
     FilesService, Listed, NewAgent, Place, PortError,
 };
@@ -33,7 +39,7 @@ use vos_domain::{
 const SELF_REVOKE_GRACE: Duration = Duration::from_millis(250);
 
 /// An app's event is not queued for a client that already has more than this many bytes waiting (1 MiB, 1/32 of the bound that
-/// closes a connection): an app that emits faster than a client's link can take it costs that client its events, not its connection.
+/// closes a connection): an app that notifies faster than a client's link can take it costs that client its events, not its connection.
 pub const EVENT_QUEUE_BYTES: usize = 1 << 20;
 
 #[derive(Default)]
@@ -43,6 +49,39 @@ pub struct RpcHub {
     agents: OnceLock<Arc<AgentService>>,
     files: OnceLock<Arc<FilesService>>,
     peers: Mutex<Vec<RpcPeer>>,
+    /// The handlers the pages registered on the RPC bus (`RPC.on_request`), by connection: `(app, method)`.
+    handlers: Mutex<HashMap<u64, PageHandlerMap>>,
+    /// Requests on the bus waiting for a page's answer, by call id.
+    calls: Mutex<HashMap<u64, PendingCall>>,
+    next_call: AtomicU64,
+}
+
+/// One connection's handlers on the bus: `(app, method)`.
+type PageHandlerMap = std::collections::HashSet<(String, String)>;
+
+/// A request the bus put to the pages that serve its method: the first answer settles it.
+struct PendingCall {
+    reply: oneshot::Sender<Result<Value, RpcError>>,
+    /// The connections asked and not yet answered or gone: when none is left, nothing will answer.
+    asked: HashSet<u64>,
+}
+
+/// Ends a page request however it ends (answered, or the caller gone): it no longer waits, and the pages that were
+/// asked are told, so they drop what they show for it (`app.requestSettled`).
+struct Settle<'a> {
+    hub: &'a RpcHub,
+    call: u64,
+    asked: Vec<u64>,
+}
+
+impl Drop for Settle<'_> {
+    fn drop(&mut self) {
+        self.hub.calls.lock().remove(&self.call);
+        let note = json!({ "call": self.call });
+        for peer in self.hub.peers.lock().iter().filter(|p| self.asked.contains(&p.connection_id())) {
+            let _ = peer.notify("app.requestSettled", note.clone());
+        }
+    }
 }
 
 impl RpcHub {
@@ -218,6 +257,9 @@ impl RpcHub {
         if method.starts_with("host.files.") {
             return self.files_request(method, params).await;
         }
+        if method.starts_with("host.telemetry.") {
+            return telemetry_request(method, params);
+        }
         let Some(devices) = self.devices.get() else { return Err(not_ready()) };
         match method {
             "host.devices.list" => {
@@ -244,6 +286,70 @@ impl RpcHub {
                 Ok(Value::Null)
             }
             _ => Err(method_not_found(method)),
+        }
+    }
+
+    /// A page serves (or stops serving) one of its app's methods on the bus; the app's agent tools follow.
+    async fn handle(&self, peer: &RpcPeer, serves: bool, p: HandleParams, app: &AppService) {
+        let key = (p.app.to_string(), p.method.clone());
+        {
+            let mut handlers = self.handlers.lock();
+            let mine = handlers.entry(peer.connection_id()).or_default();
+            if serves {
+                mine.insert(key);
+            } else {
+                mine.remove(&key);
+            }
+        }
+        app.handlers_changed(&p.app).await;
+    }
+
+    /// A page's answer to a request the bus put to it. The first answer settles the request; an answer to one that no
+    /// longer waits (another handler answered first, or the caller went away) is refused as expired. A page whose
+    /// handler is gone answers method-not-found: that is no answer, and when no page is left to answer, the request
+    /// ends as method not found.
+    fn answer(&self, conn: u64, p: AnswerParams) -> Result<Value, RpcError> {
+        let expired = || {
+            RpcError {
+            code: codes::EXPIRED,
+            message: "That request no longer waits for an answer: another handler answered first, or it was cancelled"
+                .to_owned(),
+            data: None,
+        }
+        };
+        let mut calls = self.calls.lock();
+        let Some(pending) = calls.get_mut(&p.call) else { return Err(expired()) };
+        if !pending.asked.contains(&conn) {
+            return Err(expired());
+        }
+        if p.error.as_ref().is_some_and(|e| e.code == codes::METHOD_NOT_FOUND) {
+            pending.asked.remove(&conn);
+            if pending.asked.is_empty() {
+                if let Some(pending) = calls.remove(&p.call) {
+                    let _ = pending.reply.send(Err(no_page_handler()));
+                }
+            }
+            return Ok(Value::Null);
+        }
+        if let Some(pending) = calls.remove(&p.call) {
+            let _ = pending.reply.send(p.error.map_or(Ok(p.result), Err));
+        }
+        Ok(Value::Null)
+    }
+
+    /// A connection that went away answers nothing it was asked.
+    fn decline_all(&self, conn: u64) {
+        let mut calls = self.calls.lock();
+        let done: Vec<u64> = calls
+            .iter_mut()
+            .filter_map(|(call, pending)| {
+                (pending.asked.remove(&conn) && pending.asked.is_empty()).then_some(*call)
+            })
+            .collect();
+        for call in done {
+            if let Some(pending) = calls.remove(&call) {
+                let _ = pending.reply.send(Err(no_page_handler()));
+            }
         }
     }
 
@@ -467,6 +573,35 @@ struct FileRenameParams {
     from: String,
     to: String,
 }
+/// `host.telemetry.*` (NEOC-521 POC): what was recorded, read by a paired client; `ingest` is the shell passing on what
+/// a frame of `app` recorded (the shell names the app, never the frame).
+fn telemetry_request(method: &str, params: Value) -> Result<Value, RpcError> {
+    use crate::telemetry;
+    match method {
+        "host.telemetry.query" => encode(&telemetry::query(&parse(params)?)),
+        "host.telemetry.traces" => {
+            let p: TracesParams = parse(params)?;
+            encode(&telemetry::traces(p.app.as_deref(), p.limit))
+        }
+        "host.telemetry.ingest" => {
+            let p: IngestParams = parse(params)?;
+            Ok(json!({ "kept": telemetry::ingest(p.app.as_str(), p.batch) }))
+        }
+        _ => Err(method_not_found(method)),
+    }
+}
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct TracesParams {
+    app: Option<String>,
+    limit: Option<usize>,
+}
+#[derive(Deserialize)]
+struct IngestParams {
+    app: AppId,
+    #[serde(flatten)]
+    batch: crate::telemetry::Batch,
+}
 /// `app.call`: the shell forwards an app page's `rpc(method, args)`. `app` is the app of the frame the message
 /// came from (the shell decides it, never the page); `args` is whatever JSON the page sent.
 #[derive(Deserialize)]
@@ -476,6 +611,29 @@ struct CallParams {
     method: String,
     #[serde(default)]
     args: Value,
+    /// The W3C trace context of the page's call (NEOC-521 POC): the handler's span joins the page's trace.
+    #[serde(default)]
+    traceparent: Option<String>,
+}
+#[derive(Deserialize)]
+struct NotifyParams {
+    app: AppId,
+    name: String,
+    #[serde(default)]
+    params: Value,
+}
+#[derive(Deserialize)]
+struct HandleParams {
+    app: AppId,
+    method: String,
+}
+#[derive(Deserialize)]
+struct AnswerParams {
+    call: u64,
+    #[serde(default)]
+    result: Value,
+    #[serde(default)]
+    error: Option<RpcError>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -504,6 +662,16 @@ impl RpcHandler for RpcHub {
 
     async fn disconnected(&self, peer: &RpcPeer) {
         self.peers.lock().retain(|p| !p.is_same_connection(peer));
+        let conn = peer.connection_id();
+        let gone = self.handlers.lock().remove(&conn);
+        self.decline_all(conn);
+        // the apps whose handlers went with the connection: their agent tools follow
+        if let (Some(gone), Some(app)) = (gone, self.app.get()) {
+            let apps: HashSet<String> = gone.into_iter().map(|(app, _)| app).collect();
+            for id in apps.iter().filter_map(|id| AppId::parse(id).ok()) {
+                app.handlers_changed(&id).await;
+            }
+        }
     }
 
     /// `session.bye` (the client is going away) needs nothing done: the socket closing is what ends a connection.
@@ -549,7 +717,41 @@ impl RpcHandler for RpcHub {
             }
             "app.call" => {
                 let p: CallParams = parse(params)?;
-                app.call_handler(&p.app, &p.method, p.args).await.map_err(|e| handler_err(&e))
+                let (trace_id, parent) =
+                    p.traceparent.as_deref().and_then(crate::telemetry::parse_traceparent).unzip();
+                let span = tracing::info_span!(
+                    "app.call",
+                    app = %p.app,
+                    method = %p.method,
+                    trace_id = trace_id.as_deref().unwrap_or(""),
+                    parent_span_id = parent.as_deref().unwrap_or(""),
+                    outcome = tracing::field::Empty,
+                    error = tracing::field::Empty,
+                );
+                let out = app
+                    .call_handler(&p.app, &p.method, p.args)
+                    .instrument(span.clone())
+                    .await
+                    .map_err(|e| handler_err(&e));
+                match &out {
+                    Ok(_) => span.record("outcome", "ok"),
+                    Err(e) => span.record("outcome", "error").record("error", e.message.as_str()),
+                };
+                out
+            }
+            // the page's side of the RPC bus: its app's notification, its handlers, and its answers
+            "app.notify" => {
+                let p: NotifyParams = parse(params)?;
+                app.publish(&p.app, &p.name, p.params).await.map_err(|e| handler_err(&e))?;
+                Ok(Value::Null)
+            }
+            "app.handle" | "app.unhandle" => {
+                self.handle(peer, method == "app.handle", parse(params)?, app).await;
+                Ok(Value::Null)
+            }
+            "app.answer" => {
+                let p: AnswerParams = parse(params)?;
+                self.answer(peer.connection_id(), p)
             }
             "app.enable" | "app.disable" | "app.deleteData" | "app.reload" => {
                 let p: AppParams = parse(params)?;
@@ -591,7 +793,7 @@ impl EventSink for RpcHub {
     }
 }
 
-/// What apps ask of the shell: opening a window and an event both go to every connected client.
+/// What apps ask of the shell: opening a window and a notification both go to every connected client.
 #[async_trait]
 impl Shell for RpcHub {
     async fn open_window(&self, app: &AppId, window: &str, params: Map<String, Value>) {
@@ -603,8 +805,8 @@ impl Shell for RpcHub {
         let (method, params) = note.to_rpc();
         self.broadcast(method, &params);
     }
-    /// `app.emit`: every connected shell hears it and hands it to the frames of that app. The frames of other
-    /// apps never see it: the shell routes by the app named here.
+    /// An app's notification: every connected shell hears it and hands it to the frames of that app (and, unless it is
+    /// a `_name`, to the frames that subscribed to the app). The shell routes by the app named here.
     async fn emit_event(&self, app: &AppId, name: &str, data: Value) {
         if let Ok(event) =
             serde_json::to_value(AppEvent { app: app.to_string(), name: name.to_owned(), data })
@@ -613,6 +815,72 @@ impl Shell for RpcHub {
             // behind everything else until the byte bound closes its connection
             self.deliver("app.event", &event, Some(EVENT_QUEUE_BYTES));
         }
+    }
+}
+
+/// The handlers the open pages registered on the RPC bus.
+#[async_trait]
+impl PageHandlers for RpcHub {
+    fn handles(&self, app: &AppId, method: &str) -> bool {
+        let key = (app.to_string(), method.to_owned());
+        self.handlers.lock().values().any(|mine| mine.contains(&key))
+    }
+
+    fn handlers(&self, app: &AppId) -> Vec<String> {
+        let mut methods: Vec<String> = Vec::new();
+        for mine in self.handlers.lock().values() {
+            for (of, method) in mine {
+                if of == app.as_str() && !methods.contains(method) {
+                    methods.push(method.clone());
+                }
+            }
+        }
+        methods.sort();
+        methods
+    }
+
+    async fn request(&self, app: &AppId, method: &str, params: Value) -> PortResult<Value> {
+        let key = (app.to_string(), method.to_owned());
+        let asked: Vec<u64> = self
+            .handlers
+            .lock()
+            .iter()
+            .filter(|(_, mine)| mine.contains(&key))
+            .map(|(conn, _)| *conn)
+            .collect();
+        if asked.is_empty() {
+            return Err(PortError::Rpc {
+                code: codes::METHOD_NOT_FOUND,
+                message: no_page_handler().message,
+                data: None,
+            });
+        }
+        let call = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
+        let (reply, answered) = oneshot::channel();
+        self.calls.lock().insert(call, PendingCall { reply, asked: asked.iter().copied().collect() });
+        // however this ends, the request stops waiting and the pages asked are told
+        let _settle = Settle { hub: self, call, asked: asked.clone() };
+        let note = json!({ "call": call, "app": app, "method": method, "params": params });
+        let peers: Vec<RpcPeer> =
+            self.peers.lock().iter().filter(|p| asked.contains(&p.connection_id())).cloned().collect();
+        for peer in &peers {
+            if peer.notify("app.request", note.clone()).is_err() {
+                self.decline_all(peer.connection_id());
+            }
+        }
+        match answered.await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(PortError::Rpc { code: e.code, message: e.message, data: e.data }),
+            Err(_) => Err(PortError::Rejected("the request ended before a page answered".to_owned())),
+        }
+    }
+}
+
+fn no_page_handler() -> RpcError {
+    RpcError {
+        code: codes::METHOD_NOT_FOUND,
+        message: "No open page serves that method any more".to_owned(),
+        data: None,
     }
 }
 

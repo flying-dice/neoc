@@ -9,7 +9,6 @@
 -- A function that does something answers with a plain sentence when it could not (the handler and the tool pass it on
 -- as it is) and with nothing when it did what it was asked.
 local keyring = require("vnd:keyring")
-local rpc = require("../.app/rpc")
 
 local vault = {}
 
@@ -42,7 +41,7 @@ local function entry(service: string, account: string): (vnd_keyring_Entry?, str
 end
 
 -- whether this machine has a keychain that opens, and why not
-function vault.status(): rpc.Keychain
+function vault.status(): keychain_Keychain
   local _, err = keyring.store()
   return { available = err == nil, problem = if err then sentence(err) else "" }
 end

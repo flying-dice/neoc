@@ -1,14 +1,33 @@
-import type { Api, Host, Issue, IssueType, Page, Priority, Project, Status, Workspace } from 'app:rpc'
+type Issue = VosApp.Projects.Issue
+type IssueType = VosApp.Projects.IssueType
+type Page = VosApp.Projects.Page
+type Priority = VosApp.Projects.Priority
+type Project = VosApp.Projects.Project
+type Status = VosApp.Projects.Status
+type Workspace = VosApp.Projects.Workspace
 import { COLORS, column, suggestKey, tree, type Leaf, type Tab } from './catalog'
 import { keyProblem, nameProblem } from './validate'
 
-/** What the window needs of the backend: the workspace, a page's text, and each way of changing them. */
-export type ProjectsRpc = Pick<
-  Api,
-  'workspace' | 'addProject' | 'removeProject' | 'addIssue' | 'updateIssue' | 'removeIssue' | 'addPage' | 'readPage' | 'writePage' | 'removePage'
->
-/** Where the backend's events are heard (`host.on`). */
-export type ProjectsEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the workspace, a page's text, and each way of changing them (the app's private
+ * methods on the bus, `_workspace` ...: `App.svelte` sends them).
+ */
+export interface ProjectsRpc {
+  workspace(): Promise<Workspace>
+  addProject(params: VosApp.Projects.AddProjectParams): Promise<Workspace>
+  removeProject(params: VosApp.Projects.RemoveProjectParams): Promise<Workspace>
+  addIssue(params: VosApp.Projects.CreateIssueParams): Promise<Workspace>
+  updateIssue(params: VosApp.Projects.UpdateIssueParams): Promise<Workspace>
+  removeIssue(params: VosApp.Projects.RemoveIssueParams): Promise<Workspace>
+  addPage(params: VosApp.Projects.AddPageParams): Promise<Workspace>
+  readPage(params: VosApp.Projects.GetPageParams): Promise<VosApp.Projects.PageText>
+  writePage(params: VosApp.Projects.SavePageParams): Promise<Workspace>
+  removePage(params: VosApp.Projects.RemovePageParams): Promise<Workspace>
+}
+/** Where the window hears that the workspace changed: the backend's `projects_changed`, and the host's `host:reconnected`. */
+export interface ProjectsEvents {
+  on(name: 'projects_changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** A new project as it is typed. */
 export interface ProjectDraft {
@@ -201,7 +220,7 @@ export class Projects {
    */
   listen(): () => void {
     const stops = [
-      this.#events.on('projects.changed', () => void this.load()),
+      this.#events.on('projects_changed', () => void this.load()),
       this.#events.on('host:reconnected', () => void this.load())
     ]
     return () => stops.forEach((stop) => stop())

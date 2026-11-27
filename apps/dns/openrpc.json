@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "DNS",
-    "version": "0.1.0",
-    "description": "A DNS server for your network: give the machines at home a name, and choose who answers for the rest. It runs as a container in Docker, which this app makes and keeps."
-  },
-  "x-app": {
-    "id": "dns",
-    "icon": "network",
-    "tint": "indigo",
-    "description": "A DNS server for your network: give the machines at home a name, and choose who answers for the rest. It runs as a container in Docker, which this app makes and keeps.",
-    "window": {
-      "w": 760,
-      "h": 620,
-      "minW": 420,
-      "minH": 440
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "overview",
+      "name": "_overview",
       "summary": "Whether Docker can be reached, how the DNS server's container is doing, and the settings and names it is made from. A Docker that cannot be reached is an answer (`engine.reachable` is false and says why), not an error.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "connect",
+      "name": "_connect",
       "summary": "Choose the Docker the server runs in, and answer with what is there. A server left running in the Docker chosen before is not touched.",
       "params": [
         {
@@ -57,7 +44,7 @@
       ]
     },
     {
-      "name": "setEnabled",
+      "name": "_set_enabled",
       "summary": "Turn the server on (its container is made from the settings and the names, and started) or off (its container is removed; the settings and the names stay). What Docker refused is said by `server.problem` of the answer.",
       "params": [
         {
@@ -76,7 +63,7 @@
       }
     },
     {
-      "name": "apply",
+      "name": "_apply",
       "summary": "Make the container again from the settings and the names as they stand, and start it: the way out when it is not running, or was made from older ones. Does nothing while the server is off.",
       "params": [],
       "result": {
@@ -87,7 +74,7 @@
       }
     },
     {
-      "name": "saveSettings",
+      "name": "_save_settings",
       "summary": "Change the port the server answers on, who it asks for the names it does not know, and whether it logs each question. A server that is on is made again with them.",
       "params": [
         {
@@ -135,7 +122,7 @@
       ]
     },
     {
-      "name": "addRecord",
+      "name": "_create_record",
       "summary": "Give a name an address. A server that is on is made again with it.",
       "params": [
         {
@@ -179,7 +166,7 @@
       ]
     },
     {
-      "name": "removeRecord",
+      "name": "_delete_record",
       "summary": "Take a record away. A server that is on is made again without it.",
       "params": [
         {
@@ -205,7 +192,7 @@
       ]
     },
     {
-      "name": "logs",
+      "name": "_logs",
       "summary": "The end of what the server has written: how it started, what it could not do, and every question when the settings ask for that.",
       "params": [
         {
@@ -231,6 +218,216 @@
           "message": "Docker cannot be reached, or the server has no container: the message says which."
         }
       ]
+    },
+    {
+      "name": "list_records",
+      "summary": "List the DNS records",
+      "x-readOnly": true,
+      "description": "The names this machine's DNS server answers for, each with its address (IPv4 or IPv6) and whether every name under it answers with the address too; the servers it asks for every other name (`upstreams`); and how the server is doing: whether it is wanted on (`enabled`), the state of its container (`running`, `stopped`, `restarting`, or `absent` when there is none), the port it answers on, and why it is not running when Docker refused (`problem`).",
+      "params": [],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "server": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ServerState"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "problem": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "enabled",
+                "state",
+                "port",
+                "problem"
+              ]
+            },
+            "upstreams": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "address": {
+                    "type": "string"
+                  },
+                  "subdomains": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "address",
+                  "subdomains"
+                ]
+              }
+            }
+          },
+          "required": [
+            "server",
+            "upstreams",
+            "records"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add_record",
+      "summary": "Add a DNS record",
+      "description": "Give a name an address on this machine's DNS server (`nas.home` -> `192.168.1.10`). A name may have several addresses: add each. A server that is on answers with it a moment later; one that is off keeps it for when it is turned on.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "The name, like `nas.home`",
+          "schema": {
+            "type": "string",
+            "maxLength": 253
+          }
+        },
+        {
+          "name": "address",
+          "required": true,
+          "description": "An IPv4 or IPv6 address",
+          "schema": {
+            "type": "string",
+            "maxLength": 45
+          }
+        },
+        {
+          "name": "subdomains",
+          "required": false,
+          "description": "Every name under it answers with the address too; false when left out",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "added",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "added": {
+              "type": "boolean"
+            },
+            "server": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ServerState"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "problem": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "enabled",
+                "state",
+                "port",
+                "problem"
+              ]
+            }
+          },
+          "required": [
+            "added",
+            "server"
+          ]
+        }
+      }
+    },
+    {
+      "name": "remove_record",
+      "summary": "Remove a DNS record",
+      "description": "Take a name away from this machine's DNS server, by the name as `list_records` gives it: every address it has, or only `address` when given.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "The name of the record",
+          "schema": {
+            "type": "string",
+            "maxLength": 253
+          }
+        },
+        {
+          "name": "address",
+          "required": false,
+          "description": "One of the name's addresses; all of them when left out",
+          "schema": {
+            "type": "string",
+            "maxLength": 45
+          }
+        }
+      ],
+      "result": {
+        "name": "removed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "removed": {
+              "type": "integer"
+            },
+            "server": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ServerState"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "problem": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "enabled",
+                "state",
+                "port",
+                "problem"
+              ]
+            }
+          },
+          "required": [
+            "removed",
+            "server"
+          ]
+        }
+      }
+    },
+    {
+      "name": "changed",
+      "summary": "The server's container changed, or the configuration did: the open windows read the overview again.",
+      "params": []
     }
   ],
   "components": {

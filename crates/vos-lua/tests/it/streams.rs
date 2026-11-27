@@ -31,17 +31,17 @@ async fn a_task_waiting_for_a_streams_next_item_lends_the_app_to_other_calls() {
             local bollard = require("vnd:bollard")
             local task = require("std:task")
             local reading = false
-            app.tool {{ name = "watch", run = function()
+            RPC.on_request("watch", function()
               local docker = assert(bollard.connect {{ host = "{host}", timeout = 60 }})
               task.spawn(function()
                 reading = true
                 docker:events():next()
               end)
               return reading
-            end }}
-            app.tool {{ name = "ask", readOnly = true, run = function()
+            end)
+            RPC.on_request("ask", function()
               return "answered"
-            end }}
+            end)
             "#
         ))
         .await,

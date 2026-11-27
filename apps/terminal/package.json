@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Terminal: a shell on the machine vos runs on, drawn by xterm.js, on pseudo-terminals the Luau backend owns. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "A shell on the machine vos runs on: your own shell, in your home folder.",
+  "vos": {
+    "title": "Terminal",
+    "icon": "terminal",
+    "tint": "gray",
+    "window": {
+      "w": 640,
+      "h": 420,
+      "minW": 320,
+      "minH": 240
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6020 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

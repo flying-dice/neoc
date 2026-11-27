@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Projects",
-    "version": "0.1.0",
-    "description": "Work kept a project at a time, for you and your agents: issues that move across a board, and pages of writing beside them."
-  },
-  "x-app": {
-    "id": "projects",
-    "icon": "rectangle.stack",
-    "tint": "indigo",
-    "description": "Work kept a project at a time, for you and your agents: issues that move across a board, and pages of writing beside them.",
-    "window": {
-      "w": 1040,
-      "h": 680,
-      "minW": 420,
-      "minH": 480
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "workspace",
+      "name": "_workspace",
       "summary": "Every project, its issues in the order they were added, and its pages by title (a page without its text: `readPage` gives that).",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "addProject",
+      "name": "_add_project",
       "summary": "Add a project, and answer with the workspace as it now stands.",
       "params": [
         {
@@ -73,7 +60,7 @@
       ]
     },
     {
-      "name": "removeProject",
+      "name": "_remove_project",
       "summary": "Delete a project, with its issues and its pages.",
       "params": [
         {
@@ -98,7 +85,7 @@
       ]
     },
     {
-      "name": "addIssue",
+      "name": "_create_issue",
       "summary": "Add an issue to a project. It starts as a task of medium priority, to do, unless told otherwise.",
       "params": [
         {
@@ -153,7 +140,7 @@
       ]
     },
     {
-      "name": "updateIssue",
+      "name": "_update_issue",
       "summary": "Change an issue: only what is given changes. A new status moves it across the board.",
       "params": [
         {
@@ -216,7 +203,7 @@
       ]
     },
     {
-      "name": "removeIssue",
+      "name": "_remove_issue",
       "summary": "Delete an issue.",
       "params": [
         {
@@ -241,7 +228,7 @@
       ]
     },
     {
-      "name": "addPage",
+      "name": "_add_page",
       "summary": "Add an empty page to a project, on its own or under another page of the same project.",
       "params": [
         {
@@ -283,7 +270,7 @@
       ]
     },
     {
-      "name": "readPage",
+      "name": "_get_page",
       "summary": "A page with its text.",
       "params": [
         {
@@ -308,7 +295,7 @@
       ]
     },
     {
-      "name": "writePage",
+      "name": "_save_page",
       "summary": "Change a page: only what is given changes.",
       "params": [
         {
@@ -350,7 +337,7 @@
       ]
     },
     {
-      "name": "removePage",
+      "name": "_remove_page",
       "summary": "Delete a page, and the pages under it.",
       "params": [
         {
@@ -373,6 +360,377 @@
           "message": "There is no such page."
         }
       ]
+    },
+    {
+      "name": "list_issues",
+      "summary": "List the issues",
+      "x-readOnly": true,
+      "description": "The projects, and the issues of one project or of all: each with its key (WEB-12), title, description, type (task, bug, story), priority (low, medium, high) and status (todo, doing, done). Give `status` for one column of the board only.",
+      "params": [
+        {
+          "name": "project",
+          "required": false,
+          "description": "The key or the name of a project; every project when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "required": false,
+          "description": "todo, doing or done; every status when left out",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "name"
+                ]
+              }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "$ref": "#/components/schemas/IssueType"
+                  },
+                  "priority": {
+                    "$ref": "#/components/schemas/Priority"
+                  },
+                  "status": {
+                    "$ref": "#/components/schemas/Status"
+                  }
+                },
+                "required": [
+                  "key",
+                  "title",
+                  "description",
+                  "type",
+                  "priority",
+                  "status"
+                ]
+              }
+            }
+          },
+          "required": [
+            "projects",
+            "issues"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add_issue",
+      "summary": "Add an issue",
+      "description": "Raise an issue in a project: a task of medium priority, to do, unless told otherwise. Answers with its key (WEB-12).",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "description": "The key or the name of the project",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "What has to be done",
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        {
+          "name": "description",
+          "required": false,
+          "description": "What is known about it",
+          "schema": {
+            "type": "string",
+            "maxLength": 5000
+          }
+        },
+        {
+          "name": "type",
+          "required": false,
+          "description": "task, bug or story",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "priority",
+          "required": false,
+          "description": "low, medium or high",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "added",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/components/schemas/Status"
+            }
+          },
+          "required": [
+            "key",
+            "title",
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_issue",
+      "summary": "Move an issue",
+      "description": "Move an issue to another column of the board, by its key (`list_issues` gives the keys): todo, doing or done.",
+      "params": [
+        {
+          "name": "key",
+          "required": true,
+          "description": "The key of the issue, as WEB-12",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "description": "todo, doing or done",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "moved",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/components/schemas/Status"
+            }
+          },
+          "required": [
+            "key",
+            "title",
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "name": "list_pages",
+      "summary": "List the pages",
+      "x-readOnly": true,
+      "description": "The pages of a project: each with its title, the title of the page it is under (empty for none) and when it last changed.",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "description": "The key or the name of the project",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string"
+            },
+            "pages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "under": {
+                    "type": "string"
+                  },
+                  "updated": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "under",
+                  "updated"
+                ]
+              }
+            }
+          },
+          "required": [
+            "project",
+            "pages"
+          ]
+        }
+      }
+    },
+    {
+      "name": "read_page",
+      "summary": "Read a page",
+      "x-readOnly": true,
+      "description": "The text of a page of a project, by its title (`list_pages` gives the titles).",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "description": "The key or the name of the project",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "The title of the page",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "read",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "updated": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "body",
+            "updated"
+          ]
+        }
+      }
+    },
+    {
+      "name": "write_page",
+      "summary": "Write a page",
+      "description": "Write a page of a project: the page with that title is given the text in place of what it had, and a title no page has makes a new page, under the page named in `under` when one is.",
+      "params": [
+        {
+          "name": "project",
+          "required": true,
+          "description": "The key or the name of the project",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "title",
+          "required": true,
+          "description": "The title of the page",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        {
+          "name": "body",
+          "required": true,
+          "description": "The whole text of the page",
+          "schema": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        },
+        {
+          "name": "under",
+          "required": false,
+          "description": "For a new page: the title of the page it goes under",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "written",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "created": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "project",
+            "title",
+            "created"
+          ]
+        }
+      }
+    },
+    {
+      "name": "projects_changed",
+      "summary": "Projects, issues or pages were written by an agent: the open windows read the workspace again.",
+      "params": []
     }
   ],
   "components": {

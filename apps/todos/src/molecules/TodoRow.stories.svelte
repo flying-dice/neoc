@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Todo } from 'app:rpc'
+  type Todo = VosApp.Todos.Todo
   import TodoRow from './TodoRow.svelte'
   import { todo } from '../lib/fakeApi'
 

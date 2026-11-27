@@ -1,6 +1,6 @@
 <!-- @organism RecordList — the names the server answers for: the form that adds one, and each record with the button that takes it away -->
 <script lang="ts">
-  import type { Record as DnsRecord } from 'app:rpc'
+  type DnsRecord = VosApp.Dns.Record
   import RecordForm from '../molecules/RecordForm.svelte'
   import RecordRow from '../molecules/RecordRow.svelte'
   import type { Problems, RecordDraft } from '../lib/dns.svelte'

@@ -2,7 +2,7 @@
 -- A typed Luau backend for the host's own test (`typed_luau.rs`): type aliases, annotations, a generic function, a
 -- cast, a typed `require` of a neoc module and the Luau syntax the host runs (`continue`, `+=`, string interpolation,
 -- an `if` expression, generalized iteration). `bun run lint:luau` holds it to strict mode like every app.
-local app = require("vos:app")
+local RPC = require("vos:rpc")
 local base64 = require("lib:base64")
 
 type Stats = { count: number, total: number }
@@ -24,29 +24,19 @@ local function describe<T>(label: string, value: T): string
   return `{label}: {value}`
 end
 
-app.tool {
-  name = "summarize",
-  title = "Summarize",
-  readOnly = true,
-  input = { numbers = app.t.array(app.t.number {}) },
-  run = function(input: { numbers: { number } })
-    local stats = summarize(input.numbers)
-    local size = if stats.count > 2 then "many" else "few"
-    return {
-      count = stats.count,
-      total = stats.total,
-      text = describe("sum", stats.total),
-      size = size,
-      encoded = base64.encode(size :: string),
-    }
-  end,
-}
+RPC.on_request("summarize", function(input: { numbers: { number } })
+  local stats = summarize(input.numbers)
+  local size = if stats.count > 2 then "many" else "few"
+  return {
+    count = stats.count,
+    total = stats.total,
+    text = describe("sum", stats.total),
+    size = size,
+    encoded = base64.encode(size :: string),
+  }
+end)
 
--- what the page calls: the context and the handlers table are typed by the declarations
-local handlers: vos_app_Handlers = {
-  greet = function(ctx: vos_app_Context, args: { name: string })
-    return `Hello {args.name} from a {ctx.actor.kind}`
-  end,
-}
-
-return handlers
+-- what the page calls: the context is typed by the declarations
+RPC.on_request("_greet", function(args: { name: string }, ctx: vos_app_Context)
+  return `Hello {args.name} from a {ctx.actor.kind}`
+end)

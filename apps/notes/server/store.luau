@@ -5,8 +5,6 @@
 --
 -- A note is its text: its first line is its title. A deleted note is kept for 30 days (Recently Deleted), from where
 -- it can be brought back; a note with nothing in it is not worth keeping, and is gone at once.
-local app = require("vos:app")
-local rpc = require("../.app/rpc")
 local strings = require("lib:text")
 local unicode = require("lib:unicode")
 
@@ -63,7 +61,7 @@ function store.lines(text: string): (string, string)
   return title, preview
 end
 
-local function noteOf(row: { [string]: any }): rpc.Note
+local function noteOf(row: { [string]: any }): notes_Note
   local title, preview = store.lines(row.head)
   return {
     id = row.id,
@@ -76,8 +74,8 @@ local function noteOf(row: { [string]: any }): rpc.Note
   }
 end
 
-function store.folders(): { rpc.Folder }
-  local folders: { rpc.Folder } = {}
+function store.folders(): { notes_Folder }
+  local folders: { notes_Folder } = {}
   for _, row in db:all("select id, name from folders order by id") do
     table.insert(folders, { id = row.id, name = row.name })
   end
@@ -85,7 +83,7 @@ function store.folders(): { rpc.Folder }
 end
 
 -- the folder called `name`, whatever its capitals: how an agent names a folder, and how a name is found taken
-function store.folderNamed(name: string): rpc.Folder?
+function store.folderNamed(name: string): notes_Folder?
   local wanted = trim(name)
   for _, folder in store.folders() do
     if unicode.caseless_eq(folder.name, wanted) then
@@ -95,7 +93,7 @@ function store.folderNamed(name: string): rpc.Folder?
   return nil
 end
 
-function store.note(id: number): rpc.Note?
+function store.note(id: number): notes_Note?
   local row = db:one(NOTE .. " where id = :id", { id = id })
   return if row then noteOf(row) else nil
 end
@@ -107,8 +105,8 @@ function store.body(id: number): string?
 end
 
 -- every note, deleted ones too, the most recently edited first
-function store.notes(): { rpc.Note }
-  local notes: { rpc.Note } = {}
+function store.notes(): { notes_Note }
+  local notes: { notes_Note } = {}
   for _, row in db:all(NOTE .. " order by edited_at desc, id desc limit :n", { n = NOTES_SHOWN }) do
     table.insert(notes, noteOf(row))
   end
@@ -139,7 +137,7 @@ function store.sweep()
   )
 end
 
-function store.board(): rpc.Board
+function store.board(): notes_Board
   return { folders = store.folders(), notes = store.notes() }
 end
 

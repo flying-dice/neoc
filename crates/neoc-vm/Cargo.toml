@@ -50,6 +50,7 @@ neoc-vm-lib-http = { workspace = true }
 neoc-vm-lib-ini = { workspace = true }
 neoc-vm-lib-json = { workspace = true }
 neoc-vm-lib-log = { workspace = true }
+neoc-vm-lib-tracing = { workspace = true }
 neoc-vm-lib-mime = { workspace = true }
 neoc-vm-lib-pkey = { workspace = true }
 neoc-vm-lib-random = { workspace = true }

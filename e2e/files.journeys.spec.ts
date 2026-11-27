@@ -8,7 +8,7 @@
  * test-results/host/files), which it reaches by typing its path, and never opens or changes anything else.
  *
  * The apps' documents come from the React task-list fixture (e2e/apps/tasks-react), installed at start: its
- * `saveDocument` method writes a file with `app.files`, which is how any app's documents come to be. (The fixture the
+ * `_save_document` method writes a file with `app.files`, which is how any app's documents come to be. (The fixture the
  * Discover journeys install and remove is not used: they run while these do.) Each journey works in a folder of its
  * own and removes it at the end, so the journeys do not see each other's files and the app is left as it was found.
  */
@@ -34,7 +34,7 @@ const hostCall = <T>(page: Page, method: string, params: Record<string, unknown>
 
 /** The app writes a document, as its own backend would at any time. */
 const save = (page: Page, path: string, text: string): Promise<unknown> =>
-  hostCall(page, 'app.call', { app: APP, method: 'saveDocument', args: { path, text } })
+  hostCall(page, 'app.call', { app: APP, method: '_save_document', args: { path, text } })
 
 const namesIn = async (page: Page, path: string): Promise<string[]> =>
   (await hostCall<{ entries: { name: string }[] }>(page, 'host.files.list', { app: APP, path })).entries.map((e) => e.name)

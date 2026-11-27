@@ -11,12 +11,12 @@
 //!
 //! A program is a few *steps*. A step is one **leaf** (an idle wait, a database or key-value read or write, a
 //! mutex, a write through `state` (an in-memory value whose assignment sends an event to the app's pages), `app.notify` or
-//! `app.openWindow`), put inside a **context** where the host
+//! `app.open_window`), put inside a **context** where the host
 //! call cannot suspend (or none), and wrapped in **controls** (`pcall`, `xpcall`, coroutines, a plain yield, tasks,
 //! a nested `db:tx`, an error thrown mid-body, a wait left in flight and resumed inside a transaction). It runs as a
-//! tool of one of four kinds: `readOnly`, writable, writable with concurrent second tools, or `readOnly` calling the
+//! tool of one of four kinds: `read-only`, writable, writable with concurrent second tools, or `read-only` calling the
 //! app's own server. Beside it run side calls that get in whenever the VM is free: a counter bump, a second writer, a
-//! `readOnly` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
+//! `read-only` peek that tries every write, and a *meddler* that resumes the threads the program left behind (its own
 //! top-level thread, the threads its tasks run in, the thread a protected call runs in when the script is inside one,
 //! its coroutines), with and without arguments, from another call.
 //! Per case, within a timeout:
@@ -36,7 +36,7 @@
 //!   resumed.
 //!
 //! A second test runs the same programs and reloads or unloads the app in the middle: nothing may be wedged, no VM may
-//! keep the database, and a `readOnly` program still left nothing behind.
+//! keep the database, and a `read-only` program still left nothing behind.
 //!
 //! The scripts are generated from a seed, so a failure names the case and prints the program. Environment:
 //! `CHAOS_CASES` (default 1500), `CHAOS_DISTURBED_CASES` (300), `CHAOS_SEED` (default fixed), `CHAOS_ONLY=<case>` to run one case
@@ -44,7 +44,7 @@
 
 use crate::common;
 
-use common::{agent_ctx, db, id, package, timed_tool as tool, try_load_with};
+use common::{agent_ctx, db, id, package, timed_tool as tool, timed_tool_with, try_load_with};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
@@ -126,7 +126,7 @@ fn leaf(rng: &mut Rng, n: usize, kind: Kind) -> Leaf {
         Leaf { code: format!("app.kv:set('k1', {n}) wrote('kv')"), idle: false },
         Leaf { code: format!("attempt('state', function() state.v = {n} end)"), idle: false },
         Leaf { code: "attempt('notify', function() app.notify { title = 'chaos' } end)".into(), idle: false },
-        Leaf { code: "attempt('window', function() app.openWindow() end)".into(), idle: false },
+        Leaf { code: "attempt('window', function() app.open_window() end)".into(), idle: false },
     ];
     if kind == Kind::OwnServer {
         leaves.push(Leaf { code: "hyper.get(OWN)".into(), idle: true });
@@ -306,7 +306,7 @@ local task = require("std:task")
 local time = require("std:time")
 local hyper = require("vnd:hyper")
 local net = require("std:net")
-local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
 local counter, PROG = 0, 0
 local A, X, V, keep, pending, txp = {}, {}, {}, {}, 0, nil
 -- what the program leaves behind for another call to find: the threads it did not make (its top-level thread, the
@@ -323,11 +323,11 @@ local function viol(msg) V[#V + 1] = msg end
 -- an acknowledged database write: it must be there at the end, unless the transaction it was in failed
 local function rec(n)
   if MEDDLING then return end
-  if RO then viol("a db write was acknowledged in a readOnly call") end
+  if RO then viol("a db write was acknowledged in a read-only call") end
   if txp then txp[#txp + 1] = n else A[#A + 1] = n end
 end
-local function wrote(what) if RO and not MEDDLING then viol("a " .. what .. " write was acknowledged in a readOnly call") end end
-local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("app." .. what .. " changed the world in a readOnly call") end end
+local function wrote(what) if RO and not MEDDLING then viol("a " .. what .. " write was acknowledged in a read-only call") end end
+local function attempt(what, f) if pcall(f) and RO and not MEDDLING then viol("app." .. what .. " changed the world in a read-only call") end end
 -- a task is counted until its body ends, so the test knows when everything the program started is over
 local function task_start(start, f)
   pending = pending + 1
@@ -348,12 +348,12 @@ local function TX(body)
 end
 
 app.db:migrate { [1] = "create table t(a integer primary key autoincrement, v integer)" }
--- the app's one window is its page's: `app.openWindow()` asks the shell for it
+-- the app's one window is its page's: `app.open_window()` asks the shell for it
 "#;
 
 const TOOLS: &str = r#"
 local others = {}
-app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
+RPC.on_request("bump", function() counter = counter + 1 return counter end)
 -- the program's threads that are not the script's own: resuming one, from any call, must be refused (g)
 local function steal(label)
   -- nothing in here waits, so no other call can run: any progress is a thread that should have been refused
@@ -376,42 +376,42 @@ local function resume_scripts()
   for _, w in ipairs(WR) do pcall(w) pcall(w, "x") end
   MEDDLING = false
 end
-app.tool { name = "meddle", run = function()
+RPC.on_request("meddle", function()
   counter = counter + 1
   steal("a meddling call")
   -- a program that is read-only is not to be written for by another call's turn
   if not RO then resume_scripts() end
   return counter
-end }
+end)
 -- a read-only call beside the program: every write is refused, and what it reads is consistent
-app.tool { name = "peek", readOnly = true, run = function()
+RPC.on_request("peek", function()
   counter = counter + 1
-  local function refused(what, f) if pcall(f) then viol("a readOnly side call: " .. what .. " changed the world") end end
+  local function refused(what, f) if pcall(f) then viol("a read-only side call: " .. what .. " changed the world") end end
   refused("db", function() app.db:exec("insert into t(v) values (97)") end)
   refused("kv", function() app.kv:set("k1", 97) end)
   refused("state", function() state.v = 97 end)
   refused("notify", function() app.notify { title = "peek" } end)
-  refused("window", function() app.openWindow() end)
+  refused("window", function() app.open_window() end)
   refused("tx", function() app.db:tx(function() app.db:exec("insert into t(v) values (96)") end) end)
-  steal("a readOnly call")
+  steal("a read-only call")
   resume_scripts()
   return app.db:one("select count(*) as n from t").n
-end }
-app.tool { name = "other", run = function()
+end)
+RPC.on_request("other", function()
   local v = 1000 + #others
   local r = app.db:exec("insert into t(v) values (:v)", { v = v })
   others[#others + 1] = v
   return { v = v, changes = r.changes }
-end }
-app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
-app.tool { name = "report", readOnly = true, run = function()
+end)
+RPC.on_request("ping", function() return "pong" end)
+RPC.on_request("report", function()
   return { A = A, X = X, V = V, pending = pending, state = state.v }
-end }
+end)
 "#;
 
 const SERVER: &str = r#"
 local server = hyper.serve(net.TcpListener.bind("127.0.0.1:0"), function(req)
-  -- a request made while a readOnly call is acting is read-only too
+  -- a request made while a read-only call is acting is read-only too
   attempt("state", function() state.v = 99 end)
   attempt("db", function() app.db:exec("insert into t(v) values (98)") end)
   return { status = 200, body = "ok" }
@@ -430,20 +430,18 @@ fn generate(seed: u64, index: usize, url: &str) -> Case {
     let mut rng = Rng(seed ^ (u64::try_from(index).unwrap().wrapping_mul(0xD1B5_4A32_D192_ED03)));
     let kind = *rng.pick(&[Kind::ReadOnly, Kind::Writable, Kind::Concurrent, Kind::OwnServer]);
     let steps: Vec<Step> = (0..2 + rng.below(4)).map(|i| step(&mut rng, 1 + i, kind)).collect();
+    // RO tells the program whether its caller runs it read-only (`drive` and `run_disturbed` do)
     let mut source = format!("local RO = {}\nlocal URL = {url:?}\nlocal OWN\n", kind.read_only());
     source.push_str(HEADER);
     if kind == Kind::OwnServer {
         source.push_str(SERVER);
     }
     source.push_str(TOOLS);
-    let _ = writeln!(
-        source,
-        "app.tool {{ name = \"prog\", readOnly = RO, run = function()\n  SH[#SH + 1] = coroutine.running()"
-    );
+    let _ = writeln!(source, "RPC.on_request(\"prog\", function()\n  SH[#SH + 1] = coroutine.running()");
     for step in &steps {
         let _ = writeln!(source, "  -- {}\n  {}", step.describe, step.code);
     }
-    source.push_str("  task.wait(0.001)\n  return 'done'\nend }\n");
+    source.push_str("  task.wait(0.001)\n  return 'done'\nend)\n");
     Case { index, kind, source, steps }
 }
 
@@ -481,6 +479,11 @@ async fn run(case: &Case) -> Vec<String> {
     failures
 }
 
+/// [`tool`], read-only: every write the call tries is refused.
+async fn tool_ro(vm: &Arc<vos_lua::AppVm>, name: &str, secs: u64) -> Result<Value, String> {
+    timed_tool_with(vm, name, secs, true).await
+}
+
 /// The calls that try to get in beside a program of this kind.
 fn side_tools(kind: Kind) -> &'static [&'static str] {
     if kind == Kind::Concurrent {
@@ -497,7 +500,9 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
     let mut failures = vec![];
     let prog = {
         let vm = vm.clone();
-        tokio::spawn(async move { tool(&vm, "prog", 20).await })
+        // the program is read-only when its kind is: the caller asks for it
+        let read_only = case.kind.read_only();
+        tokio::spawn(async move { timed_tool_with(&vm, "prog", 20, read_only).await })
     };
     let over = Arc::new(AtomicBool::new(false));
     let side: Vec<_> = (0..2)
@@ -511,7 +516,8 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
                     }
                     let tools = side_tools(kind);
                     let name = tools[(i + lane) % tools.len()];
-                    done.push((name, tool(&vm, name, 20).await));
+                    // `peek` is the read-only side call
+                    done.push((name, timed_tool_with(&vm, name, 20, name == "peek").await));
                 }
                 done
             })
@@ -547,7 +553,7 @@ async fn drive(case: &Case, vm: &Arc<vos_lua::AppVm>) -> (Vec<String>, BTreeSet<
 async fn settle(vm: &Arc<vos_lua::AppVm>) -> Result<Value, String> {
     let settled = Instant::now();
     while settled.elapsed() < Duration::from_secs(10) {
-        match tool(vm, "report", 10).await {
+        match tool_ro(vm, "report", 10).await {
             Ok(report) if report["pending"] == 0 => return Ok(report),
             Ok(_) => tokio::time::sleep(Duration::from_millis(10)).await,
             Err(e) => return Err(format!("report: {e}")),
@@ -566,7 +572,7 @@ async fn verify(
 ) -> Vec<String> {
     let mut failures = vec![];
     // (e) nothing is wedged: the app answers, and so does the database (a window query does not go through the VM)
-    match tool(vm, "ping", 5).await {
+    match tool_ro(vm, "ping", 5).await {
         Ok(v) if v == "pong" => {}
         other => failures.push(format!("(e) ping: {other:?}")),
     }
@@ -600,18 +606,18 @@ async fn verify(
     // (a) in a read-only call nothing was written, by any means
     if case.kind.read_only() {
         if let Some(v) = have.iter().find(|v| **v < 1000) {
-            failures.push(format!("(a) a readOnly call left the row {v} in the database"));
+            failures.push(format!("(a) a read-only call left the row {v} in the database"));
         }
         if report["state"] != 0 {
-            failures.push(format!("(a) a readOnly call changed the app's state: {}", report["state"]));
+            failures.push(format!("(a) a read-only call changed the app's state: {}", report["state"]));
         }
         let kv = data.query("select count(*) as n from _kv".into(), vec![]).await.unwrap();
         if kv[0]["n"] != 0 {
-            failures.push("(a) a readOnly call wrote to app.kv".into());
+            failures.push("(a) a read-only call wrote to app.kv".into());
         }
-        let effects = vm.take_effects();
+        let effects = common::take_effects(vm);
         if !effects.is_empty() {
-            failures.push(format!("(a) a readOnly call queued effects: {effects:?}"));
+            failures.push(format!("(a) a read-only call queued effects: {effects:?}"));
         }
     }
     failures
@@ -693,7 +699,7 @@ async fn generated_scripts_leave_every_invariant_intact() {
             broken.len(),
             list.join("\n"),
             case.index,
-            case.source.split("app.tool { name = \"prog\"").nth(1).unwrap_or(&case.source),
+            case.source.split("RPC.on_request(\"prog\"").nth(1).unwrap_or(&case.source),
         );
     }
 }
@@ -714,12 +720,16 @@ const MANIFEST: &str = "-- chaos\n";
 
 /// A call through the runtime, as the host makes it; the error names what went wrong (a call that ended with an
 /// error because the app was unloaded is not a failure: one that never ends is).
-async fn runtime_tool(runtime: &Arc<LuaRuntime>, name: &'static str) -> Result<Value, String> {
+async fn runtime_tool(
+    runtime: &Arc<LuaRuntime>,
+    name: &'static str,
+    read_only: bool,
+) -> Result<Value, String> {
     let runtime = runtime.clone();
     let call = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            runtime.call_tool(&id("chaos"), name, json!({}), agent_ctx(0), false),
+            common::serve_rt_with(&runtime, &id("chaos"), name, json!({}), agent_ctx(0), read_only),
         )
         .await
     });
@@ -743,7 +753,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     let runtime = Arc::new(LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default())));
     let source = format!("{MANIFEST}{}", case.source);
     let load = |runtime: Arc<LuaRuntime>, data: Arc<dyn AppData>, source: String| async move {
-        runtime.load(&id("chaos"), package(&common::backend(&source), &[]), data).await
+        runtime.load(&id("chaos"), package(&source, &[]), data).await
     };
     if let Err(e) = load(runtime.clone(), data.clone(), source.clone()).await {
         return vec![format!("the generated program did not load: {e}")];
@@ -751,7 +761,8 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     let over = Arc::new(AtomicBool::new(false));
     let prog = {
         let runtime = runtime.clone();
-        tokio::spawn(async move { runtime_tool(&runtime, "prog").await })
+        let read_only = case.kind.read_only();
+        tokio::spawn(async move { runtime_tool(&runtime, "prog", read_only).await })
     };
     let side: Vec<_> = (0..2)
         .map(|lane| {
@@ -764,7 +775,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
                     }
                     let name = ["bump", "meddle", "peek"][(i + lane) % 3];
                     // an error is the app going away; only a call that never ends or panics is a failure
-                    if let Err(e) = runtime_tool(&runtime, name).await {
+                    if let Err(e) = runtime_tool(&runtime, name, name == "peek").await {
                         if e.starts_with("(e)") || e.starts_with("(f)") {
                             failures.push(format!("{name}: {e}"));
                         }
@@ -806,13 +817,13 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
         failures.push("(e) the database's write gate is held by something that is gone".into());
     }
     match disturbance {
-        Disturbance::Reload => match runtime_tool(&runtime, "ping").await {
+        Disturbance::Reload => match runtime_tool(&runtime, "ping", true).await {
             Ok(v) if v == "pong" => {}
             other => failures.push(format!("(e) the new version does not answer: {other:?}")),
         },
         Disturbance::Unload => {
             // an unloaded app is gone: asking it is an error, quickly
-            if runtime_tool(&runtime, "ping").await.is_ok() {
+            if runtime_tool(&runtime, "ping", true).await.is_ok() {
                 failures.push("an unloaded app still answers".into());
             }
         }
@@ -821,7 +832,7 @@ async fn run_disturbed(case: &Case, disturbance: Disturbance, after_ms: u64) -> 
     if case.kind.read_only() {
         if let Ok(rows) = data.query("select v from t where v < 1000".into(), vec![]).await {
             if !rows.is_empty() {
-                failures.push(format!("(a) a readOnly call left rows in the database: {rows:?}"));
+                failures.push(format!("(a) a read-only call left rows in the database: {rows:?}"));
             }
         }
     }
@@ -970,25 +981,25 @@ local keep, WR, ran = {{}}, {{}}, {{}}
 app.db:migrate {{ [1] = "create table t(a integer primary key autoincrement, v integer)" }}
 -- what only runs if the dropped wait was resumed: it is recorded and written
 local function after(n) ran[#ran + 1] = n app.db:exec("insert into t(v) values (:v)", {{ v = n }}) end
-app.tool {{ name = "prog", run = function()
+RPC.on_request("prog", function()
   {body}
   after(3) -- the dropped call never gets here
   return "never"
-end }}
+end)
 -- another call resumes everything the program left behind, and calls its wrap functions
-app.tool {{ name = "meddle", run = function()
+RPC.on_request("meddle", function()
   local out = {{}}
   for _, co in ipairs(keep) do local ok, why = coroutine.resume(co) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
   for _, w in ipairs(WR) do local ok, why = pcall(w) out[#out + 1] = {{ ok = ok, why = tostring(why) }} end
   return out
-end }}
-app.tool {{ name = "churn", run = function()
+end)
+RPC.on_request("churn", function()
   local keep = {{}}
   for i = 1, 400 do keep[i % 8] = {{ string.rep("x", 2048), i }} end
   return #keep
-end }}
-app.tool {{ name = "ping", readOnly = true, run = function() return "pong" end }}
-app.tool {{ name = "ran", readOnly = true, run = function() return {{ n = #ran }} end }}
+end)
+RPC.on_request("ping", function() return "pong" end)
+RPC.on_request("ran", function() return {{ n = #ran }} end)
 "#
     )
 }
@@ -1031,7 +1042,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
         let vm = vm.clone();
         tokio::spawn(async move {
             let ctx = agent_ctx(0);
-            let call = vm.call_tool("prog", json!({}), &ctx, false);
+            let call = common::serve(&vm, "prog", json!({}), &ctx);
             if by_timeout {
                 let _ = tokio::time::timeout(Duration::from_millis(wait_ms + 150), call).await;
             } else {
@@ -1073,7 +1084,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
     if !settled && failures.is_empty() {
         failures.push("what a dropped call left behind stayed refused for ever".into());
     }
-    match tool(&vm, "ran", 10).await {
+    match tool_ro(&vm, "ran", 10).await {
         Ok(v) if v["n"] == 0 => {}
         other => failures.push(format!("script code ran after the drop: {other:?}")),
     }
@@ -1082,7 +1093,7 @@ async fn run_dropped(seed: u64, index: usize, url: &str) -> Vec<String> {
         Ok(other) => failures.push(format!("a write after the dropped wait was made: {other:?}")),
         Err(_) => failures.push("(e) the database's write gate is held by a dropped call".into()),
     }
-    match tool(&vm, "ping", 5).await {
+    match tool_ro(&vm, "ping", 5).await {
         Ok(v) if v == "pong" => {}
         other => failures.push(format!("(e) ping: {other:?}")),
     }

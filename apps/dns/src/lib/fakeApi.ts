@@ -3,7 +3,12 @@
  * page, with no host and no Docker. It checks a name and an address as the backend does, makes its container again
  * on every change while the server is on, and writes a line of log for each.
  */
-import type { Logs, Overview, Record as DnsRecord, Server, ServerState, Settings } from 'app:rpc'
+type Logs = VosApp.Dns.Logs
+type Overview = VosApp.Dns.Overview
+type DnsRecord = VosApp.Dns.Record
+type Server = VosApp.Dns.Server
+type ServerState = VosApp.Dns.ServerState
+type Settings = VosApp.Dns.Settings
 import type { DnsEvents, DnsRpc } from './dns.svelte'
 import { isAddress, nameProblem } from './validate'
 

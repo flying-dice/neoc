@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect } from 'storybook/test'
-  import type { Item } from 'app:rpc'
+  type Item = VosApp.Agents.Item
   import ActivityCard from './ActivityCard.svelte'
 
   const item = (kind: Item['kind'], rest: Partial<Item> = {}): Item => ({ id: 1, chat: 'c', kind, text: '', name: '', data: '', done: true, ...rest })

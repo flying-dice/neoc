@@ -3,7 +3,11 @@
  * no daemon. It has containers that start, stop and go away as the real ones do, stacks worked out from them as the
  * backend works them out, and a line of log for everything that happens to a container.
  */
-import type { Container, Details, Overview, Stack, State } from 'app:rpc'
+type Container = VosApp.Containers.Container
+type Details = VosApp.Containers.Details
+type Overview = VosApp.Containers.Overview
+type Stack = VosApp.Containers.Stack
+type State = VosApp.Containers.State
 import type { Action, ContainersEvents, ContainersRpc } from './containers.svelte'
 
 export interface FakeBackend {

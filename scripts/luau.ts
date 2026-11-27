@@ -22,7 +22,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
+import { findTool } from './find-tool.ts'
 
 export const root = resolve(import.meta.dir, '..')
 

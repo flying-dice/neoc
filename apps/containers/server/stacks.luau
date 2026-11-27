@@ -2,7 +2,6 @@
 -- Compose stacks, read from the labels Compose puts on every container it creates. Docker itself knows nothing of
 -- Compose: a stack is the containers that carry the same project label, and this is where those labels are read.
 -- Nothing here talks to Docker.
-local rpc = require("../.app/rpc")
 
 local stacks = {}
 
@@ -46,12 +45,12 @@ function stacks.needs(labels: Labels): { string }
 end
 
 -- the stacks a list of containers belongs to, by name; `folders` is the folder of each, where one is known
-function stacks.summarise(containers: { rpc.Container }, folders: { [string]: string }): { rpc.Stack }
-  local byName: { [string]: rpc.Stack } = {}
-  local list: { rpc.Stack } = {}
+function stacks.summarise(containers: { containers_Container }, folders: { [string]: string }): { containers_Stack }
+  local byName: { [string]: containers_Stack } = {}
+  local list: { containers_Stack } = {}
   for _, container in containers do
     if container.stack ~= "" then
-      local stack: rpc.Stack = byName[container.stack]
+      local stack: containers_Stack = byName[container.stack]
         or { name = container.stack, running = 0, total = 0, folder = folders[container.stack] or "" }
       if not byName[container.stack] then
         byName[container.stack] = stack

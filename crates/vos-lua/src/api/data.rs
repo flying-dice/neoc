@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use vos_application::data::{ExecOutcome, Params, SqlMigration};
 
 impl Shared {
-    /// The gate every write passes: the call is not a `readOnly` tool (the host's read-only handle would
+    /// The gate every write passes: the call is not read-only (the host's read-only handle would
     /// refuse the statement too, this gives the app an error that says why).
     pub(crate) fn require_write(&self, what: &str) -> mlua::Result<()> {
         self.writable(what)
@@ -133,7 +133,7 @@ impl Db {
         host(&s, s.db.migrate(migrations)).await
     }
 
-    /// Run a statement that writes. Raises when the statement fails, and inside a `readOnly` tool.
+    /// Run a statement that writes. Raises when the statement fails, and inside a read-only call.
     #[host("Vm")]
     pub async fn exec(&self, lua: Lua, sql: String, params: Option<SqlParams>) -> mlua::Result<ExecResult> {
         let s = shared(&lua)?;
@@ -169,7 +169,7 @@ impl Db {
     #[host("Vm")]
     pub async fn tx(&self, lua: Lua, body: Callback<fn() -> Live<TxResult>>) -> mlua::Result<Live<TxResult>> {
         let s = shared(&lua)?;
-        // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the `readOnly`
+        // the call holds the turn here (`Role::Vm`): the checks below, the transaction and the read-only
         // flag `database()` reads belong to it (a task started inside another `db:tx` waited for it)
         if s.tx.lock().is_some() {
             return Err(mlua::Error::runtime("db:tx cannot be nested"));
@@ -246,7 +246,7 @@ impl Kv {
         }
     }
 
-    /// Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a `readOnly` tool.
+    /// Store `value` (any JSON value) under `key`; `nil` deletes the key. Raises inside a read-only call.
     #[host("Vm")]
     pub async fn set(&self, lua: Lua, key: String, value: Json<Unknown<Stored>>) -> mlua::Result<()> {
         let s = shared(&lua)?;
@@ -263,7 +263,7 @@ impl Kv {
         Ok(())
     }
 
-    /// Delete `key`. Raises inside a `readOnly` tool.
+    /// Delete `key`. Raises inside a read-only call.
     #[host("Vm")]
     pub async fn delete(&self, lua: Lua, key: String) -> mlua::Result<()> {
         let s = shared(&lua)?;

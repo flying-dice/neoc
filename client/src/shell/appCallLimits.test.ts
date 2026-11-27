@@ -126,13 +126,21 @@ function frameOf(
   gate = sharedGate
 ) {
   const posted: ToFrame[] = []
-  const context = hostContextOf({ appearance: 'light', displayMode: 'inline', availableDisplayModes: ['inline'] })
+  const context = hostContextOf({
+    appearance: 'light',
+    displayMode: 'inline',
+    availableDisplayModes: ['inline']
+  })
   const bridge: HostBridge = createHostBridge({
     appId: app,
     frame: () => FRAME,
     post: (m) => posted.push(m),
     call: (method, params, options) => channel.call(method, params, options),
-    services: baseServices({ context: () => context, openLink: () => undefined, setDisplayMode: (m) => m }),
+    services: baseServices({
+      context: () => context,
+      openLink: () => undefined,
+      setDisplayMode: (m) => m
+    }),
     context: () => context,
     gate
   })
@@ -140,9 +148,13 @@ function frameOf(
   return {
     posted,
     bridge,
+    // a call of the frame's own app's method, the way a page makes it: on the bus (`vos/request`)
     rpc: (method: string): number => {
       const n = ++id
-      bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', id: n, method, params: {} } })
+      bridge.receive({
+        source: FRAME,
+        data: { jsonrpc: '2.0', id: n, method: 'vos/request', params: { app, method, params: {} } }
+      })
       return n
     },
     answered: (n: number): ToFrame | undefined => posted.find((m) => 'id' in m && m.id === n),
@@ -215,7 +227,10 @@ describe('an app whose handlers hang', () => {
     host.disconnect()
     await sleep(5)
     for (const n of ids)
-      expect(hung.answered(n)).toMatchObject({ jsonrpc: '2.0', error: { message: 'The connection to vos closed' } })
+      expect(hung.answered(n)).toMatchObject({
+        jsonrpc: '2.0',
+        error: { message: 'The connection to vos closed' }
+      })
     // a place is free again: the next call starts
     hung.rpc('list')
     await sleep(5)

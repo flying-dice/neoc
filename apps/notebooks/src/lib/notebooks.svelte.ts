@@ -1,16 +1,36 @@
-import type { Api, Backlink, Hit, Host, Library, Note, Notebook, Opened, Summary } from 'app:rpc'
+type Backlink = VosApp.Notebooks.Backlink
+type Hit = VosApp.Notebooks.Hit
+type Library = VosApp.Notebooks.Library
+type Note = VosApp.Notebooks.Note
+type Notebook = VosApp.Notebooks.Notebook
+type Opened = VosApp.Notebooks.Opened
+type Summary = VosApp.Notebooks.Summary
 import { dayOf } from './dates'
 import type { GraphLink, GraphNode } from './graph'
 import { listed, named, tagCounts, type TagCount } from './library'
 import { keyOf, titleProblem, toggleTask } from './wiki'
 
-/** What the window needs of the backend: the library, a note, and each way of changing them. */
-export type NotebooksRpc = Pick<
-  Api,
-  'library' | 'read' | 'create' | 'follow' | 'save' | 'rename' | 'pin' | 'remove' | 'search' | 'addNotebook' | 'removeNotebook'
->
-/** Where the backend's events are heard (`host.on`). */
-export type NotebooksEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the library, a note, and each way of changing them (the app's private methods
+ * on the bus, `_library` ...: `App.svelte` sends them).
+ */
+export interface NotebooksRpc {
+  library(): Promise<Library>
+  read(params: VosApp.Notebooks.ReadParams): Promise<Note>
+  create(params: VosApp.Notebooks.CreateParams): Promise<Opened>
+  follow(params: VosApp.Notebooks.FollowParams): Promise<Opened>
+  save(params: VosApp.Notebooks.SaveParams): Promise<Library>
+  rename(params: VosApp.Notebooks.RenameParams): Promise<Opened>
+  pin(params: VosApp.Notebooks.PinParams): Promise<Library>
+  remove(params: VosApp.Notebooks.RemoveParams): Promise<Library>
+  search(params: VosApp.Notebooks.SearchParams): Promise<VosApp.Notebooks.Found>
+  addNotebook(params: VosApp.Notebooks.AddNotebookParams): Promise<Library>
+  removeNotebook(params: VosApp.Notebooks.RemoveNotebookParams): Promise<Library>
+}
+/** Where the window hears that the notes changed: the backend's `notebooks_changed`, and the host's `host:reconnected`. */
+export interface NotebooksEvents {
+  on(name: 'notebooks_changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** How the open note is shown: its Markdown as it is written, or as it reads. */
 export type Mode = 'edit' | 'read'
@@ -233,7 +253,7 @@ export class Notebooks {
         if (refusalOf(e) === null) this.#failure = messageOf(e)
       }
     }
-    const stops = [this.#events.on('notebooks.changed', () => void again()), this.#events.on('host:reconnected', () => void again())]
+    const stops = [this.#events.on('notebooks_changed', () => void again()), this.#events.on('host:reconnected', () => void again())]
     return () => {
       stops.forEach((stop) => stop())
       clearTimeout(this.#timer)

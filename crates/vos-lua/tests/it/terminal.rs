@@ -1,15 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests
 #![allow(clippy::cast_possible_truncation)] // offsets and base64 digits: small numbers
 #![cfg(unix)] // the commands typed here are a Unix shell's
-//! The Terminal (`apps/terminal`, a Vite project) under the real runtime: its sessions through the generated router,
-//! each a real shell on a pseudo-terminal (`vnd:portable_pty`), and its output as the events the shell records.
+//! The Terminal (`apps/terminal`, a Vite project on the vos plugin) under the real runtime: its sessions on the bus
+//! (private to the page: `_open`, `_write`, ...), each a real shell on a pseudo-terminal (`vnd:portable_pty`), held to
+//! the app's contract (`openrpc.json`), and its output as the notifications the shell records.
 //!
 //! The shell is whatever the machine gives the user who runs the tests (`$SHELL`), so the tests type only what every
 //! Unix shell takes and look for marked text in the output, never for a prompt.
 
 use crate::common;
 
-use common::{built_project, db, id, user_ctx};
+use common::{db, id, Served};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,15 +37,15 @@ impl Notifier for Quiet {
 }
 
 struct Rig {
-    runtime: LuaRuntime,
+    served: Served,
     shell: Arc<RecordingShell>,
 }
 
+/// The Terminal, built by its own `vite build` and served as the bus serves it (its contract holds every call).
 async fn terminal() -> Rig {
     let shell = Arc::new(RecordingShell::default());
     let runtime = LuaRuntime::new(Arc::new(Quiet), shell.clone());
-    runtime.load(&id(APP), built_project("apps/terminal"), db()).await.unwrap();
-    Rig { runtime, shell }
+    Rig { served: Served::load(runtime, APP, "apps/terminal", db()).await.unwrap(), shell }
 }
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -78,8 +79,9 @@ fn decode(text: &str) -> Vec<u8> {
 }
 
 impl Rig {
+    /// The page's call of `_<method>` (all of the app's methods are private: only the page uses them).
     async fn call(&self, method: &str, args: Value) -> PortResult<Value> {
-        self.runtime.call_handler(&id(APP), method, args, user_ctx(0)).await
+        self.served.page(&format!("_{method}"), args).await
     }
 
     async fn open(&self) -> String {
@@ -92,7 +94,7 @@ impl Rig {
         self.call("write", json!({ "session": session, "data": data })).await.unwrap();
     }
 
-    /// The `output` events of `session` so far: `(offset, bytes)` in the order they were sent.
+    /// The `output` notifications of `session` so far: `(offset, bytes)` in the order they were sent.
     fn output(&self, session: &str) -> Vec<(usize, Vec<u8>)> {
         self.shell
             .events
@@ -181,6 +183,17 @@ fn refusal(result: PortResult<Value>) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_method_is_the_pages_and_no_tool_is_offered_to_agents() {
+    let rig = terminal().await;
+    let methods = rig.served.handlers();
+    assert_eq!(
+        methods,
+        ["_ack", "_close", "_open", "_replay", "_resize", "_write"],
+        "a `_name` is the page's"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_is_a_shell_whose_output_arrives_in_order_and_can_be_asked_for_again() {
     let rig = terminal().await;
     let session = rig.open().await;
@@ -190,7 +203,7 @@ async fn a_session_is_a_shell_whose_output_arrives_in_order_and_can_be_asked_for
     rig.type_line(&session, "cd; echo home:$([ \"$PWD\" = \"$HOME\" ] && echo yes):").await;
     assert_eq!(rig.printed(&session, "home").await, "yes", "the shell starts in the home folder");
 
-    // every event starts where the one before ended, and none is larger than an event may be
+    // every notification starts where the one before ended, and none is larger than one may be
     let events = rig.output(&session);
     let mut next = 0;
     for (offset, bytes) in &events {
@@ -259,10 +272,10 @@ async fn a_shell_that_exits_is_said_once_its_output_is_and_takes_no_more_input()
     let rig = terminal().await;
     let session = rig.open().await;
     rig.type_line(&session, "echo last:words:; exit 3").await;
-    let exit = rig.until("the exit event", |rig| rig.exit(&session)).await;
+    let exit = rig.until("the exit notification", |rig| rig.exit(&session)).await;
     assert_eq!(exit["code"], 3);
     assert!(exit.get("signal").is_none_or(Value::is_null));
-    // the event says where the output ended, and everything before it was sent first
+    // the notification says where the output ended, and everything before it was sent first
     assert_eq!(exit["offset"].as_u64().unwrap() as usize, rig.sent(&session));
     assert!(rig.text(&session).contains("last:words:"));
 
@@ -321,7 +334,7 @@ async fn sessions_are_limited_have_ids_of_their_own_and_end_with_the_app() {
     let last = rig.pid(&sessions[MAX_SESSIONS - 1]).await;
     assert!(alive(first) && alive(last));
     // the app is unloaded (removed, or the host stops): no shell outlives it
-    rig.runtime.unload(&id(APP)).await.unwrap();
+    rig.served.rt.unload(&id(APP)).await.unwrap();
     gone(first).await;
     gone(last).await;
 }

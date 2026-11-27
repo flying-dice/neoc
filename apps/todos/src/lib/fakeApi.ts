@@ -1,16 +1,19 @@
 /**
  * A stand-in for the Todos app's backend, for stories and unit tests: the lists and the todos kept in the page, with no
- * host. It follows the backend's rules (server/store.luau): a blank title or name and a day that is not a day are
+ * host. It follows the backend's rules (server/store.ts): a blank title or name and a day that is not a day are
  * refused with the same sentences, a new board starts with one list called Reminders, the last list cannot be deleted,
  * and a board lists the open todos in the order they were added, then the completed ones, the latest first.
  */
-import type { Board, List, Todo } from 'app:rpc'
 import type { TodosEvents, TodosRpc } from './todos.svelte'
+
+type Board = VosApp.Todos.Board
+type List = VosApp.Todos.List
+type Todo = VosApp.Todos.Todo
 
 export interface FakeBackend {
   readonly rpc: TodosRpc
   readonly events: TodosEvents
-  /** Send an event to the window, as the backend (`todos.changed`) or the host (`host:reconnected`) does. */
+  /** Send an event to the window, as the backend (`todos_changed`) or the host (`host:reconnected`) does. */
   emit(name: string, data?: unknown): void
 }
 

@@ -6,7 +6,7 @@
   import type { Notes } from '../lib/notes.svelte'
 
   interface Props {
-    /** This window's state; the composition root builds it with the real `api` and `host`, a story with a fake. */
+    /** This window's state; the composition root builds it with the real `rpc` and `events`, a story with a fake. */
     notes: Notes
     /** How long after the last key what is typed is saved, in milliseconds. */
     saveAfter?: number

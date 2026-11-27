@@ -14,12 +14,12 @@
 //!
 //! `chaos.rs` generates scripts that combine these ingredients and checks the same invariants over all of them.
 //!
-//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`app.emit`),
-//! which is a change to the world: a call that is read-only cannot assign it, and the error says `readOnly`.
+//! `state` in these apps is an in-memory value whose every assignment also sends an event to the app's pages (`RPC.send_notification`),
+//! which is a change to the world: a call that is read-only cannot assign it, and the error says `read-only`.
 
 use crate::common;
 
-use common::{load, timed_tool, try_load_with, Stalling};
+use common::{load, timed_tool, timed_tool_with, try_load_with, Stalling};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use vos_application::{data::Params, ports::AppData};
@@ -28,9 +28,20 @@ async fn call(vm: &Arc<vos_lua::AppVm>, tool: &str) -> Value {
     timed_tool(vm, tool, 10).await.unwrap_or_else(|why| panic!("{tool}: {why}"))
 }
 
+/// [`call`], read-only: every write the call tries is refused.
+async fn call_ro(vm: &Arc<vos_lua::AppVm>, tool: &str) -> Value {
+    timed_tool_with(vm, tool, 10, true).await.unwrap_or_else(|why| panic!("{tool}: {why}"))
+}
+
 fn spawn_call(vm: &Arc<vos_lua::AppVm>, tool: &'static str) -> tokio::task::JoinHandle<Value> {
     let vm = vm.clone();
     tokio::spawn(async move { call(&vm, tool).await })
+}
+
+/// [`spawn_call`], read-only.
+fn spawn_call_ro(vm: &Arc<vos_lua::AppVm>, tool: &'static str) -> tokio::task::JoinHandle<Value> {
+    let vm = vm.clone();
+    tokio::spawn(async move { call_ro(&vm, tool).await })
 }
 
 /// A database call that Lua cannot suspend at must not keep the database's write gate. The statement inside the
@@ -43,16 +54,16 @@ async fn a_database_call_lua_could_not_suspend_at_does_not_hold_the_write_gate()
         try_load_with(
             "gate",
             r#"
-            app.tool { name = "g", run = function()
+            RPC.on_request("g", function()
               local ok, e = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one -- stall").one) end)
               local two = app.db:one("select 2 as two").two
               return { ok = ok, e = tostring(e), two = two }
-            end }
-            app.tool { name = "g1", run = function()
+            end)
+            RPC.on_request("g1", function()
               local ok = pcall(string.gsub, "a", "a", function() return tostring(app.db:one("select 1 as one -- stall").one) end)
               return { ok = ok }
-            end }
-            app.tool { name = "plain", run = function() return app.db:one("select 3 as three").three end }
+            end)
+            RPC.on_request("plain", function() return app.db:one("select 3 as three").three end)
             "#,
             data.clone(),
         )
@@ -78,7 +89,7 @@ async fn a_transaction_that_reports_success_committed_what_the_body_started() {
         load(
             r#"
             app.db:migrate { [1] = "create table t(a)" }
-            app.tool { name = "txloss", run = function()
+            RPC.on_request("txloss", function()
               local ok, err = pcall(function()
                 return app.db:tx(function()
                   local co = coroutine.create(function() app.db:exec("insert into t values (1)") end)
@@ -87,8 +98,8 @@ async fn a_transaction_that_reports_success_committed_what_the_body_started() {
                 end)
               end)
               return { ok = ok, ret = tostring(err) }
-            end }
-            app.tool { name = "txloss2", run = function()
+            end)
+            RPC.on_request("txloss2", function()
               local ok, err = pcall(function()
                 return app.db:tx(function()
                   local c = coroutine.create(function() app.db:exec("insert into t values (2)") end)
@@ -98,18 +109,18 @@ async fn a_transaction_that_reports_success_committed_what_the_body_started() {
                 end)
               end)
               return { ok = ok, ret = tostring(err) }
-            end }
-            app.tool { name = "rows", readOnly = true, run = function() return app.db:all("select a from t order by a") end }
+            end)
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
     );
     let out = call(&vm, "txloss").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(rows, json!([{ "a": 1 }]), "success means the statement the body started committed");
     let out = call(&vm, "txloss2").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(rows, json!([{ "a": 1 }, { "a": 2 }, { "a": 3 }]));
 }
@@ -124,7 +135,7 @@ async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
             app.db:migrate { [1] = "create table t(a)" }
             local co
             local stage = 0
-            app.tool { name = "a", run = function()
+            RPC.on_request("a", function()
               co = coroutine.create(function()
                 return app.db:tx(function()
                   app.db:exec("insert into t values (1)")
@@ -141,19 +152,19 @@ async fn a_transaction_body_continued_by_another_call_is_all_or_nothing() {
                 if stage == 0 then app.db:one("select 1 as x") end
               until stage == 1 or tries > 50
               return { stage = stage, status = coroutine.status(co) }
-            end }
-            app.tool { name = "b", run = function()
+            end)
+            RPC.on_request("b", function()
               local r = { coroutine.resume(co) }
               return { ok = r[1], v = tostring(r[2]), status = coroutine.status(co) }
-            end }
-            app.tool { name = "rows", readOnly = true, run = function() return app.db:all("select a from t order by a") end }
+            end)
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
     );
     call(&vm, "a").await;
     let b = call(&vm, "b").await;
-    let rows = call(&vm, "rows").await;
+    let rows = call_ro(&vm, "rows").await;
     let all = rows == json!([{ "a": 1 }, { "a": 2 }]);
     assert!(rows == json!([]) || all, "a transaction is all or nothing, got {rows}");
     assert!(all || b["v"] != json!("tx body done"), "no success without the commit: {b} {rows}");
@@ -167,23 +178,23 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
         load(
             r#"
             local task = require("std:task")
-            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
             local counter = 0
-            app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
-            app.tool { name = "ro", readOnly = true, run = function()
+            RPC.on_request("bump", function() counter = counter + 1 return counter end)
+            RPC.on_request("ro", function()
               local failed = not pcall(table.sort, { 3, 2, 1 }, function(a, b) task.wait(0) return a < b end)
               local before = counter
               for _ = 1, 200 do coroutine.yield() end
               local ok, e = pcall(function() state.v = 42 end)
-              local nok = pcall(function() app.notify { title = "from readOnly" } end)
+              local nok = pcall(function() app.notify { title = "from read-only" } end)
               return { failed_wait = failed, state_write_ok = ok, e = tostring(e), notify_ok = nok, interleaved = counter ~= before }
-            end }
-            app.tool { name = "v", readOnly = true, run = function() return state.v end }
+            end)
+            RPC.on_request("v", function() return state.v end)
             "#,
         )
         .await,
     );
-    let ro = spawn_call(&vm, "ro");
+    let ro = spawn_call_ro(&vm, "ro");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let bump = spawn_call(&vm, "bump");
     let out = ro.await.unwrap();
@@ -192,8 +203,8 @@ async fn a_plain_yield_after_a_failed_wait_does_not_lend_a_read_only_call() {
     assert_eq!(out["state_write_ok"], false, "{out}");
     assert_eq!(out["notify_ok"], false, "{out}");
     assert_eq!(out["interleaved"], false, "{out}");
-    assert_eq!(call(&vm, "v").await, json!(0));
-    assert!(vm.take_effects().is_empty(), "nothing was queued");
+    assert_eq!(call_ro(&vm, "v").await, json!(0));
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued");
 }
 
 /// A wait started outside `db:tx` (Lua could not suspend at it) and resumed inside the body must not lend the VM with
@@ -205,7 +216,7 @@ async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
             r#"
             local task = require("std:task")
             app.db:migrate { [1] = "create table t(a)" }
-            app.tool { name = "txw", run = function()
+            RPC.on_request("txw", function()
               local co = coroutine.create(function() task.wait(0.3) end)
               pcall(string.gsub, "x", "x", function() coroutine.resume(co) end)
               local ok, e = pcall(function()
@@ -216,9 +227,9 @@ async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
                 end)
               end)
               return { ok = ok, e = tostring(e) }
-            end }
-            app.tool { name = "other", run = function() return app.db:exec("insert into t values (99)").changes end }
-            app.tool { name = "rows", readOnly = true, run = function() return app.db:all("select a from t order by a") end }
+            end)
+            RPC.on_request("other", function() return app.db:exec("insert into t values (99)").changes end)
+            RPC.on_request("rows", function() return app.db:all("select a from t order by a") end)
             "#,
         )
         .await,
@@ -230,7 +241,7 @@ async fn a_wait_resumed_inside_a_transaction_does_not_lend_it() {
     assert_eq!(txw["ok"], false, "{txw}");
     assert_eq!(other, 1, "the other call's write was acknowledged");
     assert_eq!(
-        call(&vm, "rows").await,
+        call_ro(&vm, "rows").await,
         json!([{ "a": 99 }]),
         "the acknowledged write is there and the aborted transaction's is not"
     );
@@ -246,7 +257,7 @@ async fn a_coroutine_whose_host_call_is_in_flight_cannot_be_resumed_from_elsewhe
             r#"
             local task = require("std:task")
             local co, wrapped
-            app.tool { name = "steal", run = function()
+            RPC.on_request("steal", function()
               task.spawn(function()
                 co = coroutine.create(function() app.db:one("select 1 as x") task.wait(0.05) return "finished" end)
                 coroutine.resume(co)
@@ -258,7 +269,7 @@ async fn a_coroutine_whose_host_call_is_in_flight_cannot_be_resumed_from_elsewhe
               local ok, e = coroutine.resume(co)
               local wok, we = pcall(wrapped)
               return { ok = ok, e = tostring(e), wok = wok, we = tostring(we) }
-            end }
+            end)
             "#,
         )
         .await,
@@ -281,63 +292,63 @@ async fn the_top_level_thread_of_a_parked_call_cannot_be_resumed_by_another_call
             r#"
             local task = require("std:task")
             local t
-            app.tool { name = "a", run = function() t = coroutine.running() task.wait(0.2) return "a done" end }
-            app.tool { name = "b", readOnly = true, run = function()
+            RPC.on_request("a", function() t = coroutine.running() task.wait(0.2) return "a done" end)
+            RPC.on_request("b", function()
               local ok, e = coroutine.resume(t)
               local ok2, e2 = coroutine.resume(t, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
-            end }
-            app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
+            end)
+            RPC.on_request("ping", function() return "pong" end)
             "#,
         )
         .await,
     );
     let a = spawn_call(&vm, "a");
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let b = call(&vm, "b").await;
+    let b = call_ro(&vm, "b").await;
     assert_eq!(b["ok"], false, "{b}");
     assert_eq!(b["ok2"], false, "{b}");
     for e in [&b["e"], &b["e2"]] {
         assert!(e.as_str().unwrap().contains("non-suspended"), "{b}");
     }
     assert_eq!(a.await.unwrap(), json!("a done"), "the parked call was not disturbed");
-    assert_eq!(call(&vm, "ping").await, json!("pong"));
+    assert_eq!(call_ro(&vm, "ping").await, json!("pong"));
 }
 
 /// A protected call's coroutine is a host thread like any other: another call that resumes the one a `pcall` runs its
 /// body in (stashed by `coroutine.running()`) is refused, the parked call finishes with its own result, and a
-/// `readOnly` call never writes or notifies.
+/// `read-only` call never writes or notifies.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
     let vm = Arc::new(
         load(
             r#"
             local task = require("std:task")
-            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
             local t
             local log = {}
-            app.tool { name = "a", readOnly = true, run = function()
+            RPC.on_request("a", function()
               local ok, e = pcall(function()
                 t = coroutine.running()
                 task.wait(0.3)
                 local w = pcall(function() state.v = 42 end)
-                local n = pcall(function() app.notify { title = "from readOnly" } end)
+                local n = pcall(function() app.notify { title = "from read-only" } end)
                 log[#log + 1] = { state = w, notify = n }
               end)
               return { "a done", ok, tostring(e) }
-            end }
-            app.tool { name = "b", run = function()
+            end)
+            RPC.on_request("b", function()
               local ok, e = coroutine.resume(t)
               local ok2, e2 = coroutine.resume(t, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
-            end }
-            app.tool { name = "report", readOnly = true, run = function() return { v = state.v, log = log } end }
-            app.tool { name = "ping", readOnly = true, run = function() return "pong" end }
+            end)
+            RPC.on_request("report", function() return { v = state.v, log = log } end)
+            RPC.on_request("ping", function() return "pong" end)
             "#,
         )
         .await,
     );
-    let a = spawn_call(&vm, "a");
+    let a = spawn_call_ro(&vm, "a");
     tokio::time::sleep(Duration::from_millis(50)).await;
     let b = call(&vm, "b").await;
     for ok in ["ok", "ok2"] {
@@ -347,11 +358,11 @@ async fn the_thread_of_a_pcall_cannot_be_resumed_by_another_call() {
         assert_eq!(e, "cannot resume non-suspended coroutine", "{b}");
     }
     assert_eq!(a.await.unwrap(), json!(["a done", true, "nil"]), "the parked call finished its own way");
-    let report = call(&vm, "report").await;
+    let report = call_ro(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
-    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly call");
-    assert_eq!(call(&vm, "ping").await, json!("pong"));
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
+    assert_eq!(call_ro(&vm, "ping").await, json!("pong"));
 }
 
 /// The same for the protected coroutine of an `xpcall` inside a task: a task handle never fails to complete because
@@ -364,7 +375,7 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
             local task = require("std:task")
             local T, h
             local steps = {}
-            app.tool { name = "s", readOnly = true, run = function()
+            RPC.on_request("s", function()
               h = task.spawn(function()
                 local ok, e = xpcall(function()
                   T = coroutine.running()
@@ -375,19 +386,19 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
                 return { ok, tostring(e) }
               end)
               return "spawned"
-            end }
-            app.tool { name = "r", run = function()
+            end)
+            RPC.on_request("r", function()
               local ok, e = coroutine.resume(T)
               local ok2, e2 = coroutine.resume(T, "with an argument")
               return { ok = ok, e = tostring(e), ok2 = ok2, e2 = tostring(e2) }
-            end }
-            app.tool { name = "aw", run = function() return { h:await() } end }
-            app.tool { name = "report", readOnly = true, run = function() return steps end }
+            end)
+            RPC.on_request("aw", function() return { h:await() } end)
+            RPC.on_request("report", function() return steps end)
             "#,
         )
         .await,
     );
-    assert_eq!(call(&vm, "s").await, json!("spawned"));
+    assert_eq!(call_ro(&vm, "s").await, json!("spawned"));
     tokio::time::sleep(Duration::from_millis(30)).await;
     let r = call(&vm, "r").await;
     assert_eq!(
@@ -395,8 +406,8 @@ async fn the_thread_of_an_xpcall_in_a_task_cannot_be_resumed_and_the_task_comple
         json!({ "ok": false, "e": "cannot resume non-suspended coroutine", "ok2": false, "e2": "cannot resume non-suspended coroutine" })
     );
     assert_eq!(call(&vm, "aw").await, json!([[true, "nil"]]), "the task completed with its own result");
-    assert_eq!(call(&vm, "report").await, json!(["after wait", "false"]), "readOnly came with the task");
-    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly task");
+    assert_eq!(call_ro(&vm, "report").await, json!(["after wait", "false"]), "read-only came with the task");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only task");
 }
 
 /// Any thread a script can reach with `coroutine.running()` that it did not make is refused, wherever the call was:
@@ -410,7 +421,7 @@ async fn only_coroutines_the_script_made_can_be_resumed() {
             local task = require("std:task")
             local seen = {}
             local function stash(name) seen[name] = coroutine.running() task.wait(0.2) return name end
-            app.tool { name = "park", run = function()
+            RPC.on_request("park", function()
               local out = {}
               out.top = stash("top")
               out.p = { pcall(function() return stash("pcall") end) }
@@ -421,8 +432,8 @@ async fn only_coroutines_the_script_made_can_be_resumed() {
               local co = coroutine.create(function() return stash("mine") end)
               out.mine = { coroutine.resume(co) }
               return out
-            end }
-            app.tool { name = "meddle", run = function()
+            end)
+            RPC.on_request("meddle", function()
               local out = {}
               for _, name in ipairs { "top", "pcall", "xpcall", "nested", "task", "mine" } do
                 local t = seen[name]
@@ -435,7 +446,7 @@ async fn only_coroutines_the_script_made_can_be_resumed() {
                 end
               end
               return out
-            end }
+            end)
             "#,
         )
         .await,
@@ -478,7 +489,7 @@ async fn a_coroutine_the_script_made_still_resumes_yields_and_waits_through_prot
             r#"
             local task = require("std:task")
             local wrapped_self
-            app.tool { name = "mine", run = function()
+            RPC.on_request("mine", function()
               local out = {}
               -- yield across pcall and xpcall inside a coroutine of the script's own
               local co = coroutine.create(function(a)
@@ -507,8 +518,8 @@ async fn a_coroutine_the_script_made_still_resumes_yields_and_waits_through_prot
               -- an error inside is the resumer's to see
               out.err = { coroutine.resume(coroutine.create(function() error("boom", 0) end)) }
               return out
-            end }
-            app.tool { name = "again", run = function() return { coroutine.resume(wrapped_self) } end }
+            end)
+            RPC.on_request("again", function() return { coroutine.resume(wrapped_self) } end)
             "#,
         )
         .await,
@@ -537,13 +548,13 @@ async fn the_scheduler_takes_no_coroutine() {
             r#"
             local task = require("std:task")
             local T, waiting
-            app.tool { name = "park", run = function()
+            RPC.on_request("park", function()
               T = coroutine.running()
               waiting = coroutine.create(function() task.wait(0.1) return "finished" end)
               coroutine.resume(waiting)
               task.wait(0.3)
               return "parked"
-            end }
+            end)
             local function offer(co)
               local out = {}
               for _, kind in ipairs { "spawn", "defer", "delay" } do
@@ -552,14 +563,14 @@ async fn the_scheduler_takes_no_coroutine() {
               end
               return out
             end
-            app.tool { name = "steal", run = function() return { host = offer(T), waiting = offer(waiting) } end }
-            app.tool { name = "own", run = function()
+            RPC.on_request("steal", function() return { host = offer(T), waiting = offer(waiting) } end)
+            RPC.on_request("own", function()
               local mine = coroutine.create(function() coroutine.yield("first") return "mine done" end)
               local refused = offer(mine)
               local _, first = coroutine.resume(mine)
               local _, last = coroutine.resume(mine)
               return { refused = refused, first = first, last = last }
-            end }
+            end)
             "#,
         )
         .await,
@@ -581,7 +592,7 @@ async fn the_scheduler_takes_no_coroutine() {
     assert_eq!((&own["first"], &own["last"]), (&json!("first"), &json!("mine done")), "{own}");
 }
 
-/// A `readOnly` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
+/// A `read-only` call whose thread another call tried to resume stays read-only: it never runs without the turn, and
 /// the restriction goes with the turn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_it() {
@@ -589,39 +600,39 @@ async fn a_read_only_call_is_still_read_only_after_another_call_tried_to_resume_
         load(
             r#"
             local task = require("std:task")
-            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) app.emit("state") getmetatable(t).__index[k] = x end })
+            local state = setmetatable({}, { __index = { v = 0 }, __newindex = function(t, k, x) RPC.send_notification("state") getmetatable(t).__index[k] = x end })
             local t
             local log = {}
-            app.tool { name = "a", readOnly = true, run = function()
+            RPC.on_request("a", function()
               t = coroutine.running()
               task.wait(0.02)
               coroutine.yield()
               local ok = pcall(function() state.v = 42 end)
-              local notified = pcall(function() app.notify { title = "from readOnly" } end)
+              local notified = pcall(function() app.notify { title = "from read-only" } end)
               log[#log + 1] = { state = ok, notify = notified }
               return "a done"
-            end }
-            app.tool { name = "b", run = function()
+            end)
+            RPC.on_request("b", function()
               local x = 0
               for i = 1, 5000000 do x = x + i end
               local ok, e = coroutine.resume(t)
               task.wait(0.2)
               return { ok = ok, e = tostring(e) }
-            end }
-            app.tool { name = "report", readOnly = true, run = function() return { v = state.v, log = log } end }
+            end)
+            RPC.on_request("report", function() return { v = state.v, log = log } end)
             "#,
         )
         .await,
     );
-    let a = spawn_call(&vm, "a");
+    let a = spawn_call_ro(&vm, "a");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let b = call(&vm, "b").await;
     assert_eq!(b["ok"], false, "{b}");
     assert_eq!(a.await.unwrap(), json!("a done"));
-    let report = call(&vm, "report").await;
+    let report = call_ro(&vm, "report").await;
     assert_eq!(report["v"], 0, "{report}");
     assert_eq!(report["log"], json!([{ "state": false, "notify": false }]), "{report}");
-    assert!(vm.take_effects().is_empty(), "nothing was queued from a readOnly call");
+    assert!(common::take_effects(&vm).is_empty(), "nothing was queued from a read-only call");
 }
 
 /// A thread `task.spawn(fn)` makes is the scheduler's from its first instruction: another call resuming it is
@@ -634,16 +645,16 @@ async fn a_task_thread_made_from_a_function_cannot_be_resumed_by_a_script() {
             local task = require("std:task")
             local T, h
             local steps = {}
-            app.tool { name = "s", run = function()
+            RPC.on_request("s", function()
               h = task.spawn(function() T = coroutine.running() task.wait(0.1) steps[#steps + 1] = "after wait" return "task done" end)
               return "spawned"
-            end }
-            app.tool { name = "r", run = function()
+            end)
+            RPC.on_request("r", function()
               local ok, e = coroutine.resume(T)
               return { ok = ok, e = tostring(e) }
-            end }
-            app.tool { name = "aw", run = function() return { h:await() } end }
-            app.tool { name = "report", readOnly = true, run = function() return steps end }
+            end)
+            RPC.on_request("aw", function() return { h:await() } end)
+            RPC.on_request("report", function() return steps end)
             "#,
         )
         .await,
@@ -654,7 +665,7 @@ async fn a_task_thread_made_from_a_function_cannot_be_resumed_by_a_script() {
     assert_eq!(r["ok"], false, "{r}");
     assert!(r["e"].as_str().unwrap().contains("non-suspended"), "{r}");
     assert_eq!(call(&vm, "aw").await, json!(["task done"]), "the task was not wedged");
-    assert_eq!(call(&vm, "report").await, json!(["after wait"]));
+    assert_eq!(call_ro(&vm, "report").await, json!(["after wait"]));
 }
 
 /// A resume value that is not the executor's "terminate" signal changes nothing: `coroutine.resume(t, "x")` of a
@@ -666,7 +677,7 @@ async fn resuming_a_waiting_thread_with_a_value_is_refused_and_does_not_wedge_it
             r#"
             local task = require("std:task")
             local S, co, h
-            app.tool { name = "start", run = function()
+            RPC.on_request("start", function()
               co = coroutine.create(function() task.wait(0.15) return "finished" end)
               h = task.spawn(function()
                 S = coroutine.running()
@@ -674,14 +685,14 @@ async fn resuming_a_waiting_thread_with_a_value_is_refused_and_does_not_wedge_it
                 return v
               end)
               return "started"
-            end }
-            app.tool { name = "poke", run = function()
+            end)
+            RPC.on_request("poke", function()
               local a, ae = coroutine.resume(S, "x")
               local b, be = coroutine.resume(co, "y")
               local c, ce = coroutine.resume(S, 1)
               return { a = a, ae = tostring(ae), b = b, be = tostring(be), c = c, ce = tostring(ce) }
-            end }
-            app.tool { name = "finish", run = function() return { h:await() } end }
+            end)
+            RPC.on_request("finish", function() return { h:await() } end)
             "#,
         )
         .await,
@@ -715,14 +726,14 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
             end))
             local url = "http://" .. assert(server:addr()) .. "/"
             hook("event", function() stash("event") return "event done" end)
-            app.tool { name = "tool", run = function() stash("tool") return "tool done" end }
-            app.tool { name = "later", run = function()
+            RPC.on_request("tool", function() stash("tool") return "tool done" end)
+            RPC.on_request("later", function()
               task.defer(function() stash("defer") end)
               task.delay(0.01, function() stash("delay") end)
               task.spawn(function() hyper.get(url) end)
               return "scheduled"
-            end }
-            app.tool { name = "probe", run = function()
+            end)
+            RPC.on_request("probe", function()
               local out = {}
               for _, name in ipairs { "tool", "event", "defer", "delay", "handler" } do
                 local t = threads[name]
@@ -734,7 +745,7 @@ async fn every_entry_point_starts_a_thread_the_script_cannot_resume() {
                 end
               end
               return out
-            end }
+            end)
             "#,
         )
         .await,
@@ -769,14 +780,14 @@ async fn a_plain_yield_at_the_top_of_a_call_does_not_lend_the_vm() {
             r#"
             local task = require("std:task")
             local counter = 0
-            app.tool { name = "bump", run = function() counter = counter + 1 return counter end }
-            app.tool { name = "yielder", run = function()
+            RPC.on_request("bump", function() counter = counter + 1 return counter end)
+            RPC.on_request("yielder", function()
               local before = counter
               -- a wait Lua cannot suspend at: it is left pending, and the plain yields below are not waits
               pcall(table.sort, { 3, 2, 1 }, function(a, b) task.wait(0) return a < b end)
               for _ = 1, 20000 do coroutine.yield() end
               return { interleaved = counter ~= before }
-            end }
+            end)
             "#,
         )
         .await,
@@ -806,29 +817,29 @@ async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_it
             r#"
             local task = require("std:task")
             local kept, ran = {}, {}
-            app.tool { name = "park", run = function()
+            RPC.on_request("park", function()
               kept.co = coroutine.create(function() task.wait(30) ran.after_wait = true return "woke" end)
               kept.wrapped = coroutine.wrap(function() task.wait(30) ran.after_wrapped_wait = true return "woke" end)
               kept.thread = coroutine.create(function() return kept.wrapped() end)
               coroutine.resume(kept.thread) -- waits at the host call inside two coroutines; the call is dropped here
               ran.after_resume = true
               return "never"
-            end }
+            end)
             -- what another call finds: the answer of `resume`, and of the `wrap` function
-            app.tool { name = "probe", run = function()
+            RPC.on_request("probe", function()
               local ok, why = coroutine.resume(kept.thread)
               return { ok = ok, why = tostring(why) }
-            end }
-            app.tool { name = "probe_direct", run = function()
+            end)
+            RPC.on_request("probe_direct", function()
               local ok, why = pcall(kept.wrapped)
               return { ok = ok, why = tostring(why) }
-            end }
-            app.tool { name = "churn", run = function()
+            end)
+            RPC.on_request("churn", function()
               local keep = {}
               for i = 1, 400 do keep[i % 8] = { string.rep("x", 2048), i } end
               return #keep
-            end }
-            app.tool { name = "ran", readOnly = true, run = function() return ran end }
+            end)
+            RPC.on_request("ran", function() return ran end)
             "#,
         )
         .await,
@@ -836,7 +847,7 @@ async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_it
     let dropped = {
         let vm = vm.clone();
         tokio::time::timeout(Duration::from_millis(300), async move {
-            vm.call_tool("park", json!({}), &common::agent_ctx(0), false).await
+            common::serve(&vm, "park", json!({}), &common::agent_ctx(0)).await
         })
         .await
     };
@@ -857,5 +868,5 @@ async fn a_coroutine_whose_resumer_was_dropped_is_the_scripts_again_and_finds_it
     let direct = call(&vm, "probe_direct").await;
     assert_eq!(direct["ok"], false, "{direct}");
     // nothing of the dropped call's script ran, and nothing woke from the dropped wait
-    assert_eq!(call(&vm, "ran").await, json!([]), "the dropped call ran script code after the drop");
+    assert_eq!(call_ro(&vm, "ran").await, json!([]), "the dropped call ran script code after the drop");
 }

@@ -7,8 +7,8 @@
 use crate::{
     files::FileStore,
     ports::{
-        AppData, AppPackage, AppRuntime, AppTools, CallContext, Clock, DataStore, EventSink, Fetcher,
-        InstalledApp, InstalledAppStore, ServerEvent, SqlMigration, ToolRegistry,
+        AppBus, AppData, AppPackage, AppRuntime, AppTools, CallContext, Clock, DataStore, EventSink, Fetcher,
+        InstalledApp, InstalledAppStore, PageHandlers, ServerEvent, SqlMigration, ToolRegistry,
     },
     AppError, PortError,
 };
@@ -175,8 +175,38 @@ struct Active {
     data: Arc<dyn AppData>,
     name: String,
     display: Display,
+    /// The app's agent tools: every public method it serves on the bus, described by its contract.
     tools: Vec<ToolSpec>,
+    /// The method each tool is: tool name to method. An agent's call is a request on the bus.
+    methods: HashMap<String, String>,
+    /// The app's contract (`openrpc.json`): every request, answer and notification of the app on the bus is held to it.
+    contract: Option<Arc<crate::contract::AppContract>>,
     site: Arc<StaticSite>,
+}
+
+/// `addSite` is the agent tool `add_site` (a tool name is `[a-z][a-z0-9_]*`).
+fn tool_name(method: &str) -> String {
+    let mut name = String::with_capacity(method.len() + 4);
+    for c in method.chars() {
+        if c.is_ascii_uppercase() {
+            name.push('_');
+            name.push(c.to_ascii_lowercase());
+        } else {
+            name.push(c);
+        }
+    }
+    name
+}
+
+/// The tools (and the method each is) of the public handlers on the bus.
+fn tools_of(bus: Vec<(ToolSpec, String)>) -> (Vec<ToolSpec>, HashMap<String, String>) {
+    let mut tools = Vec::new();
+    let mut methods = HashMap::new();
+    for (spec, method) in bus {
+        methods.insert(spec.name.clone(), method);
+        tools.push(spec);
+    }
+    (tools, methods)
 }
 
 struct AppEntry {
@@ -190,6 +220,8 @@ struct AppEntry {
 pub struct AppService {
     p: Ports,
     apps: Mutex<HashMap<AppId, AppEntry>>,
+    /// The handlers the open pages registered on the bus: bound after the `/rpc` adapter is built (it is built on this).
+    pages: std::sync::OnceLock<std::sync::Weak<dyn PageHandlers>>,
 }
 
 /// An app ref as fetched: the parsed document and the SHA-256 (hex) of the bytes it came from, which is what
@@ -235,7 +267,63 @@ fn check_against_record(record: &InstalledApp, manifest: &Manifest) -> Result<()
 impl AppService {
     #[must_use]
     pub fn new(ports: Ports) -> Self {
-        Self { p: ports, apps: Mutex::default() }
+        Self { p: ports, apps: Mutex::default(), pages: std::sync::OnceLock::new() }
+    }
+
+    /// The public methods `app` serves on the bus, the backend's then the open pages', as agent tools: one per method,
+    /// named for it in snake case and described by the app's contract (a method it does not declare is a tool with
+    /// no description, any object for params, and not read-only).
+    fn bus_tools(
+        &self,
+        app: &AppId,
+        contract: Option<&crate::contract::AppContract>,
+    ) -> Vec<(ToolSpec, String)> {
+        let pages = self.pages.get().and_then(std::sync::Weak::upgrade);
+        let page_methods = pages.map_or_else(Vec::new, |p| p.handlers(app));
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for method in self.p.runtime.handlers(app).into_iter().chain(page_methods) {
+            if method.starts_with('_') || !seen.insert(method.clone()) {
+                continue;
+            }
+            let name = tool_name(&method);
+            if QualifiedToolName::new(app.clone(), &name).is_err() {
+                continue;
+            }
+            let declared = contract.and_then(|c| c.request(&method));
+            let spec = ToolSpec {
+                name,
+                title: declared.and_then(|d| d.summary.clone()),
+                description: declared
+                    .and_then(|d| d.description.clone().or_else(|| d.summary.clone()))
+                    .unwrap_or_default(),
+                input_schema: declared
+                    .map_or_else(|| serde_json::json!({ "type": "object" }), |d| d.input_schema.clone()),
+                read_only: declared.is_some_and(|d| d.read_only),
+            };
+            out.push((spec, method));
+        }
+        out
+    }
+
+    /// The handlers of `app` on the bus changed: its agent tools follow, and the agents are told when they did.
+    pub async fn handlers_changed(&self, app: &AppId) {
+        let contract = self.with_active(app, |a| a.contract.clone()).ok().flatten();
+        let bus = self.bus_tools(app, contract.as_deref());
+        let tools = {
+            let mut apps = self.apps.lock();
+            let Some(active) = apps.get_mut(app).and_then(|entry| entry.active.as_mut()) else { return };
+            let (tools, methods) = tools_of(bus);
+            if tools == active.tools {
+                return;
+            }
+            active.tools.clone_from(&tools);
+            active.methods = methods;
+            tools
+        };
+        if let Err(e) = self.p.tools.publish(app, tools).await {
+            tracing::warn!(%app, error = %e, "publishing the app's tools failed");
+        }
     }
 
     /// The app's database handle.
@@ -507,7 +595,7 @@ impl AppService {
 
     // ---- running apps -------------------------------------------------------------------------------
 
-    /// MCP `tools/call`: authorize the calling agent, then run the tool in the app's VM as that agent.
+    /// MCP `tools/call`: authorize the calling agent, then ask the app's handler of that tool on the bus as that agent.
     pub async fn call_tool(
         &self,
         caller: &AgentIdentity,
@@ -516,18 +604,64 @@ impl AppService {
     ) -> Result<Value, AppError> {
         caller.authorize_tool_call(name)?;
         self.require_running(name.app())?;
-        let ctx = CallContext { actor: Actor::from(caller), now_ms: self.p.clock.now_unix_ms() };
-        // the runtime enforces `readOnly` too, but the guarantee must not rest on the adapter alone: it is
-        // handed the requirement for every tool the app declared `readOnly`
+        self.call_bus_tool(Actor::from(caller), name, args).await
+    }
+
+    /// An agent's call of a tool is a request on the bus, as a page's or an app's is; read-only when the contract says
+    /// the method changes nothing (`x-readOnly`).
+    async fn call_bus_tool(
+        &self,
+        caller: Actor,
+        name: &QualifiedToolName,
+        args: Value,
+    ) -> Result<Value, AppError> {
         let read_only = self.tool_is_read_only(name).unwrap_or(false);
-        Ok(self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?)
+        let Some(method) = self.with_active(name.app(), |a| a.methods.get(name.tool()).cloned())? else {
+            return Err(PortError::NotFound(format!("tool `{name}`")).into());
+        };
+        self.request_with(caller, name.app(), &method, args, read_only).await
     }
 
     /// An app page's `rpc(method, args)`: run the app's handler of that name in the app's VM. The call is the
     /// person's own (the shell sends it from the app's frame, naming the app that frame belongs to), so it may
     /// write; an app that is not running answers with an error.
     pub async fn call_handler(&self, app: &AppId, method: &str, args: Value) -> Result<Value, AppError> {
+        self.request(Actor::user("You"), app, method, args).await
+    }
+
+    /// Give the bus the handlers the open pages register. Once: a second call is ignored.
+    pub fn bind_pages(&self, pages: std::sync::Weak<dyn PageHandlers>) {
+        let _ = self.pages.set(pages);
+    }
+
+    /// The bus's request: `caller` asks `app` for `method`. It reaches every handler registered for it, the app's
+    /// backend's and its open pages', and the first answer wins: the others are dropped, which cancels them. With
+    /// none registered anywhere it is JSON-RPC's method not found.
+    pub async fn request(
+        &self,
+        caller: Actor,
+        app: &AppId,
+        method: &str,
+        args: Value,
+    ) -> Result<Value, AppError> {
+        self.request_with(caller, app, method, args, false).await
+    }
+
+    /// The bus's request, read-only when `read_only` (an agent's call of a handler that described itself so): the
+    /// backend's handler then runs with every write refused. A page's handler is the page's own code.
+    async fn request_with(
+        &self,
+        caller: Actor,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        read_only: bool,
+    ) -> Result<Value, AppError> {
         self.require_running(app)?;
+        if method.starts_with('_') && caller.kind == vos_domain::ActorKind::App && caller.id != app.as_str() {
+            // the Python model: another app's private method is reachable, and discouraged; the log says who did it
+            tracing::warn!(from = %caller.id, to = %app, %method, "an app called another app's private method");
+        }
         let _slot = self.with_active(app, |a| a.calls.take())?.ok_or_else(|| {
             PortError::Rpc {
                 code: codes::BUSY,
@@ -537,8 +671,90 @@ impl AppService {
                 data: None,
             }
         })?;
-        let ctx = CallContext { actor: Actor::user("You"), now_ms: self.p.clock.now_unix_ms() };
-        Ok(self.p.runtime.call_handler(app, method, args, ctx).await?)
+        // the contract: a request it does not declare reaches no handler, and params it refuses reach none either
+        let contract = self.with_active(app, |a| a.contract.clone())?;
+        if let Some(contract) = &contract {
+            if contract.request(method).is_none() {
+                return Err(PortError::Rpc {
+                    code: -32601,
+                    message: format!("Method not found: {method}"),
+                    data: None,
+                }
+                .into());
+            }
+            if let Err(problem) = contract.check_params(method, &args) {
+                return Err(PortError::Rpc {
+                    code: -32602,
+                    message: format!("Invalid params: {problem}"),
+                    data: None,
+                }
+                .into());
+            }
+        }
+        let ctx = CallContext { actor: caller, now_ms: self.p.clock.now_unix_ms() };
+        let backend = self.p.runtime.has_handler(app, method);
+        let pages = self.pages.get().and_then(std::sync::Weak::upgrade).filter(|p| p.handles(app, method));
+        let answer = match (backend, pages) {
+            (false, None) => Err(PortError::Rpc {
+                code: -32601,
+                message: format!("Method not found: {}", method.chars().take(128).collect::<String>()),
+                data: None,
+            }),
+            (true, None) => self.backend_call(app, method, args, ctx, read_only).await,
+            (false, Some(pages)) => pages.request(app, method, args).await,
+            // both serve it: the first answer wins, and dropping the other cancels it
+            (true, Some(pages)) => {
+                let backend = Box::pin(self.backend_call(app, method, args.clone(), ctx, read_only));
+                let page = Box::pin(pages.request(app, method, args));
+                match futures_util::future::select(backend, page).await {
+                    futures_util::future::Either::Left((out, _))
+                    | futures_util::future::Either::Right((out, _)) => out,
+                }
+            }
+        };
+        let answer = answer?;
+        if let Some(contract) = &contract {
+            if let Err(problem) = contract.check_result(method, &answer) {
+                return Err(PortError::Rpc {
+                    code: -32603,
+                    message: format!(
+                        "Internal error: the answer to {method} does not match the contract ({problem})"
+                    ),
+                    data: None,
+                }
+                .into());
+            }
+        }
+        Ok(answer)
+    }
+
+    async fn backend_call(
+        &self,
+        app: &AppId,
+        method: &str,
+        args: Value,
+        ctx: CallContext,
+        read_only: bool,
+    ) -> Result<Value, PortError> {
+        if read_only {
+            self.p.runtime.call_handler_read_only(app, method, args, ctx).await
+        } else {
+            self.p.runtime.call_handler(app, method, args, ctx).await
+        }
+    }
+
+    /// The bus's notification: `from`'s, from its page or its backend, to whoever listens (its pages and other apps'
+    /// subscribed pages, and every listening backend). Nothing waits for a listener's answer: there is none.
+    pub async fn publish(&self, from: &AppId, name: &str, params: Value) -> Result<(), AppError> {
+        self.require_running(from)?;
+        if let Some(contract) = self.with_active(from, |a| a.contract.clone())? {
+            contract.check_notification(name, &params).map_err(|problem| PortError::Rpc {
+                code: -32602,
+                message: format!("Invalid notification: {problem}"),
+                data: None,
+            })?;
+        }
+        Ok(self.p.runtime.deliver_notification(from, name, params).await?)
     }
 
     /// The static files of a running app's page, for its frame.
@@ -552,7 +768,8 @@ impl AppService {
         self.apps.lock().contains_key(app)
     }
 
-    /// Whether the app's tool is declared `readOnly`; `None` when the app is not running or has no such tool.
+    /// Whether the app's tool is read-only (its contract's `x-readOnly`); `None` when the app
+    /// is not running or has no such tool.
     #[must_use]
     pub fn tool_is_read_only(&self, tool: &QualifiedToolName) -> Option<bool> {
         self.with_active(tool.app(), |a| a.tools.iter().find(|t| t.name == tool.tool()).map(|t| t.read_only))
@@ -789,6 +1006,16 @@ impl AppService {
             csp: ui.csp.clone(),
             permissions: ui.permissions.clone(),
         });
+        // the contract the bus holds the app to
+        let contract = match &m.contract {
+            Some(path) => {
+                let source = self.fetch_verified(app_ref, path, &mut budget).await?;
+                let parsed = crate::contract::AppContract::parse(&source)
+                    .map_err(|e| DomainError::InvalidManifest(format!("{path}: {e}")))?;
+                Some(Arc::new(parsed))
+            }
+            None => None,
+        };
         let mut migrations = Vec::new();
         for spec in &m.migrations {
             let sql = String::from_utf8(self.fetch_verified(app_ref, &spec.file, &mut budget).await?)
@@ -801,8 +1028,10 @@ impl AppService {
             None => self.p.data.open(&m.id, migrations).await?,
         };
         // a failed load leaves the data in place (it is the user's) and the previous VM, if any, untouched
-        let loaded = self.p.runtime.load(&m.id, package, data.clone()).await?;
-        if let Err(e) = self.p.tools.publish(&m.id, loaded.tools.clone()).await {
+        self.p.runtime.load(&m.id, package, data.clone()).await?;
+        // its tools: the public handlers on the bus (its backend's, and any open page's)
+        let (tools, methods) = tools_of(self.bus_tools(&m.id, contract.as_deref()));
+        if let Err(e) = self.p.tools.publish(&m.id, tools.clone()).await {
             self.p.runtime.unload(&m.id).await.ok();
             return Err(e.into());
         }
@@ -811,7 +1040,9 @@ impl AppService {
             data,
             name: m.name.clone(),
             display: Display::of(m),
-            tools: loaded.tools,
+            tools,
+            methods,
+            contract,
             site,
         })
     }
@@ -842,6 +1073,36 @@ impl AppService {
 }
 
 #[async_trait::async_trait]
+impl AppBus for AppService {
+    async fn request(
+        &self,
+        caller: Actor,
+        app: &AppId,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, PortError> {
+        AppService::request(self, caller, app, method, params).await.map_err(port_error)
+    }
+
+    async fn publish(&self, from: &AppId, name: &str, params: Value) -> Result<(), PortError> {
+        AppService::publish(self, from, name, params).await.map_err(port_error)
+    }
+
+    async fn handlers_changed(&self, app: &AppId) {
+        AppService::handlers_changed(self, app).await;
+    }
+}
+
+/// An application error as a port's: a port error stays itself, anything else is a refusal with its message.
+fn port_error(e: AppError) -> PortError {
+    match e {
+        AppError::Port(e) => e,
+        AppError::NotInstalled(_) => PortError::NotFound(e.to_string()),
+        other => PortError::Rejected(other.to_string()),
+    }
+}
+
+#[async_trait::async_trait]
 impl AppTools for AppService {
     fn all(&self) -> Vec<(QualifiedToolName, ToolSpec)> {
         let apps = self.apps.lock();
@@ -862,12 +1123,7 @@ impl AppTools for AppService {
     async fn call(&self, caller: Actor, name: &QualifiedToolName, args: Value) -> Result<Value, PortError> {
         let run = async {
             self.require_running(name.app())?;
-            let ctx = CallContext { actor: caller, now_ms: self.p.clock.now_unix_ms() };
-            // as in `call_tool`: the requirement is handed to the runtime, not left to it
-            let read_only = self.tool_is_read_only(name).unwrap_or(false);
-            Ok::<Value, AppError>(
-                self.p.runtime.call_tool(name.app(), name.tool(), args, ctx, read_only).await?,
-            )
+            self.call_bus_tool(caller, name, args).await
         };
         run.await.map_err(|e| match e {
             AppError::Port(e) => e,

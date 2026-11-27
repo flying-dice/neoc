@@ -7,7 +7,6 @@ local base64 = require("lib:base64")
 local env = require("std:env")
 local portable_pty = require("vnd:portable_pty")
 local random = require("lib:random")
-local rpc = require("../.app/rpc")
 local task = require("std:task")
 local time = require("std:time")
 
@@ -39,7 +38,7 @@ local DRAIN = 0.5
 type Session = {
   id: string,
   pty: vnd_portable_pty_Pty,
-  -- the count of bytes sent as `output` events, and of those the page says it has drawn
+  -- the count of bytes sent as `output` notifications, and of those the page says it has drawn
   sent: number,
   acked: number,
   -- the output kept for `replay`: pieces in order, the offset of the first, and their total length
@@ -49,7 +48,7 @@ type Session = {
   -- when the page was last heard
   heard: std_time_Instant,
   -- how the shell ended, once it has
-  exit: rpc.Exit?,
+  exit: terminal_Exit?,
   -- every byte of output was read (the terminal's other end is closed)
   drained: boolean,
   -- the session was ended here: its tasks stop
@@ -101,9 +100,9 @@ local function pump(session: Session)
       end
       break
     end
-    -- from the read to the emit nothing waits: the events leave in the order of the output
+    -- from the read to the send nothing waits: the notifications leave in the order of the output
     keep(session, data)
-    app.emit("output", { session = session.id, offset = session.sent, data = base64.encode(data) })
+    RPC.send_notification("output", { session = session.id, offset = session.sent, data = base64.encode(data) })
     session.sent += #data
   end
   session.drained = true
@@ -123,11 +122,11 @@ local function watch(session: Session)
     waited += task.wait(WINDOW_POLL)
   end
   session.pty:close()
-  local exit: rpc.Exit = if status
+  local exit: terminal_Exit = if status
     then { code = status.exit_code, signal = status.signal }
     else { code = 1, signal = if err then err.message else "unknown" }
   session.exit = exit
-  app.emit("exit", { session = session.id, offset = session.sent, code = exit.code, signal = exit.signal })
+  RPC.send_notification("exit", { session = session.id, offset = session.sent, code = exit.code, signal = exit.signal })
 end
 
 -- End the sessions whose page is gone. The app's own task: it starts at load and stops when the app is unloaded
@@ -243,7 +242,7 @@ function sessions.resize(id: string, rows: number, cols: number): string?
   return nil
 end
 
-function sessions.ack(id: string, offset: number): (rpc.Status?, string?)
+function sessions.ack(id: string, offset: number): (terminal_Status?, string?)
   local session = heard(id)
   if not session then
     return nil, ENDED
@@ -252,7 +251,7 @@ function sessions.ack(id: string, offset: number): (rpc.Status?, string?)
   return { offset = session.sent, exit = session.exit }, nil
 end
 
-function sessions.replay(id: string, from: number): (rpc.Replay?, string?)
+function sessions.replay(id: string, from: number): (terminal_Replay?, string?)
   local session = heard(id)
   if not session then
     return nil, ENDED

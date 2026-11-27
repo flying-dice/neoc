@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import ProjectSidebar from './ProjectSidebar.svelte'
-  import type { Project } from 'app:rpc'
+  type Project = VosApp.Projects.Project
   import { WEBSITE } from '../lib/fakeApi'
   import { APP } from '../lib/samples'
 

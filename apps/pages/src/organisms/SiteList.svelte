@@ -1,6 +1,7 @@
 <!-- @organism SiteList — the sites that are hosted: each with its addresses, its switch and its buttons, and the button that adds one; or, while a site is typed, the form for it in their place -->
 <script lang="ts">
-  import type { Settings, Site } from 'app:rpc'
+  type Settings = VosApp.Pages.Settings
+  type Site = VosApp.Pages.Site
   import SiteForm from '../molecules/SiteForm.svelte'
   import SiteRow from '../molecules/SiteRow.svelte'
   import { addressesOf, sitesSummary } from '../lib/format'

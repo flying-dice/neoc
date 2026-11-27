@@ -3,15 +3,23 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Notebooks: Markdown notes that link to each other, a Svelte client on the kit, the notes and their links in Luau, with tools for agents. `bun run build` writes the app ref (dist/app-ref.json, app.luau, static/).",
+  "description": "Notes in Markdown that link to each other, for you and your agents: write [[a link]], follow it, and see what links back.",
+  "vos": {
+    "title": "Notebooks",
+    "icon": "doc",
+    "tint": "purple",
+    "window": {
+      "w": 1000,
+      "h": 660,
+      "minW": 420,
+      "minH": 420
+    }
+  },
   "scripts": {
-    "generate": "vos generate",
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "vos typecheck && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "vite build && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test ./src",
-    "lint": "vos lint",
-    "format": "vos format",
     "storybook": "storybook dev -p 6016 --no-open",
     "build-storybook": "storybook build -o storybook-static --quiet"
   },

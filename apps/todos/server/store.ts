@@ -5,7 +5,10 @@ import { db } from 'vos:app'
 import { Pattern } from 'lib:regex'
 import { trim } from 'lib:text'
 import { caseless_eq } from 'lib:unicode'
-import type { Board, Color, List, Todo } from '../.app/server/rpc'
+type Board = todos_Board
+type Color = todos_Color
+type List = todos_List
+type Todo = todos_Todo
 
 /** What can change on a todo: only what is given changes. */
 export interface Changes {

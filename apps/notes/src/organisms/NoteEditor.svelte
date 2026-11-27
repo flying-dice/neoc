@@ -1,6 +1,7 @@
 <!-- @organism NoteEditor — one note: when it was edited, its text to type in, and what can be done with it (pin, move to a folder, delete); a deleted note is only read, and can be recovered or deleted for good after an alert asks -->
 <script lang="ts">
-  import type { Folder, Note } from 'app:rpc'
+  type Folder = VosApp.Notes.Folder
+  type Note = VosApp.Notes.Note
   import { moment } from '../lib/dates'
 
   interface Props {

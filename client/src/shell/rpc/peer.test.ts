@@ -139,7 +139,9 @@ describe('json-rpc peer (by-name params)', () => {
     const peer = createRpcPeer({ send: (m) => void sent.push(m), timeoutMs: 0 })
     const done = new AbortController()
     done.abort()
-    expect(await peer.request('x', {}, { signal: done.signal }).catch((e: RpcError) => e)).toMatchObject({
+    expect(
+      await peer.request('x', {}, { signal: done.signal }).catch((e: RpcError) => e)
+    ).toMatchObject({
       code: RpcErrorCode.Cancelled
     })
     expect(sent).toEqual([])

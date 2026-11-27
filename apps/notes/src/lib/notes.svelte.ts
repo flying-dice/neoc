@@ -1,14 +1,31 @@
-import type { Api, Board, Folder, Host, Note } from 'app:rpc'
+type Board = VosApp.Notes.Board
+type Folder = VosApp.Notes.Folder
+type Note = VosApp.Notes.Note
 import { folderProblem } from './folders'
 import { ALL, DELETED, UNTITLED, folderView, sameView, sections, shown, type Section, type View } from './views'
 
-/** What the window needs of the backend: the board, the text of a note, and each way of changing them. */
-export type NotesRpc = Pick<
-  Api,
-  'board' | 'addFolder' | 'removeFolder' | 'create' | 'read' | 'write' | 'pin' | 'move' | 'remove' | 'restore' | 'purge' | 'search'
->
-/** Where the backend's events are heard (`host.on`). */
-export type NotesEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the board, the text of a note, and each way of changing them (the app's
+ * private methods on the bus, `_board` ...: `App.svelte` sends them).
+ */
+export interface NotesRpc {
+  board(): Promise<Board>
+  addFolder(params: VosApp.Notes.AddFolderParams): Promise<Board>
+  removeFolder(params: VosApp.Notes.RemoveFolderParams): Promise<Board>
+  create(params: VosApp.Notes.CreateParams): Promise<Board>
+  read(params: VosApp.Notes.ReadParams): Promise<VosApp.Notes.Text>
+  write(params: VosApp.Notes.WriteParams): Promise<Board>
+  pin(params: VosApp.Notes.PinParams): Promise<Board>
+  move(params: VosApp.Notes.MoveParams): Promise<Board>
+  remove(params: VosApp.Notes.RemoveParams): Promise<Board>
+  restore(params: VosApp.Notes.RestoreParams): Promise<Board>
+  purge(params: VosApp.Notes.PurgeParams): Promise<Board>
+  search(params: VosApp.Notes.SearchParams): Promise<VosApp.Notes.Found>
+}
+/** Where the window hears that the notes changed: the backend's `notes_changed`, and the host's `host:reconnected`. */
+export interface NotesEvents {
+  on(name: 'notes_changed' | 'host:reconnected', fn: () => void): () => void
+}
 
 /** What is in front in a window too narrow for all three: the folders, the notes of one, or a note. */
 export type Pane = 'folders' | 'list' | 'note'
@@ -192,7 +209,7 @@ export class Notes {
    */
   listen(): () => void {
     const stops = [
-      this.#events.on('notes.changed', () => void this.load()),
+      this.#events.on('notes_changed', () => void this.load()),
       this.#events.on('host:reconnected', () => void this.load())
     ]
     return () => stops.forEach((stop) => stop())

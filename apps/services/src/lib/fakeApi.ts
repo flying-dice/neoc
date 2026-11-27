@@ -4,7 +4,12 @@
  * a service it keeps for another user, it cannot start one whose program exits at once, and it can be changed behind
  * the app's back, as a terminal would change the real one.
  */
-import type { Manager, Outcome, Overview, Restart, Service, Status } from 'app:rpc'
+type Manager = VosApp.Services.Manager
+type Outcome = VosApp.Services.Outcome
+type Overview = VosApp.Services.Overview
+type Restart = VosApp.Services.Restart
+type Service = VosApp.Services.Service
+type Status = VosApp.Services.Status
 import type { ServicesEvents, ServicesRpc } from './services.svelte'
 
 export interface FakeBackend {
@@ -73,6 +78,19 @@ export const SERVICES: readonly Service[] = [
   service('systemd-logind', { description: 'Login management', state: 'running', autostart: undefined })
 ]
 
+/** What a manager may leave out of a service it reports, by the name its `reported` list gives it. */
+const FIELDS: Record<string, 'description' | 'stateDetail' | 'autostart' | 'args' | 'workingDirectory' | 'environment' | 'restart' | 'restartDelaySecs' | 'user'> = {
+  description: 'description',
+  state_detail: 'stateDetail',
+  autostart: 'autostart',
+  args: 'args',
+  working_directory: 'workingDirectory',
+  environment: 'environment',
+  restart: 'restart',
+  restart_delay_secs: 'restartDelaySecs',
+  user: 'user'
+}
+
 export const NO_MANAGER = 'This machine has no service manager the app can use: systemd is not running on this machine.'
 
 /** The backend answered no, in its own words. */
@@ -88,7 +106,13 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const listeners = new Map<string, Set<() => void>>()
   const calls: string[] = []
 
-  const overview = (): Overview => ({ manager, services: manager.available ? services.map((s) => ({ ...s })).sort((a, b) => a.label.localeCompare(b.label)) : [] })
+  // a manager says only what it reports: a launchd-like one has no description to give
+  const reported = (s: Service): Service => {
+    const out: Service = { ...s }
+    for (const [field, key] of Object.entries(FIELDS)) if (!manager.reported.includes(field)) delete out[key]
+    return out
+  }
+  const overview = (): Overview => ({ manager, services: manager.available ? services.map(reported).sort((a, b) => a.label.localeCompare(b.label)) : [] })
   const outcome = (status: Status, message = ''): Outcome => ({ status, message, overview: overview() })
   const later = async <T>(call: () => T): Promise<T> => {
     await new Promise((resolve) => setTimeout(resolve, options.pace ?? 0))
@@ -160,7 +184,7 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     on: (name, handler) => {
       const set = listeners.get(name) ?? new Set<() => void>()
       listeners.set(name, set)
-      const listener = (): void => void handler(undefined as never)
+      const listener = (): void => void handler()
       set.add(listener)
       return () => void set.delete(listener)
     }

@@ -1,6 +1,7 @@
 <!-- @organism ContainerList — the containers that are shown, each with the button that starts or stops it; for a Compose stack, also where it came from and the buttons that act on all of it -->
 <script lang="ts">
-  import type { Container, Stack } from 'app:rpc'
+  type Container = VosApp.Containers.Container
+  type Stack = VosApp.Containers.Stack
   import ContainerRow from '../molecules/ContainerRow.svelte'
   import type { Action } from '../lib/containers.svelte'
   import { runningSummary } from '../lib/format'

@@ -2,13 +2,13 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, waitFor } from 'storybook/test'
   import AppWindow from '@vos/storybook/AppWindow.svelte'
-  import definition from '../../openrpc.json'
+  import pkg from '../../package.json'
   import DnsPage from './DnsPage.svelte'
   import { Dns } from '../lib/dns.svelte'
   import { PORT_TAKEN, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
 
-  // the window the contract asks for, and the smallest it allows
-  const app = definition['x-app']
+  // the window the app asks for (package.json), and the smallest it allows
+  const app = pkg.vos
 
   interface Args {
     width: number
@@ -46,7 +46,7 @@
   <!-- one state per story, as each window has one -->
   {@const backend = args.backend()}
   {@const dns = new Dns(backend.rpc, backend.events)}
-  <AppWindow title={definition.info.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
+  <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <DnsPage {dns} />
   </AppWindow>
 {/snippet}

@@ -34,7 +34,7 @@ applies to the script blocks and `.svelte.ts` modules.
   `client/src/lib/notifications.svelte.ts`).
 - Logic that needs no reactivity is a plain `.ts` module with unit tests next to it.
 - The composition root is the only place that constructs state with real
-  dependencies. In an app, `App.svelte` imports `api` from `app:rpc`, builds the
+  dependencies. In an app, `App.svelte` reaches the bus through the global `RPC` (and the host through `vos.host`), builds the
   state and renders one page; the page receives the state (or its values and
   callbacks) as props.
 - Prefer `$derived` to an `$effect` that writes state. Keep `$effect` for reaching

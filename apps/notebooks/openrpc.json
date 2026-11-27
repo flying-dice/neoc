@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Notebooks",
-    "version": "0.1.0",
-    "description": "Notes in Markdown that link to each other, for you and your agents: write [[a link]], follow it, and see what links back."
-  },
-  "x-app": {
-    "id": "notebooks",
-    "icon": "doc",
-    "tint": "purple",
-    "description": "Notes in Markdown that link to each other, for you and your agents: write [[a link]], follow it, and see what links back.",
-    "window": {
-      "w": 1000,
-      "h": 660,
-      "minW": 420,
-      "minH": 420
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "library",
+      "name": "_library",
       "summary": "Every notebook, every note without its text (the most recently changed first), and which note links to which.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "read",
+      "name": "_read",
       "summary": "One note: its text, and the notes that link to it.",
       "params": [
         {
@@ -55,7 +42,7 @@
       ]
     },
     {
-      "name": "create",
+      "name": "_create",
       "summary": "Make a note in a notebook, and answer with it and the library as it now stands.",
       "params": [
         {
@@ -89,7 +76,7 @@
       ]
     },
     {
-      "name": "follow",
+      "name": "_follow",
       "summary": "The note a link names: the note of the notebook with that title, whatever its capitals, or a new one when there is none. Today's note is the one named after the day.",
       "params": [
         {
@@ -123,7 +110,7 @@
       ]
     },
     {
-      "name": "save",
+      "name": "_save",
       "summary": "Replace a note's text. Its links, its tags and its first line are read from it again.",
       "params": [
         {
@@ -157,7 +144,7 @@
       ]
     },
     {
-      "name": "rename",
+      "name": "_rename",
       "summary": "Give a note another title. The links to it in the other notes of its notebook are rewritten to the new title.",
       "params": [
         {
@@ -191,7 +178,7 @@
       ]
     },
     {
-      "name": "pin",
+      "name": "_pin",
       "summary": "Bookmark a note, or take its bookmark away: bookmarked notes are first in their notebook.",
       "params": [
         {
@@ -223,7 +210,7 @@
       ]
     },
     {
-      "name": "remove",
+      "name": "_remove",
       "summary": "Delete a note. The links to it stay as they were written, and lead to a new note when followed.",
       "params": [
         {
@@ -248,7 +235,7 @@
       ]
     },
     {
-      "name": "search",
+      "name": "_search",
       "summary": "The notes of a notebook whose title or text has the words, the ones with it in their title first.",
       "params": [
         {
@@ -275,7 +262,7 @@
       }
     },
     {
-      "name": "addNotebook",
+      "name": "_add_notebook",
       "summary": "Add a notebook.",
       "params": [
         {
@@ -302,7 +289,7 @@
       ]
     },
     {
-      "name": "removeNotebook",
+      "name": "_remove_notebook",
       "summary": "Delete a notebook and the notes in it.",
       "params": [
         {
@@ -325,6 +312,252 @@
           "message": "There is no such notebook, or it is the last one."
         }
       ]
+    },
+    {
+      "name": "list_notes",
+      "summary": "List the notes",
+      "x-readOnly": true,
+      "description": "The notes of a notebook, the most recently changed first: each with its id, its title, its first line and its tags. Give `tag` for the notes with that tag only. The notebooks' names are listed too.",
+      "params": [
+        {
+          "name": "notebook",
+          "required": false,
+          "description": "The name of the notebook; the first notebook when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "tag",
+          "required": false,
+          "description": "A tag, without the #",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "notebook": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "excerpt": {
+                    "type": "string"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "excerpt",
+                  "tags"
+                ]
+              }
+            },
+            "notebooks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "notebook",
+            "notes",
+            "notebooks"
+          ]
+        }
+      }
+    },
+    {
+      "name": "read_note",
+      "summary": "Read a note",
+      "x-readOnly": true,
+      "description": "A note's Markdown text and the titles of the notes that link to it, by its title (whatever its capitals). In the text, [[Title]] is a link to the note with that title, and #tag is a tag.",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "description": "The note's title",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "notebook",
+          "required": false,
+          "description": "The name of the notebook; the first notebook when left out",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "read",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "notebook": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "linkedFrom": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "notebook",
+            "body",
+            "linkedFrom"
+          ]
+        }
+      }
+    },
+    {
+      "name": "write_note",
+      "summary": "Write a note",
+      "description": "Write a note in Markdown: a new note when the notebook has none with that title, otherwise the text replaces what the note says, or is added after it with `append`. Write [[Title]] to link to another note (it need not exist yet) and #tag to tag the note.",
+      "params": [
+        {
+          "name": "title",
+          "required": true,
+          "description": "The note's title, without [ ] | # or ^",
+          "schema": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        {
+          "name": "body",
+          "required": true,
+          "description": "The Markdown text",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        {
+          "name": "notebook",
+          "required": false,
+          "description": "The name of the notebook; the first notebook when left out",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "append",
+          "required": false,
+          "description": "True to add the text after what the note already says",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "written",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "notebook": {
+              "type": "string"
+            },
+            "created": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "notebook",
+            "created"
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_notes",
+      "summary": "Search the notes",
+      "x-readOnly": true,
+      "description": "The notes of a notebook with the words in their title or their text, each with the line the words are in.",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "description": "The words to look for",
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        {
+          "name": "notebook",
+          "required": false,
+          "description": "The name of the notebook; the first notebook when left out",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "found",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "notebook": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Hit"
+              }
+            }
+          },
+          "required": [
+            "notebook",
+            "notes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "notebooks_changed",
+      "summary": "The notes changed outside the window (an agent wrote one): read the library again.",
+      "params": []
     }
   ],
   "components": {

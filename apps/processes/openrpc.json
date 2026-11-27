@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Processes",
-    "version": "0.1.0",
-    "description": "How busy this machine is, and the programs running on it: look at one, and stop it."
-  },
-  "x-app": {
-    "id": "processes",
-    "icon": "cpu",
-    "tint": "indigo",
-    "description": "How busy this machine is, and the programs running on it: look at one, and stop it.",
-    "window": {
-      "w": 960,
-      "h": 640,
-      "minW": 360,
-      "minH": 420
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "snapshot",
+      "name": "_snapshot",
       "summary": "Measure the machine again and read it: the processor, memory, disks and network, and every process. Rates need two readings, so the first is without them. When another window measured less than 200 ms ago, that reading is given again. With `selected`, the answer also holds that selection's process in full (`detail`); a process that has gone is shown as it was, with `alive` false. A selection that is not held any more is `selectionLost`.",
       "params": [
         {
@@ -39,7 +26,7 @@
       }
     },
     {
-      "name": "select",
+      "name": "_select",
       "summary": "Choose a process to look at, and to act on where the system allows. The backend issues an id for this choice and holds a reference to the process that outlives a reused pid, so that what the person ends is the process they looked at and no other. A process that has gone cannot be chosen. A process that cannot be ended (no right to, or an identity that is not known) can still be looked at: `detail.control` says why not.",
       "params": [
         {
@@ -64,7 +51,7 @@
       ]
     },
     {
-      "name": "release",
+      "name": "_release",
       "summary": "Stop looking at a process: the backend lets go of this choice and its reference. Other windows' choices of the same process are theirs.",
       "params": [
         {
@@ -83,7 +70,7 @@
       }
     },
     {
-      "name": "terminate",
+      "name": "_terminate",
       "summary": "Ask a process to stop (`force` false: it may handle the request or ignore it) or stop it at once (`force` true: it cannot save its work). Only the process this selection holds is ever signalled, and a selection that is not held (released, evicted, a backend that started afresh) is refused: the process is never chosen again on the way.",
       "params": [
         {
@@ -406,7 +393,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`run`, `sleep`, `stop`, `zombie`\u2026"
+            "description": "`run`, `sleep`, `stop`, `zombie`…"
           },
           "observation": {
             "type": "integer",

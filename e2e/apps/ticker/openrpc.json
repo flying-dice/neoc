@@ -1,25 +1,12 @@
 {
-  "openrpc": "1.3.2",
+  "openrpc": "1.4.0",
   "info": {
     "title": "Ticker",
-    "version": "0.1.0",
-    "description": "A counter that a background task raises on its own."
-  },
-  "x-app": {
-    "id": "ticker",
-    "icon": "clock",
-    "tint": "teal",
-    "description": "A counter that a background task raises on its own.",
-    "window": {
-      "w": 360,
-      "h": 280,
-      "minW": 320,
-      "minH": 240
-    }
+    "version": "0.1.0"
   },
   "methods": [
     {
-      "name": "read",
+      "name": "_read",
       "summary": "The count now, and whether the background task is counting.",
       "params": [],
       "result": {
@@ -30,7 +17,7 @@
       }
     },
     {
-      "name": "toggle",
+      "name": "_toggle",
       "summary": "Pause the counting, or resume it.",
       "params": [],
       "result": {
@@ -41,7 +28,7 @@
       }
     },
     {
-      "name": "reset",
+      "name": "_reset",
       "summary": "Start the count again from zero.",
       "params": [],
       "result": {
@@ -52,7 +39,7 @@
       }
     },
     {
-      "name": "fail",
+      "name": "_fail",
       "summary": "Always fails (the journeys use it: a control that fails says so, and the counting goes on).",
       "params": [],
       "result": {
@@ -61,6 +48,26 @@
           "type": "string"
         }
       }
+    },
+    {
+      "name": "count",
+      "summary": "The count changed (the task counted, or a control of a window did): every open window shows it.",
+      "params": [
+        {
+          "name": "ticks",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "running",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ]
     }
   ],
   "components": {

@@ -1,0 +1,43 @@
+{
+  "openrpc": "1.4.0",
+  "info": {
+    "title": "App 2",
+    "version": "0.1.0"
+  },
+  "methods": [
+    {
+      "name": "_relay",
+      "summary": "Add an item to App 1 from App 2's backend (a backend-to-backend request): for App 2's own page.",
+      "params": [
+        {
+          "name": "text",
+          "required": true,
+          "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      ],
+      "result": {
+        "name": "relayed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "description": "The id App 1 gave the item." },
+            "by": { "type": "string", "description": "Who App 1 says added it." }
+          },
+          "required": ["id", "by"]
+        }
+      }
+    },
+    {
+      "name": "_heard",
+      "summary": "What App 2's backend has heard from App 1, newest first: for App 2's own page.",
+      "x-readOnly": true,
+      "params": [],
+      "result": { "name": "lines", "schema": { "type": "array", "items": { "type": "string" } } }
+    },
+    {
+      "name": "_overheard",
+      "summary": "App 2's backend heard something from App 1: the line it logged. Private: for App 2's own page.",
+      "params": [{ "name": "line", "required": true, "schema": { "type": "string" } }]
+    }
+  ]
+}

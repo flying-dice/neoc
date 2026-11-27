@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, host, type Task } from 'app:rpc'
+
+type Task = VosApp.TasksReact.Task
+
+// the page's methods are the app's private ones on the bus
+const api = {
+  list: (): Promise<Task[]> => RPC.send_request('tasks-react', '_list'),
+  add: (params: VosApp.TasksReact.AddParams): Promise<Task[]> => RPC.send_request('tasks-react', '_add', params),
+  toggle: (params: VosApp.TasksReact.ToggleParams): Promise<Task[]> => RPC.send_request('tasks-react', '_toggle', params)
+}
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
@@ -7,8 +15,8 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [title, setTitle] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [theme, setTheme] = useState(host.theme)
-  // where the app runs: `host.hosted` is true when the host page draws UI of its own (the shell)
+  const [theme, setTheme] = useState(vos.host.theme)
+  // where the app runs: `vos.host.hosted` is true when the host page draws UI of its own (the shell)
   const [where, setWhere] = useState('connecting')
 
   // run a method that answers with the whole list; a failure is the backend's own message
@@ -27,14 +35,14 @@ export default function App() {
   useEffect(() => {
     void show(api.list())
     const stops = [
-      host.on('tasks.changed', () => void show(api.list())),
+      RPC.on_notification('tasks-react', 'tasks_changed', () => void show(api.list())),
       // the host connection came back: a change made while it was away reached nobody
-      host.on('host:reconnected', () => void show(api.list())),
-      host.onContext((context) => setTheme(context.theme === 'dark' ? 'dark' : 'light'))
+      vos.host.on('host:reconnected', () => void show(api.list())),
+      vos.host.on_context((context) => setTheme(context.theme === 'dark' ? 'dark' : 'light'))
     ]
-    void host.ready.then(() => {
-      setTheme(host.theme)
-      setWhere(host.hosted ? 'in the shell' : 'on its own')
+    void vos.host.ready.then(() => {
+      setTheme(vos.host.theme)
+      setWhere(vos.host.hosted ? 'in the shell' : 'on its own')
     })
     return () => stops.forEach((stop) => stop())
   }, [show])

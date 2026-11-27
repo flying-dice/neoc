@@ -1,7 +1,7 @@
 <script module lang="ts">
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
-  import type { Item } from 'app:rpc'
+  type Item = VosApp.Keychain.Item
   import ItemRow from './ItemRow.svelte'
 
   interface Args {

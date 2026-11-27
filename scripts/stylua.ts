@@ -12,7 +12,7 @@
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { findTool } from '../packages/vite-plugin/src/find-tool.ts'
+import { findTool } from './find-tool.ts'
 import { skipTool } from './gate'
 
 const root = resolve(import.meta.dir, '..')
@@ -25,7 +25,7 @@ if (mode !== 'check' && mode !== 'format') {
 const stylua = findTool('stylua', join(homedir(), '.cargo/bin/stylua'))
 if (!stylua) skipTool(`stylua ${mode}`, 'stylua not found (cargo install stylua --features luau, or put it on PATH)')
 
-// one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `app.tool { ... }`)
+// one stylua.toml at the root (call_parentheses = "NoSingleTable" keeps the table-call idiom, `app.notify { ... }`)
 const args = ['--search-parent-directories', ...(mode === 'check' ? ['--check'] : []), '.']
 const run = spawnSync(stylua, args, { cwd: root, stdio: 'inherit' })
 if (run.status !== 0) {

@@ -1,6 +1,6 @@
 <!-- @molecule ActivityCard — one thing an agent did in a chat that is not its words: its reasoning, a tool it used, a step, a subagent, an activity or an event of its own -->
 <script lang="ts">
-  import type { Item } from 'app:rpc'
+  type Item = VosApp.Agents.Item
   import { failureOf, pretty, toolOutcome } from '../lib/items'
 
   interface Props {

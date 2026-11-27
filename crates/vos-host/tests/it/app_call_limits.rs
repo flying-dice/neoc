@@ -17,19 +17,13 @@ use vos_host::startup::prepare_data_dir;
 const BACKEND: &str = r#"
 local task = require("std:task")
 local generation = 0
-app.tool {
-  name = "release_all",
-  input = {},
-  run = function() generation += 1 return { released = true } end,
-}
-return {
-  hang = function()
-    local mine = generation
-    while generation == mine do task.wait(0.05) end
-    return "released"
-  end,
-  ping = function() return "pong" end,
-}
+RPC.on_request("release_all", function() generation += 1 return { released = true } end)
+RPC.on_request("_hang", function()
+  local mine = generation
+  while generation == mine do task.wait(0.05) end
+  return "released"
+end)
+RPC.on_request("_ping", function() return "pong" end)
 "#;
 
 async fn host_with_apps(tmp: &Path, ids: &[&str]) -> Running {
@@ -79,20 +73,20 @@ fn is_busy(answer: &Value) -> bool {
     answer["error"]["code"] == -32000
 }
 
-/// Fill an app's places: nine calls of `hang` for eight places, which is deterministic whatever order they are taken in (the one that
+/// Fill an app's places: nine calls of `_hang` for eight places, which is deterministic whatever order they are taken in (the one that
 /// loses is refused at once); returns once that refusal has come, so eight are running.
 async fn fill(ws: &mut Ws, app: &str) {
     for id in 1..=(i64::try_from(MAX_CALLS_PER_APP).unwrap() + 1) {
-        send(ws, id, "app.call", json!({"app": app, "method": "hang"})).await;
+        send(ws, id, "app.call", json!({"app": app, "method": "_hang"})).await;
     }
     let refused = answer_within(ws, Duration::from_secs(5)).await.expect("the ninth call is refused at once");
     assert!(is_busy(&refused), "{refused}");
 }
 
-/// A `ping` of `app` until it is not refused as busy (a freed place comes back a moment after the request that held it ended).
+/// A `_ping` of `app` until it is not refused as busy (a freed place comes back a moment after the request that held it ended).
 async fn ping_until_taken(ws: &mut Ws, app: &str, first_id: i64) -> Value {
     for n in 0..200 {
-        let a = rpc(ws, first_id + n, "app.call", json!({"app": app, "method": "ping"})).await;
+        let a = rpc(ws, first_id + n, "app.call", json!({"app": app, "method": "_ping"})).await;
         if !is_busy(&a) {
             return a;
         }
@@ -109,7 +103,7 @@ async fn a_hung_app_holds_eight_places_and_nobody_else_feels_it() {
 
     // twelve calls of a handler that never returns, straight at the host: the first eight run, the rest are refused at once
     for id in 1..=12 {
-        send(&mut ws, id, "app.call", json!({"app": "hung", "method": "hang"})).await;
+        send(&mut ws, id, "app.call", json!({"app": "hung", "method": "_hang"})).await;
     }
     let mut refused = vec![];
     for _ in 0..(12 - MAX_CALLS_PER_APP) {
@@ -128,9 +122,9 @@ async fn a_hung_app_holds_eight_places_and_nobody_else_feels_it() {
     // the shell's own calls and another app are untouched, and the hung app's other calls are refused with a reason
     let list = rpc(&mut ws, 20, "app.list", json!({})).await;
     assert!(list["result"]["apps"].is_array());
-    let other = rpc(&mut ws, 21, "app.call", json!({"app": "other", "method": "ping"})).await;
+    let other = rpc(&mut ws, 21, "app.call", json!({"app": "other", "method": "_ping"})).await;
     assert_eq!(other["result"], "pong");
-    let hung = rpc(&mut ws, 22, "app.call", json!({"app": "hung", "method": "ping"})).await;
+    let hung = rpc(&mut ws, 22, "app.call", json!({"app": "hung", "method": "_ping"})).await;
     assert!(is_busy(&hung), "{hung}");
     assert!(
         answer_within(&mut ws, Duration::from_millis(300)).await.is_none(),
@@ -157,7 +151,7 @@ async fn a_hung_app_holds_eight_places_and_nobody_else_feels_it() {
         .await
         .unwrap();
     assert_eq!(
-        rpc(&mut ws, 300, "app.call", json!({"app": "other", "method": "ping"})).await["result"],
+        rpc(&mut ws, 300, "app.call", json!({"app": "other", "method": "_ping"})).await["result"],
         "pong"
     );
 }
@@ -170,7 +164,7 @@ async fn a_connection_closing_frees_every_place_its_calls_held() {
     fill(&mut first, "hung").await;
     let mut second = browser(&r).await;
     // while the first connection holds them all, a second connection is refused too: the limit is the app's, not the connection's
-    let refused = rpc(&mut second, 1, "app.call", json!({"app": "hung", "method": "ping"})).await;
+    let refused = rpc(&mut second, 1, "app.call", json!({"app": "hung", "method": "_ping"})).await;
     assert!(is_busy(&refused), "{refused}");
     drop(first); // the socket goes
     let pong = ping_until_taken(&mut second, "hung", 10).await;
@@ -198,7 +192,7 @@ async fn uninstalling_a_hung_app_answers_its_calls_and_a_reinstall_starts_clean(
     let url = publish_package_with_client(&tmp.join("pkg-again"), "hung", "app.luau", "static", &files);
     r.host.service.install_from_url(&url).await.unwrap();
     assert_eq!(
-        rpc(&mut ws, 60, "app.call", json!({"app": "hung", "method": "ping"})).await["result"],
+        rpc(&mut ws, 60, "app.call", json!({"app": "hung", "method": "_ping"})).await["result"],
         "pong"
     );
 }

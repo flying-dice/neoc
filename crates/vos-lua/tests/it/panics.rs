@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration-test helpers
 //! A host function that panics during a call into an app (a module's Rust code, a port behind the `app` API) fails
 //! that call with an error, never the task that polled it, and leaves the app answering with nothing of the call
-//! left open: its turn, its transaction and its `readOnly` restriction end with it. The panicking host function
+//! left open: its turn, its transaction and its `read-only` restriction end with it. The panicking host function
 //! here is the agent roster behind `app.agents:list()`, a port the app API calls synchronously, as a module's
 //! function is called.
 
@@ -34,47 +34,47 @@ local net = require("std:net")
 local db = app.db
 db:migrate { [1] = "create table t(a integer)" }
 local function count() return db:one("select count(*) as n from t").n end
-app.tool { name = "uncaught", run = function() return app.agents:list() end }
-app.tool { name = "caught", run = function()
+RPC.on_request("uncaught", function() return app.agents:list() end)
+RPC.on_request("caught", function()
   local ok, err = pcall(function() return app.agents:list() end)
   return { ok = ok, err = tostring(err) }
-end }
-app.tool { name = "uncaught_in_tx", run = function()
+end)
+RPC.on_request("uncaught_in_tx", function()
   db:tx(function() db:exec("insert into t values (1)") app.agents:list() end)
-end }
-app.tool { name = "caught_in_tx", run = function()
+end)
+RPC.on_request("caught_in_tx", function()
   local ok = pcall(function() db:tx(function() db:exec("insert into t values (2)") app.agents:list() end) end)
   db:exec("insert into t values (3)")
   return { ok = ok, n = count() }
-end }
-app.tool { name = "read_only", readOnly = true, run = function() return app.agents:list() end }
-app.tool { name = "in_task", run = function()
+end)
+RPC.on_request("read_only", function() return app.agents:list() end)
+RPC.on_request("in_task", function()
   local task = require("std:task")
   local h = task.spawn(function() task.wait(0) return app.agents:list() end)
   local r, err = h:await()
   return { returned = r ~= nil, kind = err and err.kind, reason = err and err.reason }
-end }
-app.tool { name = "write", run = function() db:exec("insert into t values (4)") return count() end }
+end)
+RPC.on_request("write", function() db:exec("insert into t values (4)") return count() end)
 -- the app's own server: a request to it carries no origin, so it runs read-only while a read-only call is active
 local server = assert(hyper.serve(assert(net.TcpListener.bind("127.0.0.1:0")), function()
   db:exec("insert into t values (5)")
   return tostring(count())
 end))
-app.tool { name = "own_request", run = function()
+RPC.on_request("own_request", function()
   local r = assert(hyper.get("http://" .. server:addr() .. "/"))
   return { status = r.status, body = r.body }
-end }
-app.tool { name = "values", run = function() return db:all("select a from t order by a") end }
+end)
+RPC.on_request("values", function() return db:all("select a from t order by a") end)
 "#;
 
 async fn panicking_app() -> Arc<AppVm> {
     let config = VmConfig { roster: Arc::new(PanickingRoster), ..VmConfig::default() };
     let src = format!("{MANIFEST}\n{APP}");
-    Arc::new(AppVm::load(&id("probe"), package(&common::backend(&src), &[]), db(), config).await.unwrap())
+    Arc::new(AppVm::load(&id("probe"), package(&src, &[]), db(), config).await.unwrap())
 }
 
 async fn call(vm: &AppVm, tool: &str) -> vos_lua::Result<Value> {
-    vm.call_tool(tool, json!({}), &agent_ctx(0), false).await
+    common::serve(vm, tool, json!({}), &agent_ctx(0)).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -114,7 +114,7 @@ async fn a_read_only_call_that_panics_leaves_the_next_call_and_the_apps_own_serv
     // control: a request to the app's own server from a writable call may write
     assert_eq!(call(&vm, "own_request").await.unwrap(), json!({ "status": 200, "body": "1" }));
     assert!(matches!(
-        vm.call_tool("read_only", json!({}), &agent_ctx(0), true).await,
+        common::serve_with(&vm, "read_only", json!({}), &agent_ctx(0), true).await,
         Err(VmError::Panicked(_))
     ));
     assert_eq!(call(&vm, "write").await.unwrap(), json!(2));
@@ -160,12 +160,9 @@ async fn the_port_reports_a_panic_as_an_internal_error_and_keeps_the_app_loaded(
     let runtime = LuaRuntime::new(Arc::new(Quiet), Arc::new(RecordingShell::default()))
         .with_roster(Arc::new(PanickingRoster));
     let data: Arc<dyn AppData> = db();
-    runtime
-        .load(&id("probe"), package(&common::backend(&format!("{MANIFEST}\n{APP}")), &[]), data)
-        .await
-        .unwrap();
+    runtime.load(&id("probe"), package(&format!("{MANIFEST}\n{APP}"), &[]), data).await.unwrap();
     let app = id("probe");
-    let call = |tool: &'static str| runtime.call_tool(&app, tool, json!({}), agent_ctx(0), false);
+    let call = |tool: &'static str| common::serve_rt(&runtime, &app, tool, json!({}), agent_ctx(0));
     match call("uncaught").await {
         Err(PortError::Internal(message)) => {
             assert_eq!(message, "a host function panicked: the roster broke");
@@ -199,7 +196,7 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
     let src = format!(
         r#"{MANIFEST}
         local task = require("std:task")
-        app.tool {{ name = "later", run = function()
+        RPC.on_request("later", function()
           task.spawn(function()
             task.wait(0)
             app.notify {{ title = "first" }}
@@ -207,12 +204,12 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
             task.wait(0.05)
             app.notify {{ title = "third" }}
           end)
-        end }}
+        end)
         "#
     );
     let data: Arc<dyn AppData> = db();
-    runtime.load(&id("probe"), package(&common::backend(&src), &[]), data).await.unwrap();
-    runtime.call_tool(&id("probe"), "later", json!({}), agent_ctx(0), false).await.unwrap();
+    runtime.load(&id("probe"), package(&src, &[]), data).await.unwrap();
+    common::serve_rt(&runtime, &id("probe"), "later", json!({}), agent_ctx(0)).await.unwrap();
     for _ in 0..200 {
         if notifier.titles.lock().len() >= 2 {
             break;
@@ -229,13 +226,11 @@ async fn a_panic_forwarding_background_effects_leaves_the_pump_running() {
 
 // ---- handlers --------------------------------------------------------------------------------------------
 
-const HANDLERS: &str = r"
+const HANDLERS: &str = r#"
 local n = 0
-return {
-  boom = function(ctx) return app.agents:list() end,
-  add = function(ctx) n = n + 1 return n end,
-}
-";
+RPC.on_request("boom", function() return app.agents:list() end)
+RPC.on_request("add", function() n = n + 1 return n end)
+"#;
 
 /// A panic in a handler (the page's call into the backend) fails that call, and the app answers the next one.
 #[tokio::test(flavor = "multi_thread")]

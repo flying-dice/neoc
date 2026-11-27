@@ -2,9 +2,7 @@
 -- What the server is made from, kept by the app: the port the named sites share, and the sites. This is the only
 -- copy (the container is made from it, never read back), so it is there with Docker away, and it is the same server
 -- in whichever Docker it is started.
-local app = require("vos:app")
 local nginx = require("./nginx")
-local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 
 local config = {}
@@ -18,12 +16,12 @@ local MAX_SITES = 100
 local MAX_HOSTNAMES = 20
 local MAX_NAME = 80
 local MAX_FOLDER = 1024
-local DEFAULTS: rpc.Settings = { port = 80 }
+local DEFAULTS: pages_Settings = { port = 80 }
 
 -- what a person gives for a site, checked and as it is kept
 type Given = { name: string, folder: string, port: number, hostnames: { string } }
 
-function config.settings(): rpc.Settings
+function config.settings(): pages_Settings
   local kept = app.kv:get(SETTINGS)
   if type(kept) ~= "table" then
     return table.clone(DEFAULTS)
@@ -32,9 +30,9 @@ function config.settings(): rpc.Settings
 end
 
 -- every site, by name; `problem` is for whoever knows of one (sidecar.luau)
-function config.sites(): { rpc.Site }
+function config.sites(): { pages_Site }
   local kept = app.kv:get(SITES)
-  local sites: { rpc.Site } = {}
+  local sites: { pages_Site } = {}
   for _, site in if type(kept) == "table" then kept else {} do
     local hostnames: { string } = {}
     for _, hostname in if type(site.hostnames) == "table" then site.hostnames else {} do
@@ -57,7 +55,7 @@ function config.sites(): { rpc.Site }
   return sites
 end
 
-local function keep(sites: { rpc.Site })
+local function keep(sites: { pages_Site })
   -- a site as it is kept: what the person chose, without what is worked out each time (`problem`)
   type Kept = { id: number, name: string, folder: string, port: number, hostnames: { string }, enabled: boolean }
   local kept: { Kept } = {}
@@ -215,8 +213,8 @@ function config.setEnabled(id: number, enabled: boolean): string?
 end
 
 -- Forget sites: every one `gone` says yes to. Answers with how many went.
-function config.remove(gone: (rpc.Site) -> boolean): number
-  local staying: { rpc.Site } = {}
+function config.remove(gone: (pages_Site) -> boolean): number
+  local staying: { pages_Site } = {}
   local sites = config.sites()
   for _, site in sites do
     if not gone(site) then

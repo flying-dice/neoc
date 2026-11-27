@@ -297,18 +297,18 @@ async fn no_number_a_script_passes_to_a_library_function_panics_the_host() {
 async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers() {
     let src = r#"
         app.db:migrate { [1] = "create table n(id integer primary key, body text)" }
-        app.tool { name = "in_pcall", run = function()
+        RPC.on_request("in_pcall", function()
           local ok, rows = pcall(function() return app.db:all("select 1 as x") end)
           local failed, why = pcall(function() app.db:exec("insert into nope values (1)") end)
           local nested = select(2, pcall(function() return select(2, pcall(function() app.kv:set("a", 1) return app.kv:get("a") end)) end))
           return { ok = ok, rows = rows, failed = failed, why = tostring(why), nested = nested }
-        end }
-        app.tool { name = "in_xpcall", run = function()
+        end)
+        RPC.on_request("in_xpcall", function()
           local ok, value = xpcall(function() app.kv:set("k", "v") return app.kv:get("k") end, function(e) return "handled: " .. tostring(e) end)
           local bad, handled = xpcall(function() app.db:exec("select * from nope") end, function(e) return "handled" end)
           return { ok = ok, value = value, bad = bad, handled = handled }
-        end }
-        app.tool { name = "in_coroutine", run = function()
+        end)
+        RPC.on_request("in_coroutine", function()
           local co = coroutine.create(function()
             local first = app.db:all("select 1 as x")
             coroutine.yield(#first)
@@ -318,11 +318,11 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
           local _, a = coroutine.resume(co)
           local _, b = coroutine.resume(co)
           return { a = a, b = b, status = coroutine.status(co) }
-        end }
-        app.tool { name = "in_wrap", run = function()
+        end)
+        RPC.on_request("in_wrap", function()
           local gen = coroutine.wrap(function() for i = 1, 3 do app.kv:set("i", i) coroutine.yield(app.kv:get("i")) end end)
           return { gen(), gen(), gen() }
-        end }
+        end)
         hook("event", function(payload)
           local ok, v = pcall(function() app.kv:set("e", payload.n) return app.kv:get("e") end)
           return { ok = ok, v = v }
@@ -331,7 +331,7 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
     let vm = load(src).await;
     let call = |tool: &'static str| {
         let vm = &vm;
-        async move { vm.call_tool(tool, json!({}), &agent_ctx(0), false).await.unwrap() }
+        async move { common::serve(vm, tool, json!({}), &agent_ctx(0)).await.unwrap() }
     };
     let out = call("in_pcall").await;
     assert_eq!(out["ok"], json!(true), "{out}");
@@ -354,19 +354,19 @@ async fn host_calls_that_await_work_inside_pcall_coroutines_and_event_handlers()
 #[tokio::test]
 async fn dropping_a_call_that_waits_inside_coroutines_ends_it_without_running_app_code_again() {
     let src = r#"
-        app.tool { name = "spin", run = function()
+        RPC.on_request("spin", function()
           while true do
             local gen = coroutine.wrap(function() pcall(function() app.kv:get("k") end) coroutine.yield(1) end)
             gen()
           end
-        end }
+        end)
         hook("ok", function() return 42 end)
     "#;
     let vm = std::sync::Arc::new(load(src).await);
     // cut the call off wherever it happens to be waiting; each cancellation must complete at once
     for millis in [20, 35, 50] {
         let ctx = agent_ctx(0);
-        let call = vm.call_tool("spin", json!({}), &ctx, false);
+        let call = common::serve(&vm, "spin", json!({}), &ctx);
         let started = Instant::now();
         let _ = tokio::time::timeout(Duration::from_millis(millis), call).await;
         assert!(started.elapsed() < PROMPTLY, "cancelling took {:?}", started.elapsed());
@@ -387,7 +387,7 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
     let src = r#"
         local time = require("std:time")
         local function wait() time.sleep(time.Duration.from_millis(1)) end
-        app.tool { name = "limits", run = function()
+        RPC.on_request("limits", function()
           local function message(fn) local ok, e = pcall(fn) return ok and "worked" or tostring(e) end
           return {
             gsub = message(function() return (string.gsub("a", "a", function() wait() return "b" end)) end),
@@ -397,10 +397,10 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
             tostring = message(function() return tostring(setmetatable({}, { __tostring = function() wait() return "s" end })) end),
             xpcall_handler = select(2, xpcall(function() error("e") end, function(m) wait() return m end)),
           }
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("limits", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "limits", json!({}), &agent_ctx(0)).await.unwrap();
     for field in ["gsub", "sort", "index", "add", "tostring"] {
         let message = out[field].as_str().unwrap();
         assert!(message.contains("yield across"), "{field}: {message}");
@@ -416,15 +416,15 @@ async fn a_host_call_where_lua_cannot_yield_fails_with_a_clear_error_not_a_hang(
 #[tokio::test]
 async fn host_calls_in_iterators_and_call_metamethods_yield() {
     let src = r#"
-        app.tool { name = "yields", run = function()
+        RPC.on_request("yields", function()
           local callable = setmetatable({}, { __call = function() app.kv:set("k", "call") return app.kv:get("k") end })
           local seen = {}
           for v in function() if #seen < 2 then seen[#seen + 1] = app.kv:get("k") or "iter" return #seen end end do end
           return { call = callable(), iterations = #seen }
-        end }
+        end)
     "#;
     let vm = load(src).await;
-    let out = vm.call_tool("yields", json!({}), &agent_ctx(0), false).await.unwrap();
+    let out = common::serve(&vm, "yields", json!({}), &agent_ctx(0)).await.unwrap();
     assert_eq!(out, json!({ "call": "call", "iterations": 2 }));
 }
 
@@ -437,23 +437,23 @@ async fn a_host_call_in_an_iterator_or_a_call_metamethod_lends_the_turn_while_it
     let src = r#"
         local time = require("std:time")
         local function nap() time.sleep(time.Duration.from_millis(300)) return "x" end
-        app.tool { name = "iterator", run = function()
+        RPC.on_request("iterator", function()
           for _ in function() nap() return nil end do end
           return "x"
-        end }
-        app.tool { name = "call", run = function()
+        end)
+        RPC.on_request("call", function()
           return setmetatable({}, { __call = function() return nap() end })()
-        end }
-        app.tool { name = "ping", run = function() return "pong" end }
+        end)
+        RPC.on_request("ping", function() return "pong" end)
     "#;
     let vm = load(src).await;
     let ctx = agent_ctx(0);
     for context in ["iterator", "call"] {
-        let first = vm.call_tool(context, json!({}), &ctx, false);
+        let first = common::serve(&vm, context, json!({}), &ctx);
         let second = async {
             tokio::time::sleep(Duration::from_millis(50)).await;
             let started = Instant::now();
-            let out = vm.call_tool("ping", json!({}), &ctx, false).await.unwrap();
+            let out = common::serve(&vm, "ping", json!({}), &ctx).await.unwrap();
             (out, started.elapsed())
         };
         let (done, (pong, waited)) = tokio::join!(first, second);

@@ -226,7 +226,7 @@ test.describe('Notebooks journeys', () => {
     await openNotebooks(page)
     await write(page, mine, 'What I wrote.')
     await expect(row(page, theirs)).toHaveCount(0)
-    // the agent calls the app's tools over MCP; a tool tells the open window with app.emit: no reload, no click
+    // the agent calls the app's tools over MCP; a tool tells the open window with a notification: no reload, no click
     const written = JSON.parse(await callTool(`${ID}__write_note`, { title: theirs, body: `Said the agent, about [[${mine}]]. #agent` })) as {
       id: number
       created: boolean

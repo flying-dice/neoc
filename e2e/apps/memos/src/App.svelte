@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { api, type Note } from 'app:rpc'
+  type Note = VosApp.Memos.Note
+
+  // the page's methods are the app's private ones on the bus
+  const api = {
+    list: (): Promise<Note[]> => RPC.send_request('memos', '_list'),
+    add: (params: VosApp.Memos.AddParams): Promise<Note[]> => RPC.send_request('memos', '_add', params)
+  }
 
   let notes = $state<Note[]>([])
   let body = $state('')

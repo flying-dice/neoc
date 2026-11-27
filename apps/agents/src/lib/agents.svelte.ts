@@ -1,12 +1,33 @@
-import type { Agent, Api, Chat, Conversation, Host, Item } from 'app:rpc'
+type Agent = VosApp.Agents.Agent
+type Chat = VosApp.Agents.Chat
+type Conversation = VosApp.Agents.Conversation
+type Item = VosApp.Agents.Item
 
-/** What the window needs of the backend: the agents, the chats, and a turn in one of them. */
-export type AgentsRpc = Pick<
-  Api,
-  'agents' | 'addAgent' | 'updateAgent' | 'removeAgent' | 'chats' | 'start' | 'open' | 'send' | 'answer' | 'act' | 'stop' | 'removeChat'
->
-/** Where the backend's events are heard (`host.on`). */
-export type AgentsEvents = Pick<Host, 'on'>
+/**
+ * What the window needs of the backend: the agents, the chats, and a turn in one of them (the app's private methods
+ * on the bus, `_agents` ...: `App.svelte` sends them).
+ */
+export interface AgentsRpc {
+  agents(): Promise<Agent[]>
+  addAgent(params: VosApp.Agents.AddAgentParams): Promise<Agent[]>
+  updateAgent(params: VosApp.Agents.UpdateAgentParams): Promise<Agent[]>
+  removeAgent(params: VosApp.Agents.RemoveAgentParams): Promise<Agent[]>
+  chats(): Promise<Chat[]>
+  start(params: VosApp.Agents.StartParams): Promise<Conversation>
+  open(params: VosApp.Agents.OpenParams): Promise<Conversation>
+  send(params: VosApp.Agents.SendParams): Promise<Conversation>
+  answer(params: VosApp.Agents.AnswerParams): Promise<Conversation>
+  act(params: VosApp.Agents.ActParams): Promise<Conversation>
+  stop(params: VosApp.Agents.StopParams): Promise<Conversation>
+  removeChat(params: VosApp.Agents.RemoveChatParams): Promise<Chat[]>
+}
+/**
+ * Where the window hears the backend's notifications (`item`, `piece`, `state`, `turn`: `App.svelte` wires them to the
+ * bus) and the host's events (`host:reconnected`).
+ */
+export interface AgentsEvents {
+  on(name: string, fn: (data: unknown) => void): () => void
+}
 
 /** An item of the open chat, new or changed, as the backend sends it during a turn. */
 interface Changed {

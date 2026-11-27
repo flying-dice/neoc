@@ -1,8 +1,13 @@
-import type { Api, Screen } from 'app:rpc'
+type Screen = VosApp.Calculator.Screen
 import { keyTyped, type ClearLabel, type Key, type Operator } from './keys'
 
-/** What the keypad needs of the backend: `press`, which answers each key with the next screen. */
-export type CalculatorRpc = Pick<Api, 'press'>
+/**
+ * What the keypad needs of the backend: `press`, which answers each key with the next screen (the app's private method
+ * `_press` on the bus: `App.svelte` sends it).
+ */
+export interface CalculatorRpc {
+  press(params: VosApp.Calculator.PressParams): Promise<Screen>
+}
 
 /** What the keypad reads of a key going down on the keyboard (a `KeyboardEvent` has it). */
 export interface KeyStroke {

@@ -1,5 +1,5 @@
 /** Reading what an item carries: its `data` is JSON text, as the agent sent it or as the backend recorded it. */
-import type { Item } from 'app:rpc'
+type Item = VosApp.Agents.Item
 
 /** The JSON in an item's data, or undefined when there is none (or it is not JSON). */
 export function dataOf(item: Pick<Item, 'data'>): unknown {

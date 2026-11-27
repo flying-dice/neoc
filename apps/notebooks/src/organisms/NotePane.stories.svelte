@@ -3,7 +3,7 @@
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog, textArea } from '@vos/storybook/kit'
   import type { ComponentProps } from 'svelte'
-  import type { Note } from 'app:rpc'
+  type Note = VosApp.Notebooks.Note
   import NotePane from './NotePane.svelte'
   import type { Mode } from '../lib/notebooks.svelte'
 

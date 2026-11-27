@@ -6,7 +6,17 @@
  * longer held is refused and never made again, a process that cannot be held for ending can still be looked at,
  * asking it to quit is not forcing it, and the system may refuse.
  */
-import type { Cpu, Detail, Disk, Machine, Memory, Network, Overview, ProcessRef, ProcessRow, Snapshot, Swap } from 'app:rpc'
+type Cpu = VosApp.Processes.Cpu
+type Detail = VosApp.Processes.Detail
+type Disk = VosApp.Processes.Disk
+type Machine = VosApp.Processes.Machine
+type Memory = VosApp.Processes.Memory
+type Network = VosApp.Processes.Network
+type Overview = VosApp.Processes.Overview
+type ProcessRef = VosApp.Processes.ProcessRef
+type ProcessRow = VosApp.Processes.ProcessRow
+type Snapshot = VosApp.Processes.Snapshot
+type Swap = VosApp.Processes.Swap
 import type { ProcessesEvents, ProcessesRpc } from './processes.svelte'
 
 /** What the fake machine knows of one process, beyond what a row shows. */

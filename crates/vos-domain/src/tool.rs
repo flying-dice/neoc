@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 
-/// A tool as declared by an app (`app.tool { ... }`).
+/// A tool as an agent is shown it: a public method of the app's contract (or the handler's own `about`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
@@ -12,7 +12,7 @@ pub struct ToolSpec {
     #[serde(default)]
     pub description: String,
     pub input_schema: Value,
-    /// The tool does not change data (`readOnly = true` in Lua): shown to agents as a hint.
+    /// The tool does not change data (`x-readOnly` in the contract): shown to agents as a hint.
     #[serde(default)]
     pub read_only: bool,
 }

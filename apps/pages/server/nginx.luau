@@ -6,7 +6,6 @@
 --
 -- Nothing here talks to Docker or keeps anything: this is where a hostname is checked, and where the configuration
 -- is written.
-local rpc = require("../.app/rpc")
 local trim = require("lib:text").trim
 
 local nginx = {}
@@ -54,13 +53,13 @@ function nginx.hostname(raw: string): (string?, string?)
 end
 
 -- where the container sees a site's folder
-local function root(site: rpc.Site): string
+local function root(site: pages_Site): string
   return `/sites/{site.id}`
 end
 
 -- One of nginx's servers for a site: its files as they are, `index.html` for a folder, and the site's own
 -- `404.html` (nginx's when it has none) for what is not there.
-local function server(listen: string, names: { string }, site: rpc.Site): string
+local function server(listen: string, names: { string }, site: pages_Site): string
   local lines = { "  server {", `    listen {listen};` }
   if #names > 0 then
     table.insert(lines, `    server_name {table.concat(names, " ")};`)
@@ -76,7 +75,7 @@ end
 -- What the container is made from, for `sites`: the ones to serve, in the order they are written. A site with a
 -- port is the only server of that port, whatever name it is asked for; the sites with names share `settings.port`,
 -- where a name that is nobody's is answered with 404 rather than with the first site.
-function nginx.plan(settings: rpc.Settings, sites: { rpc.Site }): Plan
+function nginx.plan(settings: pages_Settings, sites: { pages_Site }): Plan
   local servers: { string } = {}
   local ports: { number } = {}
   local mounts: { Mount } = {}

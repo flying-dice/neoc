@@ -49,7 +49,7 @@ pub trait FileStore: Send + Sync {
 /// - A path is checked before the port sees it (relative, no `..`, no NUL, bounded: [`FilePath::parse`]).
 /// - The location itself cannot be written, removed, moved or copied, nor be a destination.
 /// - A directory cannot be moved or copied into itself, and a copy onto its own source is refused.
-/// - A read-only handle ([`Files::read_only`]) refuses every write with `permission_denied` (a `readOnly` tool
+/// - A read-only handle ([`Files::read_only`]) refuses every write with `permission_denied` (a read-only call
 ///   runs through one).
 #[derive(Clone)]
 pub struct Files {
@@ -120,7 +120,7 @@ impl Files {
         if self.read_only {
             return Err(FileError::new(
                 FileErrorKind::PermissionDenied,
-                "a readOnly tool cannot change files",
+                "a read-only call cannot change files",
             ));
         }
         Ok(())
