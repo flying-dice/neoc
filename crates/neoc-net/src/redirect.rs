@@ -22,12 +22,12 @@ use hyper::header::{
 use url::Url;
 
 /// Is `status` one of the five that are followed (when the response has a `Location`)?
-pub(super) fn is_redirect(status: u16) -> bool {
+pub(crate) fn is_redirect(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
 /// The method of the request a `status` redirect makes of one sent with `method`, and whether it keeps the body.
-pub(super) fn rewrite_method(status: u16, method: &str) -> (String, bool) {
+pub(crate) fn rewrite_method(status: u16, method: &str) -> (String, bool) {
     match status {
         303 if method == "HEAD" => ("HEAD".to_owned(), false),
         303 => ("GET".to_owned(), false),
@@ -38,7 +38,7 @@ pub(super) fn rewrite_method(status: u16, method: &str) -> (String, bool) {
 
 /// Take from `headers` what the next request must not carry: the body's headers when the body is dropped, and the
 /// origin-bound ones when the next URL is another origin.
-pub(super) fn strip_headers(headers: &mut HeaderMap, keeps_body: bool, same_origin: bool) {
+pub(crate) fn strip_headers(headers: &mut HeaderMap, keeps_body: bool, same_origin: bool) {
     if !keeps_body {
         for name in [
             CONTENT_LENGTH,
@@ -59,14 +59,14 @@ pub(super) fn strip_headers(headers: &mut HeaderMap, keeps_body: bool, same_orig
 }
 
 /// The URL a `Location` value names, resolved against `current`; `None` when it does not parse.
-pub(super) fn resolve(current: &Url, location: &str) -> Option<Url> {
+pub(crate) fn resolve(current: &Url, location: &str) -> Option<Url> {
     current.join(location).ok()
 }
 
 /// Are the two URLs the same origin (scheme, host and port)? Compared from the parsed parts, not with
 /// `Url::origin()`, which recurses over a nested `blob:` URL (RUSTSEC-2026-0592) and so must not meet a URL a
 /// server chose; both URLs are `http` or `https` here, which the caller has checked.
-pub(super) fn same_origin(a: &Url, b: &Url) -> bool {
+pub(crate) fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
         && a.host_str() == b.host_str()
         && a.port_or_known_default() == b.port_or_known_default()

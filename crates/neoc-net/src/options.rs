@@ -1,10 +1,9 @@
 //! A request's options, and the request they describe once checked.
 //!
-//! The options table is read by its type before the call runs: an option no function reads, or one of the wrong
-//! type, is refused as a wrong argument that names it, so a misspelt option is never dropped. What the types cannot
-//! say (a timeout that is not positive and finite, PEM that holds no certificate, a header name that is not one, a
-//! `Content-Length` that is not the body's) is checked here, before anything is sent, and is an `invalid_input`
-//! error returned as `(nil, err)` like every other failure of the call.
+//! A module reads its options table by its own type (so a misspelt option is refused as a wrong argument there) and
+//! hands the values here. What a type cannot say (a timeout that is not positive and finite, PEM that holds no
+//! certificate, a header name that is not one, a `Content-Length` that is not the body's) is checked here, before
+//! anything is sent, and is an `invalid_input` error.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -12,21 +11,20 @@ use std::time::Duration;
 use bytes::Bytes;
 use hyper::Method;
 use hyper::header::{CONTENT_LENGTH, HeaderMap, HeaderName, HeaderValue, TRANSFER_ENCODING};
-use mlua_ir::Options;
-use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tokio_rustls::rustls::RootCertStore;
 use tokio_rustls::rustls::pki_types::{CertificateDer, pem::PemObject};
 
-use super::error::HyperError;
+use crate::error::NetError;
 
 /// No data for this long ends a request (`idle_timeout`).
-pub(super) const DEFAULT_IDLE: Duration = Duration::from_secs(60);
+pub const DEFAULT_IDLE: Duration = Duration::from_secs(60);
 /// Connecting, TLS handshake included, takes at most this long (`connect_timeout`).
-pub(super) const DEFAULT_CONNECT: Duration = Duration::from_secs(10);
+pub const DEFAULT_CONNECT: Duration = Duration::from_secs(10);
 /// The most redirects followed (`max_redirects`), `URLSession`'s documented threshold.
-pub(super) const DEFAULT_REDIRECTS: u32 = 16;
+pub const DEFAULT_REDIRECTS: u32 = 16;
 /// The largest response body read (`max_body`): 64 MiB.
-pub(super) const DEFAULT_MAX_BODY: u64 = 64 << 20;
+pub const DEFAULT_MAX_BODY: u64 = 64 << 20;
 
 /// The methods HTTP defines (RFC 9110 section 9.1). They are case-sensitive on the wire, so a script that writes one
 /// in another case gets the standard method, as Node, Python and the Fetch standard do.
@@ -34,10 +32,8 @@ const STANDARD_METHODS: &[&str] =
     &["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"];
 
 /// What a request sends besides its method, URL and body, and the limits it keeps to.
-#[derive(Debug, Clone, Serialize, Deserialize, Options)]
-#[serde(default, deny_unknown_fields)]
-#[shape(module = "vnd:hyper")]
-pub struct RequestOptions {
+#[derive(Debug, Clone)]
+pub struct ClientOptions {
     /// Headers to send, by name. A `Content-Length` that is not the body's length is refused, a `Host` replaces
     /// the built-in one, and a name given twice in any case or a `Transfer-Encoding` is refused: the module frames
     /// the body.
@@ -65,7 +61,7 @@ pub struct RequestOptions {
     pub max_body: u64,
 }
 
-impl Default for RequestOptions {
+impl Default for ClientOptions {
     fn default() -> Self {
         Self {
             headers: BTreeMap::new(),
@@ -80,9 +76,22 @@ impl Default for RequestOptions {
     }
 }
 
+/// The body of a request.
+#[derive(Debug, Default)]
+pub enum RequestBody {
+    /// None: a request that carries content (`POST`, `PUT`, `PATCH`) says `Content-Length: 0`.
+    #[default]
+    Empty,
+    /// The whole body, sent with its length.
+    Full(Bytes),
+    /// A body written as it goes, sent chunked: the chunks in the order they come, until the sender is dropped. An
+    /// error ends the request. It is sent once, so a 307 or 308 redirect (which sends the body again) fails.
+    Stream(mpsc::Receiver<Result<Bytes, std::io::Error>>),
+}
+
 /// The limits of one request.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Limits {
+pub(crate) struct Limits {
     pub connect: Duration,
     pub idle: Duration,
     /// For the whole request, redirects and body included; none by default.
@@ -94,13 +103,13 @@ pub(super) struct Limits {
 
 /// A request as the arguments describe it, checked and ready to send.
 pub struct Prepared {
-    pub(super) method: String,
-    pub(super) url: String,
-    pub(super) headers: HeaderMap,
-    pub(super) body: Option<Bytes>,
+    pub(crate) method: String,
+    pub(crate) url: String,
+    pub(crate) headers: HeaderMap,
+    pub(crate) body: RequestBody,
     /// The certificates of `ca_pem`, checked: the only ones trusted, on every hop.
-    pub(super) ca_pem: Option<RootCertStore>,
-    pub(super) limits: Limits,
+    pub(crate) ca_pem: Option<RootCertStore>,
+    pub(crate) limits: Limits,
 }
 
 impl Prepared {
@@ -108,20 +117,20 @@ impl Prepared {
     pub fn new(
         method: &str,
         url: String,
-        body: Option<Vec<u8>>,
-        opts: RequestOptions,
-    ) -> Result<Self, HyperError> {
+        body: RequestBody,
+        opts: &ClientOptions,
+    ) -> Result<Self, NetError> {
         let method = normalize_method(method)?;
         let headers = headers_of(&opts.headers)?;
         // checked before anything is sent and whatever the URL's scheme, so a bad value is never silently unused
         let ca_pem = opts.ca_pem.as_deref().map(roots_of).transpose()?;
         if opts.max_body == 0 {
-            return Err(HyperError::invalid_input(
+            return Err(NetError::invalid_input(
                 "max_body must be a positive whole number of bytes, got 0",
             ));
         }
         if opts.max_redirects == 0 {
-            return Err(HyperError::invalid_input(
+            return Err(NetError::invalid_input(
                 "max_redirects must be a positive whole number of redirects, got 0 (follow_redirects = false \
                  follows none)",
             ));
@@ -133,26 +142,34 @@ impl Prepared {
             max_body: opts.max_body,
             redirects: if opts.follow_redirects { opts.max_redirects } else { 0 },
         };
-        let prepared = Self { method, url, headers, body: body.map(Bytes::from), ca_pem, limits };
+        let prepared = Self { method, url, headers, body, ca_pem, limits };
         prepared.check_content_length()?;
         Ok(prepared)
     }
 
     /// A `Content-Length` the caller set must be the length of the body: a shorter one would cut the body off
     /// silently and a longer one would hang the request.
-    fn check_content_length(&self) -> Result<(), HyperError> {
+    fn check_content_length(&self) -> Result<(), NetError> {
         let Some(value) = self.headers.get(CONTENT_LENGTH) else {
             return Ok(());
         };
         let declared: u64 =
             value.to_str().ok().and_then(|s| s.trim().parse().ok()).ok_or_else(|| {
-                HyperError::invalid_input("the Content-Length header is not a whole number")
+                NetError::invalid_input("the Content-Length header is not a whole number")
             })?;
-        let actual = self.body.as_ref().map_or(0, |b| b.len() as u64);
+        let actual = match &self.body {
+            RequestBody::Empty => 0,
+            RequestBody::Full(bytes) => bytes.len() as u64,
+            RequestBody::Stream(_) => {
+                return Err(NetError::invalid_input(
+                    "a streamed body is sent chunked and has no Content-Length; drop the header",
+                ));
+            }
+        };
         if declared == actual {
             Ok(())
         } else {
-            Err(HyperError::invalid_input(format!(
+            Err(NetError::invalid_input(format!(
                 "the Content-Length header says {declared} but the body is {actual} bytes; \
                  drop the header and the module sets it"
             )))
@@ -161,57 +178,57 @@ impl Prepared {
 }
 
 /// A number of seconds as a duration: positive and finite.
-fn seconds(name: &str, secs: f64) -> Result<Duration, HyperError> {
+pub(crate) fn seconds(name: &str, secs: f64) -> Result<Duration, NetError> {
     Duration::try_from_secs_f64(secs).ok().filter(|d| !d.is_zero()).ok_or_else(|| {
-        HyperError::invalid_input(format!(
+        NetError::invalid_input(format!(
             "{name} must be a positive, finite number of seconds that a duration can hold, got {secs}"
         ))
     })
 }
 
 /// The certificates of `ca_pem`, each usable as a trust anchor.
-fn roots_of(pem: &str) -> Result<RootCertStore, HyperError> {
+pub(crate) fn roots_of(pem: &str) -> Result<RootCertStore, NetError> {
     let mut roots = RootCertStore::empty();
     for cert in CertificateDer::pem_slice_iter(pem.as_bytes()) {
-        let cert = cert.map_err(|e| HyperError::invalid_input(format!("ca_pem is not valid PEM: {e}")))?;
+        let cert = cert.map_err(|e| NetError::invalid_input(format!("ca_pem is not valid PEM: {e}")))?;
         roots
             .add(cert)
-            .map_err(|e| HyperError::invalid_input(format!("ca_pem holds an unusable certificate: {e}")))?;
+            .map_err(|e| NetError::invalid_input(format!("ca_pem holds an unusable certificate: {e}")))?;
     }
     if roots.is_empty() {
-        return Err(HyperError::invalid_input("ca_pem holds no certificate"));
+        return Err(NetError::invalid_input("ca_pem holds no certificate"));
     }
     Ok(roots)
 }
 
 /// A method as the script wrote it: a standard one in any case is the standard one (`put` is `PUT`), any other is
 /// sent as written if it is a valid method token.
-fn normalize_method(method: &str) -> Result<String, HyperError> {
+fn normalize_method(method: &str) -> Result<String, NetError> {
     let upper = method.to_ascii_uppercase();
     let method = if STANDARD_METHODS.contains(&upper.as_str()) { upper } else { method.to_owned() };
     Method::from_bytes(method.as_bytes())
         .map(|_| method)
-        .map_err(|_| HyperError::invalid_input("method is not a valid HTTP method name"))
+        .map_err(|_| NetError::invalid_input("method is not a valid HTTP method name"))
 }
 
 /// The headers a map of names and values says, checked as header names and values. Names are case-insensitive, so
 /// one written twice (`Host` and `host`) is refused rather than sent twice, and `Transfer-Encoding` is refused: the
 /// module frames the body, and a second framing would make the request something other than what was asked for.
-fn headers_of(given: &BTreeMap<String, String>) -> Result<HeaderMap, HyperError> {
+pub(crate) fn headers_of(given: &BTreeMap<String, String>) -> Result<HeaderMap, NetError> {
     let mut headers = HeaderMap::new();
     for (name, value) in given {
         let header = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| HyperError::invalid_input(format!("`{name}` is not a valid header name")))?;
+            .map_err(|_| NetError::invalid_input(format!("`{name}` is not a valid header name")))?;
         // `HeaderValue` refuses control characters, CR and LF included
         let value = HeaderValue::from_bytes(value.as_bytes())
-            .map_err(|_| HyperError::invalid_input(format!("the value of header `{name}` is not valid")))?;
+            .map_err(|_| NetError::invalid_input(format!("the value of header `{name}` is not valid")))?;
         if header == TRANSFER_ENCODING {
-            return Err(HyperError::invalid_input(
+            return Err(NetError::invalid_input(
                 "the Transfer-Encoding header is set by the module; drop it",
             ));
         }
         if headers.contains_key(&header) {
-            return Err(HyperError::invalid_input(format!(
+            return Err(NetError::invalid_input(format!(
                 "header `{header}` is given twice (header names are case-insensitive)"
             )));
         }
@@ -224,49 +241,50 @@ fn headers_of(given: &BTreeMap<String, String>) -> Result<HeaderMap, HyperError>
 mod tests {
     use super::*;
 
-    fn refused(prepared: Result<Prepared, HyperError>) -> String {
+    fn refused(prepared: Result<Prepared, NetError>) -> String {
         match prepared {
-            Err(HyperError::InvalidInput { reason }) => reason,
+            Err(NetError::InvalidInput { reason }) => reason,
             Err(other) => panic!("expected invalid_input, got {other:?}"),
             Ok(_) => panic!("expected invalid_input, got a request"),
         }
     }
 
-    fn get(opts: RequestOptions) -> Result<Prepared, HyperError> {
-        Prepared::new("GET", "http://localhost/".to_owned(), None, opts)
+    fn get(opts: ClientOptions) -> Result<Prepared, NetError> {
+        Prepared::new("GET", "http://localhost/".to_owned(), RequestBody::Empty, &opts)
     }
 
     #[test]
     fn the_defaults_are_the_documented_limits() {
-        let prepared = get(RequestOptions::default()).unwrap();
+        let prepared = get(ClientOptions::default()).unwrap();
         assert_eq!(prepared.limits.connect, Duration::from_secs(10));
         assert_eq!(prepared.limits.idle, Duration::from_secs(60));
         assert_eq!(prepared.limits.total, None);
         assert_eq!(prepared.limits.max_body, 64 << 20);
         assert_eq!(prepared.limits.redirects, 16);
-        assert!(prepared.headers.is_empty() && prepared.ca_pem.is_none() && prepared.body.is_none());
+        assert!(prepared.headers.is_empty() && prepared.ca_pem.is_none());
+        assert!(matches!(prepared.body, RequestBody::Empty));
     }
 
     #[test]
     fn follow_redirects_false_follows_none_whatever_the_limit() {
-        let opts = RequestOptions { follow_redirects: false, max_redirects: 5, ..RequestOptions::default() };
+        let opts = ClientOptions { follow_redirects: false, max_redirects: 5, ..ClientOptions::default() };
         assert_eq!(get(opts).unwrap().limits.redirects, 0);
-        let opts = RequestOptions { max_redirects: 5, ..RequestOptions::default() };
+        let opts = ClientOptions { max_redirects: 5, ..ClientOptions::default() };
         assert_eq!(get(opts).unwrap().limits.redirects, 5);
     }
 
     #[test]
     fn a_time_limit_is_positive_and_finite() {
         for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
-            let reason = refused(get(RequestOptions { connect_timeout: bad, ..RequestOptions::default() }));
+            let reason = refused(get(ClientOptions { connect_timeout: bad, ..ClientOptions::default() }));
             assert!(reason.starts_with("connect_timeout must be"), "{reason}");
-            let reason = refused(get(RequestOptions { idle_timeout: bad, ..RequestOptions::default() }));
+            let reason = refused(get(ClientOptions { idle_timeout: bad, ..ClientOptions::default() }));
             assert!(reason.starts_with("idle_timeout must be"), "{reason}");
-            let reason = refused(get(RequestOptions { timeout: Some(bad), ..RequestOptions::default() }));
+            let reason = refused(get(ClientOptions { timeout: Some(bad), ..ClientOptions::default() }));
             assert!(reason.starts_with("timeout must be"), "{reason}");
         }
         // a very large one is in effect no limit, and is taken
-        let opts = RequestOptions {
+        let opts = ClientOptions {
             timeout: Some(1e9),
             idle_timeout: 1e9,
             connect_timeout: 1e9,
@@ -277,9 +295,9 @@ mod tests {
 
     #[test]
     fn a_size_or_hop_limit_of_zero_is_refused() {
-        let reason = refused(get(RequestOptions { max_body: 0, ..RequestOptions::default() }));
+        let reason = refused(get(ClientOptions { max_body: 0, ..ClientOptions::default() }));
         assert!(reason.starts_with("max_body must be"), "{reason}");
-        let reason = refused(get(RequestOptions { max_redirects: 0, ..RequestOptions::default() }));
+        let reason = refused(get(ClientOptions { max_redirects: 0, ..ClientOptions::default() }));
         assert!(reason.starts_with("max_redirects must be"), "{reason}");
     }
 
@@ -298,8 +316,8 @@ mod tests {
             Prepared::new(
                 "POST",
                 "http://localhost/".to_owned(),
-                Some(b"abc".to_vec()),
-                RequestOptions { headers, ..RequestOptions::default() },
+                RequestBody::Full(Bytes::from_static(b"abc")),
+                &ClientOptions { headers, ..ClientOptions::default() },
             )
         };
         assert!(refused(with(&[("bad name", "x")])).contains("is not a valid header name"));
@@ -315,7 +333,7 @@ mod tests {
     #[test]
     fn ca_pem_must_hold_a_usable_certificate() {
         let with =
-            |pem: &str| get(RequestOptions { ca_pem: Some(pem.to_owned()), ..RequestOptions::default() });
+            |pem: &str| get(ClientOptions { ca_pem: Some(pem.to_owned()), ..ClientOptions::default() });
         assert_eq!(refused(with("nonsense")), "ca_pem holds no certificate");
         let reason = refused(with("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"));
         assert!(reason.starts_with("ca_pem holds an unusable certificate"), "{reason}");

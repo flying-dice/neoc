@@ -1,4 +1,4 @@
-//! The TLS client settings of `vnd:hyper`: rustls over the `ring` provider, the certificate checked by the platform
+//! The TLS client settings: rustls over the `ring` provider, the certificate checked by the platform
 //! verifier (the operating system's trust store), or by exactly the certificates of `ca_pem` when the request gives
 //! them (read and checked with the options, `options::ca_pem`).
 
@@ -9,21 +9,21 @@ use tokio_rustls::{
     rustls::{self, ClientConfig, RootCertStore},
 };
 
-use super::error::HyperError;
+use crate::error::NetError;
 
 /// The connector for a request, built when the first `https` URL needs it and kept for the hops after it (`ca_pem`
 /// applies to every hop).
-pub(super) struct Tls {
+pub(crate) struct Tls {
     ca_pem: Option<RootCertStore>,
     built: Option<TlsConnector>,
 }
 
 impl Tls {
-    pub(super) fn new(ca_pem: Option<RootCertStore>) -> Self {
+    pub(crate) fn new(ca_pem: Option<RootCertStore>) -> Self {
         Self { ca_pem, built: None }
     }
 
-    pub(super) fn connector(&mut self) -> Result<TlsConnector, HyperError> {
+    pub(crate) fn connector(&mut self) -> Result<TlsConnector, NetError> {
         if let Some(built) = &self.built {
             return Ok(built.clone());
         }
@@ -33,18 +33,18 @@ impl Tls {
     }
 }
 
-fn build(ca_pem: Option<RootCertStore>) -> Result<TlsConnector, HyperError> {
+fn build(ca_pem: Option<RootCertStore>) -> Result<TlsConnector, NetError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| HyperError::tls(e.to_string()))?;
+        .map_err(|e| NetError::tls(e.to_string()))?;
     let config = match ca_pem {
         None => {
             use rustls_platform_verifier::BuilderVerifierExt;
             builder
                 .with_platform_verifier()
                 .map_err(|e| {
-                    HyperError::tls(format!("the platform certificate verifier is unavailable: {e}"))
+                    NetError::tls(format!("the platform certificate verifier is unavailable: {e}"))
                 })?
                 .with_no_client_auth()
         }
