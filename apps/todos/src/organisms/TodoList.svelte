@@ -69,6 +69,7 @@
 
 <section class="list" aria-label={title}>
   <header class="bar">
+    <div class="side">
     {#if back}
       <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -77,8 +78,12 @@
         Lists
       </ui-button>
     {/if}
-    {#if list}<span class="dot" style:background="var(--ios-{list.color})"></span>{/if}
-    <h1 data-testid="todos-title">{title}</h1>
+    </div>
+    <div class="title">
+      {#if list}<span class="dot" style:background="var(--ios-{list.color})"></span>{/if}
+      <h1 data-testid="todos-title">{title}</h1>
+    </div>
+    <div class="side end">
     <p class="count" data-testid="todos-count">{todos.length}</p>
     {#if list && removable}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -94,6 +99,7 @@
         Delete List
       </ui-button>
     {/if}
+    </div>
   </header>
   {#if list && confirming}
     <ui-alert
@@ -160,26 +166,48 @@
     align-items: center;
     gap: 8px;
     min-height: 44px;
-    padding: 0 16px 6px;
+    padding: 0 16px 8px;
   }
+  .title {
+    position: relative;
+    min-width: 0;
+  }
+  /* the list's colour sits beside its name without moving the name off the bar's centre */
   .dot {
-    flex: none;
+    position: absolute;
+    inset-inline-end: 100%;
+    margin-inline-end: 8px;
+    top: 50%;
+    translate: 0 -50%;
     width: 12px;
     height: 12px;
     border-radius: 50%;
   }
+  /* the title is centred between a leading and a trailing group of equal share */
+  .side {
+    flex: 1 1 0;
+    min-width: min-content;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .end {
+    justify-content: flex-end;
+  }
   h1 {
     margin: 0;
     min-width: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
+    letter-spacing: var(--tracking-body);
+    text-align: center;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .count {
-    margin: 0 auto 0 0;
-    font: var(--type-title3);
+    margin: 0;
+    font: var(--type-subheadline);
+    letter-spacing: var(--tracking-subheadline);
     color: var(--label-secondary);
     font-variant-numeric: tabular-nums;
   }
