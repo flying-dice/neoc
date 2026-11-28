@@ -41,6 +41,7 @@ pub mod lib {
     pub use neoc_vm_lib_unicode as unicode;
     pub use neoc_vm_lib_url as url;
     pub use neoc_vm_lib_vcr as vcr;
+    pub use neoc_vm_lib_websocket as websocket;
 }
 /// `std:*`: the modules of `neoc-vm-std`, under the paths they had.
 pub mod std {
