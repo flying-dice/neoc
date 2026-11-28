@@ -41,13 +41,17 @@ export interface ProbeRpc {
   probe(params: VosApp.Telemetry.ProbeParams): Promise<VosApp.Telemetry.ProbeResult>
 }
 
-/** What the window traces its own work with (`vos.tracing`'s `span`): a probe is a span, and its call a child of it. */
+/**
+ * What the window traces its own work with (`vos.tracing`): a probe is a span, and its call a child of it; a failure it
+ * catches and turns into something to show is a warning (the platform records a bus call's failure, not these).
+ */
 export interface Tracer {
   span(name: string, fields?: { readonly [key: string]: unknown }): { in_scope<T>(body: () => T): T }
+  warn(message: string, fields?: { readonly [key: string]: unknown }): void
 }
 
 /** No tracing at all (a test, a story): the work runs as it is. */
-export const untraced: Tracer = { span: () => ({ in_scope: (body) => body() }) }
+export const untraced: Tracer = { span: () => ({ in_scope: (body) => body() }), warn: () => {} }
 
 export interface TelemetryOptions {
   /** Runs the page's failing render outside any handler, as a framework's render would (a timer, by default). */
@@ -221,8 +225,13 @@ export class Telemetry {
       this.#failure = null
       this.#unavailable = null
     } catch (e) {
-      if (codeOf(e) === NOT_OFFERED) this.#unavailable = 'This host page does not offer telemetry to this app.'
-      else this.#failure = messageOf(e)
+      if (codeOf(e) === NOT_OFFERED) {
+        this.#tracer.warn('this host page does not offer telemetry', { error: messageOf(e) })
+        this.#unavailable = 'This host page does not offer telemetry to this app.'
+      } else {
+        this.#tracer.warn('could not read the telemetry', { error: messageOf(e), view: this.#view })
+        this.#failure = messageOf(e)
+      }
     } finally {
       this.#loaded = true
     }
@@ -275,6 +284,7 @@ export class Telemetry {
         const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
         return exportText(traceExport(traceId, found, this.summary, cutOff(found)))
       } catch (e) {
+        this.#tracer.warn('could not read the trace again to copy it', { error: messageOf(e), traceId })
         return exportText(traceExport(traceId, loaded, this.summary, `The trace could not be read again, so this is what the window had: ${messageOf(e)}`))
       }
     })
@@ -293,6 +303,7 @@ export class Telemetry {
         const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
         return exportText(logExport(log, found, summary, cutOff(found)))
       } catch (e) {
+        this.#tracer.warn('could not read the trace of the log to copy it', { error: messageOf(e), traceId })
         return exportText(logExport(log, null, summary, `The trace could not be read: ${messageOf(e)}`))
       }
     })
@@ -315,7 +326,8 @@ export class Telemetry {
       if (!this.#clipboard) throw new Error('There is no clipboard.')
       await this.#clipboard.write(text())
       answer = 'copied'
-    } catch {
+    } catch (e) {
+      this.#tracer.warn('could not copy to the clipboard', { error: messageOf(e) })
       answer = 'refused'
     }
     if (copy !== this.#copies) return

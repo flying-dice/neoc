@@ -83,7 +83,7 @@ describe('Telemetry', () => {
   test('a probe is a span of its own, whatever its call did', async () => {
     const opened: [string, unknown][] = []
     const backend = createFakeBackend()
-    const tracer = { span: (name: string, fields?: unknown) => (opened.push([name, fields]), { in_scope: <T,>(body: () => T) => body() }) }
+    const tracer = { span: (name: string, fields?: unknown) => (opened.push([name, fields]), { in_scope: <T,>(body: () => T) => body() }), warn: () => {} }
     const telemetry = new Telemetry(backend.reader, backend.rpc, { tracer })
     await telemetry.probe('fail')
     expect(opened).toEqual([['probe', { kind: 'fail' }]])
@@ -236,5 +236,33 @@ describe('copying what is known of a trace or a log', () => {
     expect(written).toHaveLength(1)
     expect(telemetry.copied).toBe('idle')
     expect(waits).toEqual([])
+  })
+
+  test('a failure the window catches and shows is warned of, once, where it is caught', async () => {
+    const warned: [string, unknown][] = []
+    const tracer = { span: () => ({ in_scope: <T,>(body: () => T) => body() }), warn: (message: string, fields?: unknown) => void warned.push([message, fields]) }
+    const given = (options: Parameters<typeof createFakeBackend>[0] = {}, clipboard?: Clipboard) => {
+      const backend = createFakeBackend(options)
+      return { backend, telemetry: new Telemetry(backend.reader, backend.rpc, { tracer, clipboard, after: () => {} }) }
+    }
+    const messages = () => warned.splice(0).map(([message]) => message)
+
+    await given({ failWith: rpcError(-32000, 'The host went away') }).telemetry.refresh()
+    expect(messages()).toEqual(['could not read the telemetry'])
+    await given({ failWith: rpcError(-32601, 'This host does not offer vos/telemetry/query') }).telemetry.refresh()
+    expect(messages()).toEqual(['this host page does not offer telemetry'])
+
+    const refused = given({}, { write: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) })
+    await refused.telemetry.open(RENDER_TRACE)
+    await refused.telemetry.copyTrace()
+    expect(warned).toEqual([['could not copy to the clipboard', { error: 'denied' }]])
+    warned.length = 0
+
+    const reading = given({}, { write: async (text) => void (await text) })
+    await reading.telemetry.open(RENDER_TRACE)
+    reading.backend.reader.query = () => Promise.reject(new Error('The host went away'))
+    await reading.telemetry.copyTrace()
+    await reading.telemetry.copyLog(LOGS[1]!)
+    expect(messages()).toEqual(['could not read the trace again to copy it', 'could not read the trace of the log to copy it'])
   })
 })
