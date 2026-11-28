@@ -264,7 +264,14 @@ async fn a_close_behind_a_send_to_a_peer_that_stopped_reading_is_cut_off_in_time
     let sender = lua.clone();
     let sending = tokio::spawn(async move {
         sender
-            .load("local ok, err = WS:send(string.rep('x', 64 * 1024 * 1024)) return tostring(ok) .. ' ' .. err.kind")
+            // sends until one stalls on the full buffers (however large the platform's are), and then fails
+            .load(
+                "local chunk = string.rep('x', 1024 * 1024)
+                while true do
+                    local ok, err = WS:send(chunk)
+                    if not ok then return tostring(ok) .. ' ' .. err.kind end
+                end",
+            )
             .eval_async::<String>()
             .await
     });
