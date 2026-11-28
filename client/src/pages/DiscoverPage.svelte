@@ -359,8 +359,9 @@
   }
   .hero h1 {
     margin: 0;
-    font: 700 30px/36px var(--font-display);
-    letter-spacing: 0.2px;
+    font: var(--type-title1);
+    font-weight: 700;
+    letter-spacing: var(--tracking-title1);
   }
   .hero p {
     margin: 0;

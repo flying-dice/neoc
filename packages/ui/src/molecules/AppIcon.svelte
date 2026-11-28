@@ -120,7 +120,7 @@
   {oncontextmenu}
   {onkeydown}
 >
-  <span class="plate" style:--plate-radius="{Math.round(size * 0.2237)}px">
+  <span class="plate">
     <IconTile {size} {background} shadow>
       <Icon name={icon} size={Math.round(size * 0.52)} weight={1.9} color="#fff" />
     </IconTile>
@@ -163,7 +163,7 @@
   .ios-app-icon:focus-visible .plate {
     outline: 3px solid var(--focus-ring);
     outline-offset: 3px;
-    border-radius: var(--plate-radius);
+    border-radius: var(--radius-icon);
   }
   .running {
     position: absolute;

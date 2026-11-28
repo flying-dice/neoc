@@ -27,7 +27,6 @@
   style:width="{size}px"
   style:height="{size}px"
   style:background
-  style:--tile-radius="{Math.round(size * 0.2237)}px"
 >
   {#if children}{@render children()}{/if}
 </span>
@@ -38,11 +37,11 @@
     flex: none;
     display: grid;
     place-items: center;
-    border-radius: var(--tile-radius);
+    border-radius: var(--radius-icon);
     color: #fff;
     overflow: hidden;
   }
   .shadow {
-    box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+    box-shadow: var(--shadow-card);
   }
 </style>

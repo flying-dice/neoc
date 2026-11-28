@@ -2,9 +2,11 @@
   @atom Toast — a transient message on an elevated card: the text and a dismiss button. A polite `status` message.
   While the pointer or keyboard focus is on the toast it reports `onhold`, and `onrelease` when both have left, so
   the owner can pause its expiry (WCAG 2.2.1). The button is at least 44x44.
-  Test ids: `testid` on the toast, `${testid}-dismiss`.
+  Atoms: Icon. Test ids: `testid` on the toast, `${testid}-dismiss`.
 -->
 <script lang="ts">
+  import Icon from './Icon.svelte'
+
   interface Props {
     testid: string
     text: string
@@ -46,7 +48,7 @@
 >
   <span class="text">{text}</span>
   <button type="button" class="dismiss" data-testid="{testid}-dismiss" aria-label="Dismiss" onclick={() => ondismiss?.()}>
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+    <Icon name="xmark" size={14} weight={2.8} />
   </button>
 </div>
 

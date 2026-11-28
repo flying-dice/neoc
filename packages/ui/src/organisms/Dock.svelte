@@ -148,14 +148,14 @@
     flex: none;
     display: inline-flex;
   }
-  /* the line between the kept apps and the recent ones: a separator that holds 3:1 on the tray in both themes */
+  /* the line between the kept apps and the recent ones */
   .divider {
     flex: none;
     width: 1px;
     border-radius: 1px;
-    background: var(--label-secondary);
+    background: var(--separator);
   }
-  /* A flat capsule (no shadow, no material) in the neutral pair that holds 4.5:1 on any accent or wallpaper. */
+  /* A capsule on the thick material (the text is --label on it, which holds 4.5:1 over any wallpaper). */
   .name {
     position: absolute;
     bottom: calc(100% + 10px);
@@ -163,8 +163,11 @@
     transform: translateX(-50%);
     padding: 4px 12px;
     border-radius: var(--radius-pill);
-    background: var(--label);
-    color: var(--bg-elevated);
+    background: var(--material-thick);
+    -webkit-backdrop-filter: var(--material-blur);
+    backdrop-filter: var(--material-blur);
+    box-shadow: var(--shadow-control);
+    color: var(--label);
     font: var(--type-footnote);
     letter-spacing: var(--tracking-footnote);
     white-space: nowrap;

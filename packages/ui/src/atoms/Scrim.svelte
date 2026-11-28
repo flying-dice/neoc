@@ -20,6 +20,6 @@
   .ios-scrim {
     position: absolute;
     inset: 0;
-    background: rgb(0 0 0 / 0.2);
+    background: var(--dimming);
   }
 </style>

@@ -68,8 +68,9 @@
     align-items: center;
     height: 28px;
     padding: 0 20px;
-    font: 600 15px/1 var(--font-text);
-    letter-spacing: -0.2px;
+    font: var(--type-subheadline);
+    font-weight: 600;
+    letter-spacing: var(--tracking-subheadline);
     /* light text over the wallpaper */
     color: #fff;
     text-shadow: 0 0 8px rgb(0 0 0 / 0.15);

@@ -131,7 +131,7 @@
        browse mode does not read it a second time; `aria-describedby` still reaches it. -->
   {#if description}<span id="{uid}-description" class="sr-only" aria-hidden="true">{description}</span>{/if}
   <button type="button" class="dismiss" data-testid="{testid}-dismiss" aria-label="Dismiss notification from {appName}" onclick={() => ondismiss?.()}>
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+    <Icon name="xmark" size={14} weight={2.8} />
   </button>
 </div>
 
@@ -211,8 +211,7 @@
     unicode-bidi: isolate;
     font: var(--type-caption1);
     color: var(--label-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: var(--tracking-caption);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
