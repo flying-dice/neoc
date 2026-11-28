@@ -188,3 +188,47 @@ async fn a_peers_close_is_answered_and_the_connection_released_while_the_script_
     // the reply echoes the peer's code, as tungstenite answers a close
     assert_eq!(got, "reply 4001 eof");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_peer_that_ignores_this_ends_close_is_cut_off_and_receive_ends() {
+    use tokio::io::AsyncReadExt as _;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (ended_tx, ended_rx) = tokio::sync::oneshot::channel::<String>();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        // the raw connection from here on: the client's close frame is read and never answered, until its end
+        let tcp = ws.get_mut();
+        let mut buf = [0_u8; 256];
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                match tcp.read(&mut buf).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        let _ = ended_tx.send(if ended.is_ok() { "released".to_owned() } else { "still open".to_owned() });
+    });
+    let lua = neoc_vm_core::make_engine().unwrap();
+    let got = run(
+        &lua,
+        port,
+        r#"
+        local ws = assert(websocket.connect(base .. "/"))
+        assert(ws:close(1000, "bye"))
+        -- the peer never answers: receive ends once the close wait is over, with `ws` still held
+        local message, err = ws:receive()
+        assert(message == nil and err == nil, tostring(err))
+        local _, late = ws:send("x")
+        return tostring(ws.close_code) .. " " .. late.kind
+        "#,
+    )
+    .await;
+    assert_eq!(got, "1006 closed");
+    let ended =
+        tokio::time::timeout(std::time::Duration::from_secs(5), ended_rx).await.expect("the server ended");
+    assert_eq!(ended.unwrap(), "released");
+}

@@ -27,8 +27,10 @@ use neoc_vm_core::lifecycle::Life;
 const QUEUE: usize = 64;
 /// The longest close reason RFC 6455 allows: a control frame's 125 bytes less the code's two.
 const MAX_REASON: usize = 123;
-/// How long the peer has to end the connection once the close handshake is done, before this end drops it.
-const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long the peer has to finish the close handshake (answer this end's close, or end the connection once it has
+/// answered the peer's), before this end drops the connection.
+const CLOSE_WAIT: std::time::Duration =
+    if cfg!(test) { std::time::Duration::from_millis(500) } else { std::time::Duration::from_secs(5) };
 
 /// The writing half, shared by the script's calls and the reading task; `None` once the connection is over (the
 /// reading task let go of it).
@@ -245,12 +247,37 @@ impl Inner {
             return Ok(());
         }
         let frame = CloseFrame { code: CloseCode::from(code), reason: reason.into() };
-        let mut sink = self.sink.lock().await;
-        let Some(sink) = sink.as_mut() else { return Ok(()) };
-        match sink.send(Frame::Close(Some(frame))).await {
+        let sent = {
+            let mut sink = self.sink.lock().await;
+            let Some(sink) = sink.as_mut() else { return Ok(()) };
+            sink.send(Frame::Close(Some(frame))).await
+        };
+        self.drop_after_close_wait();
+        match sent {
             Ok(()) | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => Ok(()),
             Err(e) => Err(lost(&e)),
         }
+    }
+
+    /// A peer that does not answer this end's close within [`CLOSE_WAIT`] (or a reading task stuck behind a full
+    /// queue) is cut off: the reading task stops, which ends a `receive` that waits, and both halves are dropped.
+    fn drop_after_close_wait(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let reader = self.reader.clone();
+        let sink = Arc::clone(&self.sink);
+        let closed = Arc::clone(&self.closed);
+        runtime.spawn(async move {
+            tokio::time::sleep(CLOSE_WAIT).await;
+            if reader.is_finished() {
+                return;
+            }
+            reader.abort();
+            drop(sink.lock().await.take());
+            let mut closed = closed.lock();
+            if closed.is_none() {
+                *closed = Some((1006, String::new()));
+            }
+        });
     }
 
     pub(crate) fn take_lines(this: &Arc<Self>) -> Option<Lines> {

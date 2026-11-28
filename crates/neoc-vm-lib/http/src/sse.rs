@@ -1,15 +1,17 @@
 //! The server-sent events parser of the HTML standard (§9.2.6, "Interpreting an event stream"), field by field.
 //!
 //! It is written here rather than taken from a crate because a reconnecting stream needs what a dispatching parser
-//! hides: an `id:` and a `retry:` take effect when their line is read, whether or not an event is dispatched after
-//! them, and an empty `id:` resets the last event id (which an event's empty id cannot tell apart from "no id").
+//! hides: a `retry:` takes effect when its line is read, an `id:` is committed by the blank line that ends its block
+//! whether or not an event is dispatched there, and an empty `id:` resets the last event id (which an event's empty
+//! id cannot tell apart from "no id"). An `id:` in a block the connection never ended is not committed, so a
+//! reconnection asks again from the last event that did arrive.
 
 use std::time::Duration;
 
 /// What a line of the stream does, in the order the lines came.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Item {
-    /// An `id:` field: the last event id is now this (`""` resets it).
+    /// A blank line committed an `id:` field of its block: the last event id is now this (`""` resets it).
     Id(String),
     /// A `retry:` field: the reconnection time is now this.
     Retry(Duration),
@@ -32,6 +34,8 @@ pub(crate) struct Parser {
     started: bool,
     event: String,
     data: String,
+    /// The standard's "last event ID buffer": an `id:` read since the last blank line, not committed yet.
+    id: Option<String>,
 }
 
 impl Parser {
@@ -76,6 +80,10 @@ impl Parser {
             line = line.strip_prefix("\u{feff}".as_bytes()).unwrap_or(line);
         }
         if line.is_empty() {
+            // the event source's last event id is set at every blank line, an event dispatched or not
+            if let Some(id) = self.id.take() {
+                items.push(Item::Id(id));
+            }
             if !self.data.is_empty() {
                 self.data.pop(); // the last data line's "\n"
                 let event = if self.event.is_empty() {
@@ -106,7 +114,7 @@ impl Parser {
                 self.data.push_str(&value);
                 self.data.push('\n');
             }
-            b"id" if !value.contains('\0') => items.push(Item::Id(value.into_owned())),
+            b"id" if !value.contains('\0') => self.id = Some(value.into_owned()),
             b"retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
                 if let Ok(millis) = value.parse::<u64>() {
                     items.push(Item::Retry(Duration::from_millis(millis)));
@@ -151,6 +159,13 @@ mod tests {
         items.extend(parser.feed(b"\n\r\ndata:two\r\r: a comment\ndata"));
         items.extend(parser.feed(b"\n\ndata: cut"));
         assert_eq!(items, [event("message", "one"), event("message", "two"), event("message", "")]);
+    }
+
+    #[test]
+    fn an_id_in_a_block_the_stream_never_ended_is_not_committed() {
+        let mut parser = Parser::default();
+        let items = parser.feed(b"id: 1\ndata: delivered\n\nid: 2\ndata: partial\n");
+        assert_eq!(items, [Item::Id("1".to_owned()), event("message", "delivered")]);
     }
 
     #[test]

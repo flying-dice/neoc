@@ -19,11 +19,12 @@ local roster = require("./roster")
 local sandbox = require("./sandbox")
 local strings = require("lib:text")
 local task = require("std:task")
+local time = require("std:time")
 local websocket = require("lib:websocket")
 
 -- Who this app says it is to an agent (`initialize`): the app and its version (package.json).
 local CLIENT = { name = "vos", version = "0.7.2" }
--- Seconds the WebSocket to a remote agent may take to open, and then its answer to `initialize`.
+-- Seconds the WebSocket to a remote agent may take to open and its answer to `initialize` together.
 local CONNECT_TIMEOUT = 30
 -- Seconds the agent's answer to `initialize` may take when its program has just started.
 local START_TIMEOUT = 60
@@ -130,10 +131,12 @@ local function nothing(): string
 end
 
 -- ACP over `lines`, initialized: the connection and the agent's answer. An agent that does not answer `initialize`
--- within `timeout` seconds is disconnected. Otherwise the problem, in the person's words.
+-- within `timeout` seconds is disconnected, and the person told that it did not answer within `limit` seconds (the
+-- whole limit, of which `timeout` is what is left). Otherwise the problem, in the person's words.
 local function initialized(
   lines: vnd_agent_client_protocol_Lines,
-  timeout: number
+  timeout: number,
+  limit: number
 ): (
   vnd_agent_client_protocol_ConnectionTo?,
   vnd_agent_client_protocol_InitializeResponse?,
@@ -157,7 +160,7 @@ local function initialized(
   if not agent then
     connection:close()
     if late then
-      return nil, nil, `The agent did not answer in time: no answer to initialize within {timeout}s.`
+      return nil, nil, `The agent did not answer in time: it was not ready within {limit}s.`
     end
     return nil, nil, transport.sentence(failed)
   end
@@ -170,6 +173,8 @@ local function remote(_chat: string, agent: roster.Agent): (Opened?, string?)
   if problem then
     return nil, problem
   end
+  -- one deadline for the socket and `initialize` together
+  local started = time.Instant.now()
   local ws, refused = websocket.connect(agent.url, {
     headers = if token then { Authorization = `Bearer {token}` } else nil,
     connect_timeout = CONNECT_TIMEOUT,
@@ -178,7 +183,8 @@ local function remote(_chat: string, agent: roster.Agent): (Opened?, string?)
     return nil, transport.sentence(refused)
   end
   local socket = ws
-  local cx, answer, failed = initialized((assert(acp.Lines.new(socket))), CONNECT_TIMEOUT)
+  local left = math.max(CONNECT_TIMEOUT - started:elapsed():as_secs_f64(), 0.001)
+  local cx, answer, failed = initialized((assert(acp.Lines.new(socket))), left, CONNECT_TIMEOUT)
   if not cx or not answer then
     socket:close()
     return nil, failed
@@ -245,7 +251,8 @@ local function container(chat: string, agent: roster.Agent): (Opened?, string?)
     task.spawn(sandbox.stop, chat)
     attach:close_input()
   end
-  local cx, answer, refused = initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT)
+  local cx, answer, refused =
+    initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT, START_TIMEOUT)
   if not cx or not answer then
     close()
     return nil, transport.quoted(refused or "The agent did not answer.", errors.text())
@@ -340,7 +347,8 @@ local function program(_chat: string, agent: roster.Agent): (Opened?, string?)
       running:kill()
     end)
   end
-  local cx, answer, failed = initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT)
+  local cx, answer, failed =
+    initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT, START_TIMEOUT)
   if not cx or not answer then
     close()
     return nil, transport.quoted(failed or "The agent did not answer.", errors.text())

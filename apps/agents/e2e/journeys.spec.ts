@@ -444,6 +444,19 @@ test.describe('Agents journeys', () => {
     await turnOver(page)
   })
 
+  test('AG10b: an agent that takes the connection and never answers is given up on after 30 seconds; the chat is free again', async ({ page }) => {
+    // the app's limit for a remote agent's socket and its answer to `initialize` together
+    test.setTimeout(120_000)
+    const silent = () => [...agent.connections].filter((connection) => !connection.initializes)
+    await chatting(page, `${endpoint}?initialize=never`)
+    await say(page, 'hello')
+    await expect.poll(() => silent().length).toBe(1)
+    await expect(item(page, 'error')).toContainText('The agent did not answer in time', { timeout: 45_000 })
+    await turnOver(page)
+    // the connection was closed, not left open
+    await expect.poll(() => silent().length).toBe(0)
+  })
+
   test('AG11: change an agent and remove it; its connection closes, and a chat with it can still be read, and deleted', async ({ page }) => {
     const name = await chatting(page)
     await say(page, 'hello')

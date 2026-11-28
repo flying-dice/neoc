@@ -381,3 +381,41 @@ async fn an_empty_id_resets_the_last_event_id_and_a_retry_alone_takes_effect() {
     assert_eq!(got, "a=1 b= c= d=9");
     assert_eq!(seen.lock()[..4], [r#"None"#, r#"Some("1")"#, "None", r#"Some("9")"#]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_event_the_connection_cut_short_does_not_move_the_last_event_id() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let port = serve(move |req: Request<Incoming>| {
+        let log = Arc::clone(&log);
+        async move {
+            let last = req.headers().get("last-event-id").map(|v| v.to_str().unwrap().to_owned());
+            let first = {
+                let mut log = log.lock();
+                log.push(format!("{last:?}"));
+                log.len() == 1
+            };
+            if first {
+                // event 2 is cut off by the end of the connection, before its blank line
+                full(200, "text/event-stream", "id: 1\ndata: delivered\n\nid: 2\ndata: partial\n")
+            } else {
+                full(200, "text/event-stream", "id: 2\ndata: again\n\n")
+            }
+        }
+    })
+    .await;
+    let lua = neoc_vm_core::make_engine().unwrap();
+    let got = run(
+        &lua,
+        port,
+        r#"
+        local events = assert(http.events(base .. "/stream", { retry = 0.05 }))
+        local first, second = assert(events:next()), assert(events:next())
+        events:close()
+        return first.data .. "=" .. first.id .. " " .. second.data .. "=" .. second.id
+        "#,
+    )
+    .await;
+    assert_eq!(got, "delivered=1 again=2");
+    assert_eq!(seen.lock()[..2], ["None", r#"Some("1")"#]);
+}
