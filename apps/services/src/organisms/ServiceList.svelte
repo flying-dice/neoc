@@ -40,15 +40,16 @@
         Filters
       </ui-button>
     {/if}
-    <div class="heading">
-      <h1 data-testid="services-title">{title}</h1>
-      <p class="summary" data-testid="services-summary">{summary(services)}</p>
-    </div>
+    <span class="grow"></span>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <ui-button variant="gray" square shape="circle" hit label="Register a service" disabled={!canRegister} onclick={onregister} data-testid="services-register">
+    <ui-button variant="plain" square hit label="Register a service" title="Register a service" disabled={!canRegister} onclick={onregister} data-testid="services-register">
       <ui-icon slot="icon" name="plus"></ui-icon>
     </ui-button>
   </header>
+  <div class="heading">
+    <h1 class="ios-large-title" data-testid="services-title">{title}</h1>
+    <p class="summary" data-testid="services-summary">{summary(services)}</p>
+  </div>
   <div class="search">
     <ui-text-field
       type="search"
@@ -63,7 +64,7 @@
   </div>
   <div class="scroll">
     {#if services.length > 0}
-      <ul class="services" data-testid="services-items">
+      <ui-list variant="inset" selection="single" label={title} class="services" data-testid="services-items"><ui-section>
         {#each services as service (service.label)}
           <ServiceRow
             {service}
@@ -73,7 +74,7 @@
             ontoggle={() => ontoggle(service)}
           />
         {/each}
-      </ul>
+      </ui-section></ui-list>
     {:else if filtered}
       <ui-empty-state icon="magnifyingglass" heading="No Matching Services" message="Nothing here matches. Change the filter or the search." data-testid="services-none"></ui-empty-state>
     {:else}
@@ -104,14 +105,15 @@
     min-height: 44px;
     padding: 0 16px 8px;
   }
-  .heading {
+  .grow {
     flex: 1;
+  }
+  .heading {
     min-width: 0;
+    padding: 0 16px 8px;
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -128,10 +130,6 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0 12px;
-  }
-  .services {
-    margin: 0;
-    padding: 0;
+    --list-inset: 16px;
   }
 </style>

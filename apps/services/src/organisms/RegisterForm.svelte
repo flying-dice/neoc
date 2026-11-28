@@ -76,7 +76,7 @@
         {#if keeps('working_directory')}
           <ui-row>
             <span class="key">Directory</span>
-            <ui-text-field variant="bare" label="Working directory" placeholder="/var/lib/my-app" autocomplete="off" autocapitalize="off" maxlength={4000} value={draft.workingDirectory} oninput={(e: Event) => ondraft({ workingDirectory: valueOf(e) })} data-testid="services-form-directory"></ui-text-field>
+            <ui-text-field variant="bare" label="Working Directory" placeholder="/var/lib/my-app" autocomplete="off" autocapitalize="off" maxlength={4000} value={draft.workingDirectory} oninput={(e: Event) => ondraft({ workingDirectory: valueOf(e) })} data-testid="services-form-directory"></ui-text-field>
           </ui-row>
         {/if}
         {#if keeps('environment')}
@@ -88,8 +88,8 @@
           <ui-row heading="Environment" value="Not Supported" data-testid="services-form-environment-unsupported"></ui-row>
         {/if}
         {#if keeps('autostart')}
-          <ui-row heading="Start automatically">
-            <ui-toggle slot="trailing" label="Start automatically" hit checked={draft.autostart} onchange={(e: Event) => ondraft({ autostart: (e.currentTarget as unknown as { checked: boolean }).checked })} data-testid="services-form-autostart"></ui-toggle>
+          <ui-row heading="Start Automatically">
+            <ui-toggle slot="trailing" label="Start Automatically" hit checked={draft.autostart} onchange={(e: Event) => ondraft({ autostart: (e.currentTarget as unknown as { checked: boolean }).checked })} data-testid="services-form-autostart"></ui-toggle>
           </ui-row>
         {/if}
         {#if keeps('restart')}
@@ -99,7 +99,7 @@
         {/if}
         {#if keeps('restart_delay_secs')}
           <ui-row>
-            <span class="key">Restart delay</span>
+            <span class="key">Restart Delay</span>
             <ui-text-field variant="bare" label="Restart delay in seconds" placeholder="Seconds" inputmode="numeric" autocomplete="off" maxlength={5} value={draft.restartDelay} oninput={(e: Event) => ondraft({ restartDelay: valueOf(e) })} data-testid="services-form-restart-delay"></ui-text-field>
           </ui-row>
         {/if}
@@ -135,8 +135,7 @@
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
   }
   .scroll {
     flex: 1;
