@@ -6,14 +6,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
-use eventsource_stream::Eventsource as _;
-use futures_util::StreamExt as _;
 use mlua::Lua;
 use mlua_ir::{LuaError, Shape};
 use neoc_net::{ClientOptions, NetError, Prepared, RequestBody, Spawner};
 use serde::{Deserialize, Serialize};
 
+use crate::sse;
 use neoc_vm_core::lifecycle::Life;
 
 /// Which time limit a `timed_out` request passed: the option that sets it, or the operating system's own.
@@ -112,6 +110,9 @@ pub enum FetchError {
         /// The status code.
         code: u16,
     },
+    /// The response was cancelled (`cancel()`) while this read waited on it.
+    #[error("the response was cancelled")]
+    Cancelled {},
     /// Anything else, reported and never hidden.
     #[error("{reason}")]
     Other {
@@ -174,14 +175,53 @@ pub(crate) fn client_options(
     }
 }
 
+/// A response's cancellation, as each of its readers watches it.
+#[derive(Clone)]
+pub(crate) struct Cancel(tokio::sync::watch::Receiver<bool>);
+
+impl Cancel {
+    /// A cancellation, and what sets it.
+    pub(crate) fn new() -> (tokio::sync::watch::Sender<bool>, Self) {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        (tx, Self(rx))
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        *self.0.borrow()
+    }
+
+    /// Wait until the response is cancelled (forever, when it never is).
+    async fn cancelled(&mut self) {
+        if self.0.wait_for(|cancelled| *cancelled).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// `work`, unless the response is cancelled first: then `cancelled`, and `work` (and the body it reads) is
+    /// dropped.
+    pub(crate) async fn or_cancelled<T>(
+        &self,
+        work: impl Future<Output = Result<T, FetchError>>,
+    ) -> Result<T, FetchError> {
+        let mut cancel = self.clone();
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(FetchError::Cancelled {}),
+            done = work => done,
+        }
+    }
+}
+
 /// The lines of `body`, without their `\n` or `\r\n`; the last one too when the body does not end with a newline.
-/// Bytes that are not UTF-8 become U+FFFD.
+/// Bytes that are not UTF-8 become U+FFFD. Cancelled, the stream gives `cancelled` and ends, and the body goes.
 pub(crate) fn lines(
     body: neoc_net::Body,
+    cancel: Cancel,
 ) -> impl futures_util::Stream<Item = Result<String, FetchError>> + Send {
     struct State {
         body: Option<neoc_net::Body>,
         pending: Vec<u8>,
+        cancel: Cancel,
     }
     fn line(mut bytes: Vec<u8>) -> String {
         if bytes.last() == Some(&b'\r') {
@@ -189,32 +229,41 @@ pub(crate) fn lines(
         }
         String::from_utf8_lossy(&bytes).into_owned()
     }
-    futures_util::stream::unfold(State { body: Some(body), pending: Vec::new() }, |mut state| async move {
-        loop {
-            if let Some(end) = state.pending.iter().position(|&b| b == b'\n') {
-                let rest = state.pending.split_off(end + 1);
-                let mut taken = std::mem::replace(&mut state.pending, rest);
-                taken.pop();
-                return Some((Ok(line(taken)), state));
-            }
-            let Some(body) = state.body.as_mut() else {
-                if state.pending.is_empty() {
-                    return None;
-                }
-                let last = std::mem::take(&mut state.pending);
-                return Some((Ok(line(last)), state));
-            };
-            match body.chunk().await {
-                Ok(Some(chunk)) => state.pending.extend_from_slice(&chunk),
-                Ok(None) => state.body = None,
-                Err(e) => {
+    futures_util::stream::unfold(
+        State { body: Some(body), pending: Vec::new(), cancel },
+        |mut state| async move {
+            loop {
+                if state.body.is_some() && state.cancel.is_cancelled() {
                     state.body = None;
                     state.pending.clear();
-                    return Some((Err(e.into()), state));
+                    return Some((Err(FetchError::Cancelled {}), state));
+                }
+                if let Some(end) = state.pending.iter().position(|&b| b == b'\n') {
+                    let rest = state.pending.split_off(end + 1);
+                    let mut taken = std::mem::replace(&mut state.pending, rest);
+                    taken.pop();
+                    return Some((Ok(line(taken)), state));
+                }
+                let Some(body) = state.body.as_mut() else {
+                    if state.pending.is_empty() {
+                        return None;
+                    }
+                    let last = std::mem::take(&mut state.pending);
+                    return Some((Ok(line(last)), state));
+                };
+                let read = async { body.chunk().await.map_err(FetchError::from) };
+                match state.cancel.or_cancelled(read).await {
+                    Ok(Some(chunk)) => state.pending.extend_from_slice(&chunk),
+                    Ok(None) => state.body = None,
+                    Err(e) => {
+                        state.body = None;
+                        state.pending.clear();
+                        return Some((Err(e), state));
+                    }
                 }
             }
-        }
-    })
+        },
+    )
 }
 
 /// One server-sent event.
@@ -275,41 +324,25 @@ impl Source {
         self,
         first: neoc_net::Body,
     ) -> impl futures_util::Stream<Item = Result<Event, FetchError>> + Send {
-        type Parsed = std::pin::Pin<
-            Box<
-                dyn futures_util::Stream<
-                        Item = Result<
-                            eventsource_stream::Event,
-                            eventsource_stream::EventStreamError<FetchError>,
-                        >,
-                    > + Send,
-            >,
-        >;
-        fn parse(body: neoc_net::Body) -> Parsed {
-            let bytes = futures_util::stream::unfold(Some(body), |body| async move {
-                let mut body = body?;
-                match body.chunk().await {
-                    Ok(Some(chunk)) => Some((Ok::<Bytes, FetchError>(chunk), Some(body))),
-                    Ok(None) => None,
-                    Err(e) => Some((Err(e.into()), None)),
-                }
-            });
-            Box::pin(bytes.eventsource())
+        /// One connection: its body, and the parser of what it sends.
+        struct Connection {
+            body: neoc_net::Body,
+            parser: sse::Parser,
         }
         struct State {
             source: Source,
-            parsed: Option<Parsed>,
-            /// The last event id, across connections: a new connection's parser starts with none.
+            connection: Option<Connection>,
+            /// What the connection's lines did and the stream has not acted on yet.
+            ready: std::collections::VecDeque<sse::Item>,
+            /// The last event id, across connections, as the HTML standard's `EventSource` keeps it.
             last_id: String,
-            /// The current connection set an id of its own.
-            set_id: bool,
             ended: bool,
         }
         let state = State {
             source: self,
-            parsed: Some(parse(first)),
+            connection: Some(Connection { body: first, parser: sse::Parser::default() }),
+            ready: std::collections::VecDeque::new(),
             last_id: String::new(),
-            set_id: false,
             ended: false,
         };
         futures_util::stream::unfold(state, |mut state| async move {
@@ -317,12 +350,23 @@ impl Source {
                 if state.ended {
                     return None;
                 }
-                let Some(parsed) = state.parsed.as_mut() else {
+                // the fields take effect in the order they came, an `id:` or a `retry:` with no event after it too
+                if let Some(item) = state.ready.pop_front() {
+                    match item {
+                        sse::Item::Id(id) => state.last_id = id,
+                        sse::Item::Retry(retry) => state.source.retry = retry,
+                        sse::Item::Event { event, data } => {
+                            let id = state.last_id.clone();
+                            return Some((Ok(Event { event, data, id }), state));
+                        }
+                    }
+                    continue;
+                }
+                let Some(connection) = state.connection.as_mut() else {
                     tokio::time::sleep(state.source.retry).await;
                     match state.source.open(&state.last_id).await {
                         Ok(body) => {
-                            state.parsed = Some(parse(body));
-                            state.set_id = false;
+                            state.connection = Some(Connection { body, parser: sse::Parser::default() });
                         }
                         // the network: try again, as a browser does
                         Err(
@@ -337,33 +381,23 @@ impl Source {
                     }
                     continue;
                 };
-                match parsed.next().await {
-                    Some(Ok(event)) => {
-                        if let Some(retry) = event.retry {
-                            state.source.retry = retry;
-                        }
-                        if state.set_id || !event.id.is_empty() {
-                            state.set_id = true;
-                            state.last_id.clone_from(&event.id);
-                        }
-                        let id = state.last_id.clone();
-                        return Some((Ok(Event { event: event.event, data: event.data, id }), state));
+                match connection.body.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let items = connection.parser.feed(&chunk);
+                        state.ready.extend(items);
                     }
-                    Some(Err(e)) => {
-                        state.parsed = None;
-                        if !state.source.reconnect {
-                            state.ended = true;
-                            let error = match e {
-                                eventsource_stream::EventStreamError::Transport(e) => e,
-                                other => FetchError::BadResponse { reason: other.to_string() },
-                            };
-                            return Some((Err(error), state));
-                        }
-                    }
-                    None => {
-                        state.parsed = None;
+                    // what was not ended by a blank line is not dispatched
+                    Ok(None) => {
+                        state.connection = None;
                         if !state.source.reconnect {
                             return None;
+                        }
+                    }
+                    Err(e) => {
+                        state.connection = None;
+                        if !state.source.reconnect {
+                            state.ended = true;
+                            return Some((Err(e.into()), state));
                         }
                     }
                 }

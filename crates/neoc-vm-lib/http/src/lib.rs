@@ -63,6 +63,7 @@
 mod client;
 #[cfg(test)]
 mod client_tests;
+mod sse;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -830,6 +831,11 @@ pub mod http {
         redirected: bool,
         max_body: u64,
         body: tokio::sync::Mutex<BodyState>,
+        /// Set by `cancel()`: every read of the body, waiting or to come, watches it.
+        cancel_tx: tokio::sync::watch::Sender<bool>,
+        cancel: client::Cancel,
+        /// Closes the body's connection, wherever the body is.
+        closer: tokio::task::AbortHandle,
     }
 
     /// A response: its status and headers, and its body, read once. Copies of the handle are the same response.
@@ -840,6 +846,8 @@ pub mod http {
 
     impl Response {
         fn new(response: neoc_net::Response, max_body: u64) -> Self {
+            let (cancel_tx, cancel) = client::Cancel::new();
+            let closer = response.body.closer();
             Self {
                 head: Arc::new(Head {
                     status: response.status,
@@ -848,13 +856,25 @@ pub mod http {
                     redirected: response.redirected,
                     max_body,
                     body: tokio::sync::Mutex::new(BodyState::Unread(response.body)),
+                    cancel_tx,
+                    cancel,
+                    closer,
                 }),
             }
+        }
+
+        /// The rest of `body`, at most `max_body` bytes, unless the response is cancelled first.
+        async fn whole(&self, body: neoc_net::Body) -> Result<Vec<u8>, FetchError> {
+            let max_body = self.head.max_body;
+            self.head.cancel.or_cancelled(async move { Ok(body.read_all(max_body).await?) }).await
         }
 
         /// The body, for a read that takes the rest of it; `None` when it was read already.
         async fn take(&self) -> Result<Option<neoc_net::Body>, FetchError> {
             let mut state = self.head.body.lock().await;
+            if self.head.cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
             match std::mem::replace(&mut *state, BodyState::Done) {
                 BodyState::Unread(body) => Ok(Some(body)),
                 BodyState::Lines => {
@@ -913,30 +933,38 @@ pub mod http {
         }
 
         /// The next piece of the body as it arrived: `(chunk, nil)`, `(nil, nil)` at the end, or `(nil, err)`.
+        /// A read waiting when the response is cancelled ends with `cancelled`.
         pub async fn read(&self) -> Result<Option<Bytes>, FetchError> {
+            let cancel = &self.head.cancel;
+            // a read that waits behind this one gets the lock once a cancel ends this one
             let mut state = self.head.body.lock().await;
+            if cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
             let body = match &mut *state {
                 BodyState::Unread(body) => body,
                 BodyState::Lines => return Err(being_read()),
                 BodyState::Done => return Ok(None),
             };
-            match body.chunk().await {
+            match cancel.or_cancelled(async { body.chunk().await.map_err(FetchError::from) }).await {
                 Ok(Some(chunk)) => Ok(Some(Bytes(chunk.to_vec()))),
                 Ok(None) => {
                     *state = BodyState::Done;
                     Ok(None)
                 }
                 Err(e) => {
+                    // the body goes, and its connection with it
                     *state = BodyState::Done;
-                    Err(e.into())
+                    Err(e)
                 }
             }
         }
 
         /// The rest of the body, as one string (whatever its bytes), at most `max_body` bytes. `""` once read.
+        /// One waiting when the response is cancelled ends with `cancelled`.
         pub async fn text(&self) -> Result<Bytes, FetchError> {
             match self.take().await? {
-                Some(body) => Ok(Bytes(body.read_all(self.head.max_body).await?)),
+                Some(body) => Ok(Bytes(self.whole(body).await?)),
                 None => Ok(Bytes(Vec::new())),
             }
         }
@@ -945,7 +973,7 @@ pub mod http {
         /// string, a number or a boolean, `nil` for `null`. A body that is not JSON is `bad_response`.
         pub async fn json(&self) -> Result<Option<Node>, FetchError> {
             let bytes = match self.take().await? {
-                Some(body) => body.read_all(self.head.max_body).await?,
+                Some(body) => self.whole(body).await?,
                 None => return Err(FetchError::invalid_input("the body was read already")),
             };
             let value: serde_json::Value = serde_json::from_slice(&bytes)
@@ -955,10 +983,14 @@ pub mod http {
 
         /// The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
         /// `items()`. Bytes that are not UTF-8 become U+FFFD.
+        /// Cancelled, the stream gives `cancelled` and ends.
         pub async fn lines(&self) -> Result<Stream<String, FetchError>, FetchError> {
             let mut state = self.head.body.lock().await;
+            if self.head.cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
             match std::mem::replace(&mut *state, BodyState::Lines) {
-                BodyState::Unread(body) => Ok(Stream::new(client::lines(body))),
+                BodyState::Unread(body) => Ok(Stream::new(client::lines(body, self.head.cancel.clone()))),
                 BodyState::Lines => Err(being_read()),
                 BodyState::Done => {
                     *state = BodyState::Done;
@@ -967,10 +999,15 @@ pub mod http {
             }
         }
 
-        /// Stop reading the body: its connection is closed. Reading after it gives the end.
-        pub async fn cancel(&self) {
-            let mut state = self.head.body.lock().await;
-            if matches!(*state, BodyState::Unread(_)) {
+        /// Stop reading the body: its connection is closed. A read that waits on it (`read`, `text`, `json`, a
+        /// `lines()` stream) ends with `cancelled`; a read after it gives the end. It does not wait for those reads.
+        pub fn cancel(&self) {
+            // the readers learn of it first, so that a closed connection reads as `cancelled`, not as lost
+            self.head.cancel_tx.send_replace(true);
+            self.head.closer.abort();
+            if let Ok(mut state) = self.head.body.try_lock()
+                && matches!(*state, BodyState::Unread(_))
+            {
                 *state = BodyState::Done;
             }
         }

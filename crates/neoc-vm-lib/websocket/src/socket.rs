@@ -27,6 +27,12 @@ use neoc_vm_core::lifecycle::Life;
 const QUEUE: usize = 64;
 /// The longest close reason RFC 6455 allows: a control frame's 125 bytes less the code's two.
 const MAX_REASON: usize = 123;
+/// How long the peer has to end the connection once the close handshake is done, before this end drops it.
+const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The writing half, shared by the script's calls and the reading task; `None` once the connection is over (the
+/// reading task let go of it).
+type Sink = Arc<tokio::sync::Mutex<Option<SplitSink<Socket, Frame>>>>;
 
 type Queue = mpsc::Receiver<Result<Message, WebSocketError>>;
 
@@ -58,7 +64,7 @@ pub(crate) struct Inner {
     pub(crate) url: String,
     pub(crate) protocol: Option<String>,
     pub(crate) local_address: String,
-    sink: tokio::sync::Mutex<SplitSink<Socket, Frame>>,
+    sink: Sink,
     /// `None` once a transport took the socket over.
     queue: tokio::sync::Mutex<Option<Queue>>,
     taken: Mutex<bool>,
@@ -91,13 +97,39 @@ fn lost(e: &tungstenite::Error) -> WebSocketError {
     }
 }
 
-/// Read what the peer sends into `queue` until the socket ends: a close frame (its code and reason kept in `closed`),
-/// the end of the stream, or an error (queued).
+/// Read what the peer sends into `queue` until the socket ends, then let go of the connection: both halves are
+/// dropped, so the TCP connection closes even while the script still holds the socket.
 async fn read(
     mut stream: SplitStream<Socket>,
+    sink: Sink,
     queue: mpsc::Sender<Result<Message, WebSocketError>>,
     closed: Arc<Mutex<Option<(u16, String)>>>,
 ) {
+    let peer_closed = read_frames(&mut stream, &queue, &closed).await;
+    if peer_closed {
+        // tungstenite queued the answer to the peer's close: reading on flushes it, and the stream ends once the
+        // handshake is done (or the peer hangs up); a peer that does neither is dropped after a while
+        let drain = async { while stream.next().await.is_some() {} };
+        let _ = tokio::time::timeout(CLOSE_WAIT, drain).await;
+    }
+    if let Some(mut sink) = sink.lock().await.take() {
+        // flush what is still queued (the close reply); the connection is over either way
+        let _ = tokio::time::timeout(CLOSE_WAIT, sink.flush()).await;
+    }
+    drop(stream);
+    let mut closed = closed.lock();
+    if closed.is_none() {
+        *closed = Some((1006, String::new()));
+    }
+}
+
+/// Queue what the peer sends until a close frame (its code and reason kept in `closed`: `true`), the end of the
+/// stream, an error (queued) or a queue nobody reads.
+async fn read_frames(
+    stream: &mut SplitStream<Socket>,
+    queue: &mpsc::Sender<Result<Message, WebSocketError>>,
+    closed: &Mutex<Option<(u16, String)>>,
+) -> bool {
     while let Some(frame) = stream.next().await {
         let message = match frame {
             Ok(Frame::Text(text)) => {
@@ -109,7 +141,7 @@ async fn read(
                     (u16::from(frame.code), frame.reason.as_str().to_owned())
                 });
                 *closed.lock() = Some((code, reason));
-                return;
+                return true;
             }
             // tungstenite answers pings itself; pongs and raw frames are not the script's
             Ok(Frame::Ping(_) | Frame::Pong(_) | Frame::Frame(_)) => continue,
@@ -118,31 +150,30 @@ async fn read(
                     *closed.lock() = Some((1006, String::new()));
                 }
                 let _ = queue.send(Err(lost(&e))).await;
-                return;
+                return false;
             }
         };
         if queue.send(Ok(message)).await.is_err() {
-            return;
+            return false;
         }
     }
-    let mut closed = closed.lock();
-    if closed.is_none() {
-        *closed = Some((1006, String::new()));
-    }
+    false
 }
 
 impl Inner {
     pub(crate) fn start(lua: &Lua, url: String, connected: Connected) -> Arc<Self> {
         let Connected { socket, protocol, local_address } = connected;
         let (sink, stream) = socket.split();
+        let sink: Sink = Arc::new(tokio::sync::Mutex::new(Some(sink)));
         let (tx, rx) = mpsc::channel(QUEUE);
         let closed = Arc::new(Mutex::new(None));
-        let reader = Life::of(lua).spawn(read(stream, tx, Arc::clone(&closed))).abort_handle();
+        let reader =
+            Life::of(lua).spawn(read(stream, Arc::clone(&sink), tx, Arc::clone(&closed))).abort_handle();
         Arc::new(Self {
             url,
             protocol,
             local_address,
-            sink: tokio::sync::Mutex::new(sink),
+            sink,
             queue: tokio::sync::Mutex::new(Some(rx)),
             taken: Mutex::new(false),
             closed,
@@ -162,7 +193,9 @@ impl Inner {
         if self.closed.lock().is_some() {
             return Err(closed_error("the peer closed the socket"));
         }
-        self.sink.lock().await.send(frame).await.map_err(|e| lost(&e))
+        let mut sink = self.sink.lock().await;
+        let sink = sink.as_mut().ok_or_else(|| closed_error("the socket is closed"))?;
+        sink.send(frame).await.map_err(|e| lost(&e))
     }
 
     pub(crate) async fn send_text(&self, text: String) -> Result<(), WebSocketError> {
@@ -212,7 +245,9 @@ impl Inner {
             return Ok(());
         }
         let frame = CloseFrame { code: CloseCode::from(code), reason: reason.into() };
-        match self.sink.lock().await.send(Frame::Close(Some(frame))).await {
+        let mut sink = self.sink.lock().await;
+        let Some(sink) = sink.as_mut() else { return Ok(()) };
+        match sink.send(Frame::Close(Some(frame))).await {
             Ok(()) | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => Ok(()),
             Err(e) => Err(lost(&e)),
         }

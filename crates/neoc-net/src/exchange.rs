@@ -120,6 +120,12 @@ pub struct Body {
 }
 
 impl Body {
+    /// What closes the body's connection from elsewhere (a reader that waits on [`Body::chunk`] ends then): the
+    /// handle of the task that drives it.
+    pub fn closer(&self) -> AbortHandle {
+        self.conn.driver.clone()
+    }
+
     /// The length the response declares (`Content-Length`), when it declares one.
     pub fn declared_len(&self) -> Option<u64> {
         self.incoming.size_hint().exact()

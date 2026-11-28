@@ -136,3 +136,54 @@ async fn a_closed_port_is_a_connect_error() {
     .await;
     assert_eq!(got, "ok");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_peers_close_is_answered_and_the_connection_released_while_the_script_holds_the_socket() {
+    use tokio::io::AsyncReadExt as _;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (seen_tx, seen_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let frame = CloseFrame { code: CloseCode::from(4001), reason: "going".into() };
+        ws.send(Message::Close(Some(frame))).await.unwrap();
+        // the client's answer to the close, then the end of its TCP connection: the server never closes its own
+        let reply = match tokio::time::timeout(std::time::Duration::from_secs(10), ws.next()).await {
+            Ok(Some(Ok(Message::Close(Some(frame))))) => format!("reply {}", u16::from(frame.code)),
+            other => format!("no reply: {other:?}"),
+        };
+        let _ = seen_tx.send(reply);
+        let mut rest = [0_u8; 16];
+        let ended =
+            tokio::time::timeout(std::time::Duration::from_secs(10), ws.get_mut().read(&mut rest)).await;
+        let _ = seen_tx.send(match ended {
+            Ok(Ok(0)) => "eof".to_owned(),
+            other => format!("not ended: {other:?}"),
+        });
+    });
+    let lua = neoc_vm_core::make_engine().unwrap();
+    let seen_rx = std::sync::Arc::new(tokio::sync::Mutex::new(seen_rx));
+    let server_saw =
+        neoc_vm_core::lifecycle::async_function(&lua, neoc_vm_core::lifecycle::Role::Wait, move |_, ()| {
+            let seen_rx = seen_rx.clone();
+            async move { Ok(seen_rx.lock().await.recv().await) }
+        })
+        .unwrap();
+    lua.globals().set("server_saw", server_saw).unwrap();
+    let got = run(
+        &lua,
+        port,
+        r#"
+        local ws = assert(websocket.connect(base .. "/"))
+        assert(ws:receive() == nil, "the peer's close ends receive")
+        -- `ws` is still held here, and nothing more is read or written on it
+        local reply, ended = server_saw(), server_saw()
+        assert(ws.close_code == 4001 and ws.close_reason == "going")
+        return reply .. " " .. ended
+        "#,
+    )
+    .await;
+    // the reply echoes the peer's code, as tungstenite answers a close
+    assert_eq!(got, "reply 4001 eof");
+}

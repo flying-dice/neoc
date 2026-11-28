@@ -259,3 +259,124 @@ async fn a_failure_is_a_typed_error() {
     .await;
     assert_eq!(got, "ok");
 }
+
+/// Says so when it is dropped: a body that is dropped once its connection closes.
+struct Dropped(tokio::sync::mpsc::UnboundedSender<&'static str>);
+
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        let _ = self.0.send("closed");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_ends_a_read_text_or_lines_that_waits_and_closes_the_connection() {
+    let (closed_tx, mut closed) = tokio::sync::mpsc::unbounded_channel();
+    // headers, then a body that never comes; the stream (and the guard in it) goes when the connection does
+    let port = serve(move |_req: Request<Incoming>| {
+        let guard = Dropped(closed_tx.clone());
+        async move {
+            let frames = futures_util::stream::pending::<Result<Frame<Bytes>, Infallible>>();
+            let frames = futures_util::StreamExt::map(frames, move |frame| {
+                let _ = &guard;
+                frame
+            });
+            Response::builder()
+                .header("content-type", "text/plain")
+                .body(StreamBody::new(frames).boxed())
+                .unwrap()
+        }
+    })
+    .await;
+    let lua = neoc_vm_core::make_engine().unwrap();
+    lua.globals().set("base", format!("http://127.0.0.1:{port}")).unwrap();
+    let mut got = Vec::new();
+    for read in ["RES:read()", "RES:text()", "RES:json()", "LINES:next()"] {
+        let setup = if read.starts_with("LINES") {
+            "local http = require('lib:http') RES = assert(http.fetch(base .. '/')) LINES = assert(RES:lines())"
+        } else {
+            "local http = require('lib:http') RES = assert(http.fetch(base .. '/'))"
+        };
+        lua.load(setup).exec_async().await.unwrap();
+        let canceller = lua.clone();
+        let cancel = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            canceller.load("RES:cancel()").exec_async().await.unwrap();
+        });
+        let ended: String = lua
+            .load(format!("local _, err = {read} return if err then err.kind else 'no error'"))
+            .eval_async()
+            .await
+            .unwrap();
+        cancel.await.unwrap();
+        // a read after it gives the end, and does not wait
+        let after: String = lua
+            .load("local chunk, err = RES:read() return tostring(chunk) .. ' ' .. tostring(err)")
+            .eval_async()
+            .await
+            .unwrap();
+        got.push(format!("{read} {ended} / {after}"));
+        lua.load("RES = nil LINES = nil").exec().unwrap();
+    }
+    assert_eq!(
+        got,
+        [
+            "RES:read() cancelled / nil nil",
+            "RES:text() cancelled / nil nil",
+            "RES:json() cancelled / nil nil",
+            "LINES:next() cancelled / nil nil",
+        ]
+    );
+    // every connection the server saw was closed by the cancel
+    for _ in 0..4 {
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(5), closed.recv())
+            .await
+            .expect("a connection closed");
+        assert_eq!(seen, Some("closed"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_id_resets_the_last_event_id_and_a_retry_alone_takes_effect() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let port = serve(move |req: Request<Incoming>| {
+        let log = Arc::clone(&log);
+        async move {
+            let last = req.headers().get("last-event-id").map(|v| v.to_str().unwrap().to_owned());
+            let n = {
+                let mut log = log.lock();
+                log.push(format!("{last:?}"));
+                log.len()
+            };
+            match n {
+                // an id, and an event that carries it
+                1 => full(200, "text/event-stream", "id: 1\ndata: a\n\n"),
+                // a retry with no event, then an empty id that resets the last one, then an event
+                2 => full(200, "text/event-stream", "retry: 20\n\nid\ndata: b\n\n"),
+                // an id with no event after it still counts for the next reconnection
+                3 => full(200, "text/event-stream", "data: c\n\nid: 9\n\n"),
+                _ => full(200, "text/event-stream", "data: d\n\n"),
+            }
+        }
+    })
+    .await;
+    let lua = neoc_vm_core::make_engine().unwrap();
+    let got = run(
+        &lua,
+        port,
+        r#"
+        local events = assert(http.events(base .. "/stream", { retry = 0.05 }))
+        local out = {}
+        for _ = 1, 4 do
+          local event = assert(events:next())
+          table.insert(out, event.data .. "=" .. event.id)
+        end
+        events:close()
+        return table.concat(out, " ")
+        "#,
+    )
+    .await;
+    assert_eq!(got, "a=1 b= c= d=9");
+    assert_eq!(seen.lock()[..4], [r#"None"#, r#"Some("1")"#, "None", r#"Some("9")"#]);
+}

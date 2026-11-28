@@ -1892,7 +1892,7 @@ interface lib_http_EventsOptions {
 }
 
 /** The kinds of `lib_http_FetchError`. */
-type lib_http_FetchErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "too_many_redirects" | "too_large" | "connection_lost" | "bad_response" | "status" | "other"
+type lib_http_FetchErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "too_many_redirects" | "too_large" | "connection_lost" | "bad_response" | "status" | "cancelled" | "other"
 
 /**
  * Why a request failed. The kind means the same on every platform; `reason` is for a person or a log. A response
@@ -1925,6 +1925,8 @@ type lib_http_FetchError =
   | { kind: "bad_response"; reason: string; message: string; op: string }
   /** An event stream was answered with a status other than 200. */
   | { kind: "status"; code: number; message: string; op: string }
+  /** The response was cancelled (`cancel()`) while this read waited on it. */
+  | { kind: "cancelled"; message: string; op: string }
   /** Anything else, reported and never hidden. */
   | { kind: "other"; reason: string; message: string; op: string }
 
@@ -2035,12 +2037,14 @@ interface lib_http_Response {
   header(name: string): string | undefined
   /**
    * The next piece of the body as it arrived: `(chunk, nil)`, `(nil, nil)` at the end, or `(nil, err)`.
+   * A read waiting when the response is cancelled ends with `cancelled`.
    *
    * Yields the calling coroutine while it waits.
    */
   read(): LuaMultiReturn<[string | undefined, undefined] | [undefined, lib_http_FetchError]>
   /**
    * The rest of the body, as one string (whatever its bytes), at most `max_body` bytes. `""` once read.
+   * One waiting when the response is cancelled ends with `cancelled`.
    *
    * Yields the calling coroutine while it waits.
    */
@@ -2055,14 +2059,14 @@ interface lib_http_Response {
   /**
    * The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
    * `items()`. Bytes that are not UTF-8 become U+FFFD.
+   * Cancelled, the stream gives `cancelled` and ends.
    *
    * Yields the calling coroutine while it waits.
    */
   lines(): LuaMultiReturn<[mlua_Stream<string, lib_http_FetchError>, undefined] | [undefined, lib_http_FetchError]>
   /**
-   * Stop reading the body: its connection is closed. Reading after it gives the end.
-   *
-   * Yields the calling coroutine while it waits.
+   * Stop reading the body: its connection is closed. A read that waits on it (`read`, `text`, `json`, a
+   * `lines()` stream) ends with `cancelled`; a read after it gives the end. It does not wait for those reads.
    */
   cancel(): void
 }
