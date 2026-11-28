@@ -247,7 +247,8 @@ export class Telemetry {
         this.#failure = said
       }
     } finally {
-      this.#loaded = true
+      // an overtaken read has told nothing: the page is loaded when the latest read has answered
+      if (run === this.#refreshes) this.#loaded = true
     }
   }
 

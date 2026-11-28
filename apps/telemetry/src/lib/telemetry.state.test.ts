@@ -3,6 +3,12 @@ import { EXPORT_LIMIT } from './telemetry'
 import { COPIED_FOR, Telemetry, RENDER_FAILURE, type Clipboard } from './telemetry.svelte'
 import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS, createFakeBackend, rpcError } from './fakeApi'
 
+/** Wait until `done`, for a read that is not awaited. */
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(2)
+  expect(done()).toBe(true)
+}
+
 const window = (options: Parameters<typeof createFakeBackend>[0] = {}, later?: (fn: () => void) => void) => {
   const backend = createFakeBackend(options)
   return { backend, telemetry: new Telemetry(backend.reader, backend.rpc, { later }) }
@@ -282,6 +288,26 @@ describe('copying what is known of a trace or a log', () => {
     expect(report.name).toBe(telemetry.summary!.name)
     expect(report.spans.length).toBe(telemetry.bars.length)
     expect(report.note).toContain('this is what the window had')
+  })
+
+  test('the page is not loaded until the latest read has answered, whatever an overtaken one does', async () => {
+    const { backend, telemetry } = copying()
+    const traces = backend.reader.traces
+    const query = backend.reader.query
+    let first: () => void = () => {}
+    backend.reader.traces = () => new Promise((resolve) => (first = () => resolve([])))
+    const slow = telemetry.refresh()
+    let second: () => void = () => {}
+    backend.reader.query = (q) => new Promise((resolve) => (second = () => resolve(query(q))))
+    telemetry.show('logs')
+    await Bun.sleep(5)
+    first()
+    await slow
+    expect(telemetry.loaded).toBe(false)
+    backend.reader.traces = traces
+    second()
+    await until(() => telemetry.loaded)
+    expect(telemetry.loaded).toBe(true)
   })
 
   test('a read that is overtaken by a later one gives nothing, not a failure either', async () => {
