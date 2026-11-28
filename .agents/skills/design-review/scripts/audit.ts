@@ -319,10 +319,10 @@ export async function audit(o: AuditOptions): Promise<AuditResult> {
     findings.push({ check, severity, element: describe(el), text: clip80(text), detail, box: boxOf(box ?? el) })
   }
 
-  // the bundled font loaded (capture waits for document.fonts.ready), or every text run is in a stand-in face
-  if (run === 'default' && ![...document.fonts].some((f) => f.family.replace(/["']/g, '') === 'InterVariable' && f.status === 'loaded')) {
-    add('TYPE-23', 'error', root, '', 'the bundled InterVariable font has not loaded: the system font stands in for it')
-  }
+  // the bundled font is declared and loads (capture asks for it before the audit), or a stand-in face draws the text
+  const inter = [...document.fonts].filter((f) => f.family.replace(/["']/g, '') === 'InterVariable')
+  if (run === 'default' && !inter.length) add('TYPE-23', 'error', root, '', 'no @font-face for InterVariable (fonts.css or /kit/tokens.css is not loaded): the system font stands in')
+  else if (run === 'default' && !inter.some((f) => f.status === 'loaded')) add('TYPE-23', 'error', root, '', `the InterVariable face did not load (${inter.map((f) => f.status).join(', ')}): the system font stands in`)
 
   // ---- the elements -------------------------------------------------------------------------------------------
   const storyRoot = document.querySelector('#storybook-root') ?? document.body

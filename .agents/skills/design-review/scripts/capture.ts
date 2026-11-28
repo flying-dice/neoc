@@ -228,7 +228,8 @@ async function show(page: Page, story: IndexEntry, plan: Plan, first: boolean, o
   if (!story.tags?.includes('keep-focus') && !keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   if (run === 'large-text') await page.evaluate((s) => document.documentElement.style.setProperty('--text-scale', String(s)), LARGE_TEXT)
   if (run === 'reduced') await page.evaluate(() => document.documentElement.classList.add('reduce-transparency'))
-  await page.evaluate(() => document.fonts.ready)
+  // ask for the bundled face even where a story draws no text in it, so the audit can tell "missing" from "unused"
+  await page.evaluate(() => document.fonts.load('17px InterVariable').then(() => document.fonts.ready, () => document.fonts.ready))
   await settle(page)
 }
 
