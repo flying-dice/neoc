@@ -78,6 +78,15 @@ fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(d: D) -> Re
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
+/// A list in a tagged union a script gives: serde reads the union before it knows a field's type, so a script's empty
+/// table (`args = {}`) comes as a map; that is an empty list.
+fn list<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Object(fields) if fields.is_empty() => Ok(Vec::new()),
+        value => serde_json::from_value(value).map_err(serde::de::Error::custom),
+    }
+}
+
 /// A list ACP says is read leniently: an item that is not what it should be is left out.
 fn lenient_items<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
     let value = serde_json::Value::deserialize(d)?;
@@ -101,7 +110,7 @@ pub mod agent_client_protocol {
     };
     use serde::{Deserialize, Serialize};
 
-    use super::{Data, lenient, lenient_items};
+    use super::{Data, lenient, lenient_items, list};
     use crate::link;
     use neoc_vm_core::lifecycle::Life;
 
@@ -224,7 +233,7 @@ pub mod agent_client_protocol {
             /// Its URL.
             url: String,
             /// Headers to send it (`Authorization`).
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             headers: Vec<HttpHeader>,
         },
         /// A server at a URL, over server-sent events (when the agent's `mcp_capabilities.sse` says it can).
@@ -234,7 +243,7 @@ pub mod agent_client_protocol {
             /// Its URL.
             url: String,
             /// Headers to send it.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             headers: Vec<HttpHeader>,
         },
         /// A program the agent starts on its own machine, which every agent can do. The wire has no `type` for it.
@@ -244,10 +253,10 @@ pub mod agent_client_protocol {
             /// The program.
             command: String,
             /// Its arguments.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             args: Vec<String>,
             /// Its environment, besides the agent's.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             env: Vec<EnvVariable>,
         },
     }

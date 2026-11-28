@@ -351,6 +351,9 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
           mcp_servers = {
             { type = "http", name = "vos", url = "http://10.0.0.1:1/mcp", headers = { { name = "Authorization", value = "Bearer k" } } },
             { type = "stdio", name = "local", command = "run", args = { "a" }, env = { { name = "K", value = "v" } } },
+            -- no arguments, variables or headers: a script's empty table is an empty list
+            { type = "stdio", name = "bare", command = "go", args = {}, env = {} },
+            { type = "http", name = "open", url = "http://10.0.0.1:2/mcp", headers = {} },
           },
         }))
         assert(session.session_id == "s1" and session.modes == nil)
@@ -426,6 +429,8 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
             { "type": "http", "name": "vos", "url": "http://10.0.0.1:1/mcp",
               "headers": [{ "name": "Authorization", "value": "Bearer k" }] },
             { "name": "local", "command": "run", "args": ["a"], "env": [{ "name": "K", "value": "v" }] },
+            { "name": "bare", "command": "go", "args": [], "env": [] },
+            { "type": "http", "name": "open", "url": "http://10.0.0.1:2/mcp", "headers": [] },
         ])
     );
     let prompt = said.recv().await.expect("session/prompt");
