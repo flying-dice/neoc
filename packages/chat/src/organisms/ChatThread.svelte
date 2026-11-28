@@ -13,7 +13,7 @@
 
   interface Props {
     conversation: Conversation
-    /** The name of who the chat is with: the agent, or the copilot. */
+    /** The name of who the chat is with: the agent. */
     partner: string
     /** What the bar shows before that name (the agent's picture); nothing without it. */
     badge?: Snippet

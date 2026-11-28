@@ -2,7 +2,7 @@
 export type Kind = 'user' | 'assistant' | 'reasoning' | 'tool' | 'plan' | 'permission' | 'note' | 'error'
 
 /**
- * One thing said or done in a chat, in the order it happened, as an app's backend sends it (Agents' and Copilot's
+ * One thing said or done in a chat, in the order it happened, as an app's backend sends it (Agents'
  * `Item`). `data` is JSON text, or empty: what the agent sent besides the text (lib/items.ts reads it).
  */
 export interface Item {

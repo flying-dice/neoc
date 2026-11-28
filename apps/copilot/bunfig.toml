@@ -1,5 +1,0 @@
-[test]
-# Rune modules (*.svelte.ts) are compiled by the client's preload, so the app's state class runs under plain bun tests.
-preload = ["../../client/test/svelte-modules.ts"]
-# Playwright specs (e2e/) run with `bun run test:e2e`, not bun test.
-pathIgnorePatterns = ["e2e/**", "**/e2e/**", "node_modules/**"]

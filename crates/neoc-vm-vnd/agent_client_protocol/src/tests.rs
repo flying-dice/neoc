@@ -778,7 +778,7 @@ async fn over_the_scripts_lines_a_turn_streams_asks_for_permission_and_ends_with
             writes += 1
             agent_write(line)
           end,
-        }, { client_info = { name = "copilot", version = "1" }, timeout = 5 }))
+        }, { client_info = { name = "agents", version = "1" }, timeout = 5 }))
         assert(conn.local_address == "", conn.local_address)
         assert(conn.agent.protocol_version == 1 and conn.agent.agent_capabilities.load_session)
         local session = assert(conn:new_session({ cwd = "/w" }))
@@ -806,7 +806,7 @@ async fn over_the_scripts_lines_a_turn_streams_asks_for_permission_and_ends_with
     assert_eq!(got, "agent_message_chunk tool_call permission p1 agent_message_chunk done end_turn | Hello");
     let initialize = said.recv().await.expect("initialize");
     assert_eq!(initialize["params"]["protocolVersion"], 1);
-    assert_eq!(initialize["params"]["clientInfo"], json!({ "name": "copilot", "version": "1" }));
+    assert_eq!(initialize["params"]["clientInfo"], json!({ "name": "agents", "version": "1" }));
     let prompt = said.recv().await.expect("session/prompt");
     assert_eq!(prompt["params"], json!({ "sessionId": "s1", "prompt": [{ "type": "text", "text": "hi" }] }));
     let permission = said.recv().await.expect("the permission's answer");

@@ -53,6 +53,9 @@ async function remove(page: Page, name: string): Promise<void> {
   await rowOf(page, name).click()
   await part(page, 'form-remove').click()
   await part(page, 'confirm-confirm').click()
+  // the form is in place of the list: its row is not there until the backend has removed it and the list is back
+  await expect(part(page, 'form')).toHaveCount(0)
+  await expect(part(page, 'library')).toBeVisible()
   await expect(rowOf(page, name)).toHaveCount(0)
 }
 

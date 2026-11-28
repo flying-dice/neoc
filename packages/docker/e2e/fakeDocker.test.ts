@@ -271,7 +271,7 @@ test('an event reaches the listeners that asked for its type, its action and its
 
 describe('a build', () => {
   test('reports its steps and the image it made, which is then on the machine', async () => {
-    const labels = encodeURIComponent(JSON.stringify({ 'vos.app': 'copilot' }))
+    const labels = encodeURIComponent(JSON.stringify({ 'vos.app': 'containers' }))
     const res = await fetch(`${base}/build?t=agent%3A1&dockerfile=Dockerfile&labels=${labels}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-tar' },
@@ -285,7 +285,7 @@ describe('a build', () => {
     const listed = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ reference: ['agent:1'] }))}`)).body
     expect(listed.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
     // and by the labels the build gave it
-    const mine = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ label: ['vos.app=copilot'] }))}`)).body
+    const mine = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ label: ['vos.app=containers'] }))}`)).body
     expect(mine.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
   })
 

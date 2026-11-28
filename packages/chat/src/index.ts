@@ -1,5 +1,5 @@
 /**
- * The chat with an ACP agent, as every app that talks to one shows it (Agents, Copilot). Each part takes a `testid`,
+ * The chat with an ACP agent, as every app that talks to one shows it (Agents). Each part takes a `testid`,
  * the app's own word (`agents`), which its test ids start with (`agents-composer-input`).
  */
 export { default as Markdown } from './atoms/Markdown.svelte'

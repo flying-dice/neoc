@@ -2,7 +2,7 @@
   "name": "@vos/chat",
   "version": "0.1.0",
   "private": true,
-  "description": "The chat with an ACP agent, as the apps that talk to one show it (Agents, Copilot): what was said and done in it, the questions the agent asks, and the composer (src/, Svelte on the kit).",
+  "description": "The chat with an ACP agent, as the apps that talk to one show it (Agents): what was said and done in it, the questions the agent asks, and the composer (src/, Svelte on the kit).",
   "type": "module",
   "exports": {
     ".": {
