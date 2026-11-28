@@ -9,10 +9,11 @@
  *      installed at start like the Calculator, and the Ticker (background work), the Notifier (the notification
  *      journeys' sender) and the Journal at two versions (the update journey's), which only their journeys install;
  *   2. writes vos.toml (port 7410 or VOS_PORT_BASE + 10, loopback, a fresh data directory, the test registry; the Calculator,
- *      Agents, Todos, Notes, Containers, DNS, Pages and Processes are installed at start, Memos is only offered);
+ *      Agents, Copilot, Todos, Notes, Containers, DNS, Pages and Processes are installed at start, Memos is only offered);
  *   3. runs vos-host in the foreground, forwarding SIGTERM so the host shuts down gracefully. The host's own Docker is
- *      one nothing listens at (`DOCKER_HOST`), so the Containers, DNS and Pages apps say "not reachable" on every machine, with
- *      Docker running or not, until their journeys point them at a Docker of their own (apps/containers/e2e, apps/dns/e2e, apps/pages/e2e).
+ *      one nothing listens at (`DOCKER_HOST`), so the Containers, DNS, Pages and Copilot apps say "not reachable" on every machine, with
+ *      Docker running or not, until their journeys point them at a Docker of their own (apps/containers/e2e, apps/dns/e2e, apps/pages/e2e,
+ *      apps/copilot/e2e).
  *      The Terminal app (installed at start too) runs the host's default shell (`SHELL`; on Windows `ComSpec`): here a plain
  *      `sh` (on Windows a plain PowerShell) with the prompt `$ ` that reads no start-up file, so what its window shows is the
  *      same on every machine of a platform (apps/terminal/e2e, the desktop screenshots).

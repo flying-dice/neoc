@@ -1,14 +1,14 @@
 /**
  * Agents key user journeys, end to end: the real shell, the real host, the app's own client in a frame of its window, and
  * its Luau backend, which keeps the agents and the chats and runs each turn against an ACP agent over a WebSocket. The
- * agent is a fake one started here (acp-agent.ts): what the person says picks what it does.
+ * agent is a fake one started here (e2e/acp-agent.ts): what the person says picks what it does.
  *
  * The agents and chats live on the shared host, so each test adds an agent of its own and starts its own chat.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
 import { chooseLayout, expect, expectNoOverflow, frameOf, openDesktop, openFromHome, resizeWindow, test, windowOf } from '../../../e2e/fixtures'
 import { callToolAt } from '../../../e2e/host/pair'
-import { FakeAgent, type Message } from './acp-agent'
+import { FakeAgent, type Message } from '../../../e2e/acp-agent'
 
 const ID = 'agents'
 const frame = (page: Page): FrameLocator => frameOf(page, ID)

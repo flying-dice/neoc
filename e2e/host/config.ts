@@ -29,7 +29,7 @@ export const REGISTRY = join(DIR, 'registry/registry.json')
  * The apps of `apps/` the host installs at start (e2e/host/start.ts). The rest of `apps/`
  * is built into the test registry but installed by nobody (`app1` and `app2` are the examples of an app that depends on another).
  */
-export const INSTALLED_REPO_APPS = ['calculator', 'agents', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'] as const
+export const INSTALLED_REPO_APPS = ['calculator', 'agents', 'copilot', 'todos', 'notes', 'notebooks', 'containers', 'dns', 'keychain', 'services', 'pages', 'processes', 'projects', 'terminal'] as const
 /** The framework fixtures (e2e/apps): a task list with a Svelte client and one with a React client, installed at start. */
 export const FIXTURE_APPS = ['tasks-svelte', 'tasks-react'] as const
 export type FixtureApp = (typeof FIXTURE_APPS)[number]

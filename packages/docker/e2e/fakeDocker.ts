@@ -107,6 +107,8 @@ export interface Container {
   workingDir: string
   user: string
   hostname: string
+  /** Its input stays open with no client attached (`OpenStdin`): a program that reads it waits for the next one. */
+  openStdin: boolean
   running: boolean
 }
 
@@ -131,6 +133,8 @@ export interface Upload {
   path: string
   /** The tar archive, as it was sent. */
   archive: Uint8Array
+  /** The container was running when it came. */
+  running: boolean
 }
 
 /**
@@ -237,6 +241,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
   interface KeptImage extends Image {
     /** When it was built, in seconds since 1970. */
     created: number
+    /** The labels a build gave it. */
+    labels: Record<string, string>
   }
   /** An image by its tags: its id and size follow from them, the same on every machine. */
   const imageOf = (tags: string[], size?: number, salt = ''): KeptImage => {
@@ -245,7 +251,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       id: `sha256:${hash}`,
       tags,
       size: size ?? 20_000_000 + (parseInt(hash.slice(0, 6), 16) % 400) * 1_000_000,
-      created: 1_700_000_000 + (parseInt(hash.slice(6, 12), 16) % 10_000_000)
+      created: 1_700_000_000 + (parseInt(hash.slice(6, 12), 16) % 10_000_000),
+      labels: {}
     }
   }
   // the images of the containers it starts with are there, then those it is given
@@ -289,6 +296,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     workingDir: '',
     user: '',
     hostname: '',
+    openStdin: false,
     running: false,
     ...c
   })
@@ -429,7 +437,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
     Created: image.created,
     Size: image.size,
     SharedSize: -1,
-    Labels: {},
+    Labels: image.labels,
     Containers: -1
   })
 
@@ -624,6 +632,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
         images
           .filter((image) => wanted.length === 0 || image.tags.some((tag) => wanted.includes(tag)))
           .filter((image) => dangling === undefined || dangling === (image.tags.length === 0))
+          .filter((image) => labelled(image.labels, filters.label ?? []))
           .map(listedImage)
       )
     }
@@ -690,11 +699,13 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return json(res, removed.status, removed.body)
     }
     if (method === 'POST' && path === '/build') {
-      // the context is read and not looked into: the image is the one the build names
+      // the context is read and not looked into: the image is the one the build names, with the labels it gives
       await bytesOf(req)
       const named = url.searchParams.get('t')
       const image = named === null ? undefined : /:[^/]*$/.test(named) ? named : `${named}:latest`
       const built = image === undefined ? imageOf([], undefined, `build#${images.length}`) : (imageBy(image)?.image ?? imageOf([image]))
+      const labels = url.searchParams.get('labels')
+      if (labels) Object.assign(built.labels, JSON.parse(labels) as Record<string, string>)
       const id = built.id
       res.writeHead(200, { 'content-type': 'application/json' })
       const say = (line: object): void => void res.write(`${JSON.stringify(line)}\n`)
@@ -916,7 +927,8 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           retries,
           workingDir: String(body.WorkingDir ?? ''),
           user: String(body.User ?? ''),
-          hostname: String(body.Hostname ?? '')
+          hostname: String(body.Hostname ?? ''),
+          openStdin: body.OpenStdin === true
         }),
         false,
         [],
@@ -938,7 +950,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       const at = url.searchParams.get('path') ?? ''
       if (!at.startsWith('/')) return json(res, 400, { message: `path ${at} is not absolute` })
       const archive = new Uint8Array(await bytesOf(req))
-      uploads.set(found.name, [...(uploads.get(found.name) ?? []), { path: at, archive }])
+      uploads.set(found.name, [...(uploads.get(found.name) ?? []), { path: at, archive, running: found.running }])
       return void res.writeHead(200).end()
     }
     if (method === 'GET' && verb === 'logs') {
@@ -1104,6 +1116,7 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
           workingDir: c.workingDir,
           user: c.user,
           hostname: c.hostname,
+          openStdin: c.openStdin,
           running: c.running
         }
       )

@@ -271,7 +271,8 @@ test('an event reaches the listeners that asked for its type, its action and its
 
 describe('a build', () => {
   test('reports its steps and the image it made, which is then on the machine', async () => {
-    const res = await fetch(`${base}/build?t=agent%3A1&dockerfile=Dockerfile`, {
+    const labels = encodeURIComponent(JSON.stringify({ 'vos.app': 'copilot' }))
+    const res = await fetch(`${base}/build?t=agent%3A1&dockerfile=Dockerfile&labels=${labels}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-tar' },
       body: new Uint8Array([1, 2, 3])
@@ -283,13 +284,16 @@ describe('a build', () => {
     expect(docker.images().flatMap((i) => i.tags)).toContain('agent:1')
     const listed = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ reference: ['agent:1'] }))}`)).body
     expect(listed.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
+    // and by the labels the build gave it
+    const mine = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ label: ['vos.app=copilot'] }))}`)).body
+    expect(mine.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
   })
 })
 
 test('an archive uploaded into a container is kept with its path', async () => {
   const res = await fetch(`${base}/containers/web/archive?path=%2Fwork`, { method: 'PUT', body: new Uint8Array([7, 8]) })
   expect(res.status).toBe(200)
-  expect(docker.uploads('web')).toEqual([{ path: '/work', archive: new Uint8Array([7, 8]) }])
+  expect(docker.uploads('web')).toEqual([{ path: '/work', archive: new Uint8Array([7, 8]), running: true }])
   expect((await fetch(`${base}/containers/ghost/archive?path=%2Fwork`, { method: 'PUT', body: '' })).status).toBe(404)
 })
 

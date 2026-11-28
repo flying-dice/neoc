@@ -1,22 +1,83 @@
 /**
- * A fake ACP agent for the Agents journeys: the part of the Agent Client Protocol (v1) the app speaks, over a
- * WebSocket as `acpd` serves one (one JSON-RPC message per text frame, `initialize` first, one agent per socket). The
- * WebSocket is the few lines of RFC 6455 a test needs, on `node:http`, so the spec needs no package for it.
+ * A fake ACP agent for the journeys of an app that talks to one: the part of the Agent Client Protocol (v1) the apps
+ * speak, on either of the two connections they make. The Agents app reaches it over a WebSocket as `acpd` serves one
+ * (one JSON-RPC message per text frame, `initialize` first, one agent per socket); the WebSocket is the few lines of
+ * RFC 6455 a test needs, on `node:http`, so the specs need no package for it. The Copilot app runs its agent as a
+ * container's program and speaks to it on the container's standard streams, a JSON-RPC message a line (`serve`, given
+ * the fake Docker's attached client). Both are one agent: the same sessions, scripts and record of what it was sent.
  *
- * What the person says picks what the agent does (`SCRIPTS` in journeys.spec.ts). Its sessions outlive a socket, as
+ * What the person says picks what the agent does (the scripts a spec gives it). Its sessions outlive a connection, as
  * an agent that keeps them on disk does: a new connection can load one. `?load=no` in the URL makes an agent that
  * cannot load a session.
  */
 import { createHash } from 'node:crypto'
-import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 
 /** A JSON-RPC message, as the wire has it (camelCase). */
 export type Message = { jsonrpc: '2.0'; id?: number | string; method?: string; params?: any; result?: any; error?: { code: number; message: string } }
 
+/** How a connection reaches the client: a message out, and the end of it. Messages in reach the connection's `onText`. */
+interface Wire {
+  readonly closed: boolean
+  send(message: Message): void
+  close(): void
+}
+
+/** A program's standard streams, from the program's side: what the fake Docker's attached client is. */
+export interface Lines {
+  /** The next bytes written to its input; `null` once the input is closed. */
+  read(): Promise<Uint8Array | null>
+  /** Write to its output. */
+  write(data: string): void
+  /** End, as the program exiting does. */
+  end(): void
+}
+
+/** A program that speaks a JSON-RPC message a line on its standard streams; it exits when its input is closed. */
+class LineWire implements Wire {
+  #closed = false
+  constructor(
+    readonly lines: Lines,
+    onText: (text: string) => void,
+    readonly onClose: () => void
+  ) {
+    void (async () => {
+      const decoder = new TextDecoder()
+      let pending = ''
+      for (;;) {
+        const chunk = await lines.read()
+        if (chunk === null) break
+        pending += decoder.decode(chunk, { stream: true })
+        for (let cut = pending.indexOf('\n'); cut !== -1; cut = pending.indexOf('\n')) {
+          const line = pending.slice(0, cut).trim()
+          pending = pending.slice(cut + 1)
+          if (line !== '') onText(line)
+        }
+      }
+      this.close()
+    })()
+  }
+
+  get closed(): boolean {
+    return this.#closed
+  }
+
+  send(message: Message): void {
+    if (!this.#closed) this.lines.write(`${JSON.stringify(message)}\n`)
+  }
+
+  close(): void {
+    if (this.#closed) return
+    this.#closed = true
+    this.lines.end()
+    this.onClose()
+  }
+}
+
 /** One socket's WebSocket: text frames in and out. */
-class Socket {
+class Socket implements Wire {
   #buffer = Buffer.alloc(0)
   #pieces: Buffer[] = []
   #closed = false
@@ -120,7 +181,7 @@ export interface Session {
   cwd: string
   mcpServers: any[]
   said: string[]
-  /** The socket it is on now. */
+  /** The connection it is on now. */
   connection: Connection
 }
 
@@ -143,11 +204,9 @@ export interface Turn {
 /** A script: what the agent does with a prompt. Returns the stop reason, or throws `{ code, message }` for an error. */
 export type Script = (turn: Turn) => Promise<string | void>
 
-/** One socket: an agent process, as acpd runs one per socket. */
+/** One connection: an agent process, as acpd runs one per socket and a container runs one as its program. */
 export class Connection {
-  readonly socket: Socket
-  readonly headers: IncomingMessage['headers']
-  readonly load: boolean
+  readonly wire: Wire
   #next = 1
   readonly #waiting = new Map<number | string, (message: Message) => void>()
   readonly #cancelled = new Set<string>()
@@ -155,13 +214,15 @@ export class Connection {
 
   constructor(
     readonly agent: FakeAgent,
-    stream: Duplex,
-    request: IncomingMessage
+    /** The connection's wire, given what to do with a message that comes and with its end. */
+    wire: (onText: (text: string) => void, onClose: () => void) => Wire,
+    /** The headers of the WebSocket's upgrade; none on standard streams. */
+    readonly headers: IncomingHttpHeaders = {},
+    /** Whether it can load a session. */
+    readonly load = true
   ) {
-    this.headers = request.headers
-    this.load = new URL(request.url ?? '/', 'http://x').searchParams.get('load') !== 'no'
-    this.socket = new Socket(
-      stream,
+    agent.connections.add(this)
+    this.wire = wire(
       (text) => void this.#receive(JSON.parse(text) as Message),
       () => {
         agent.connections.delete(this)
@@ -171,15 +232,15 @@ export class Connection {
   }
 
   get closed(): boolean {
-    return this.socket.closed
+    return this.wire.closed
   }
 
   #answer(id: Message['id'], result: unknown): void {
-    this.socket.send({ jsonrpc: '2.0', id, result })
+    this.wire.send({ jsonrpc: '2.0', id, result })
   }
 
   #fail(id: Message['id'], code: number, message: string): void {
-    this.socket.send({ jsonrpc: '2.0', id, error: { code, message } })
+    this.wire.send({ jsonrpc: '2.0', id, error: { code, message } })
   }
 
   async #receive(message: Message): Promise<void> {
@@ -225,7 +286,7 @@ export class Connection {
   }
 
   #notify(sessionId: string, update: Record<string, any>): void {
-    this.socket.send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } })
+    this.wire.send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } })
   }
 
   async #prompt({ id, params }: Message): Promise<void> {
@@ -244,7 +305,7 @@ export class Connection {
         new Promise((resolve) => {
           const asked = `permission-${this.#next++}`
           this.#waiting.set(asked, (answer) => resolve(answer.result?.outcome ?? { outcome: 'cancelled' }))
-          this.socket.send({ jsonrpc: '2.0', id: asked, method: 'session/request_permission', params: { sessionId: session.id, toolCall, options } })
+          this.wire.send({ jsonrpc: '2.0', id: asked, method: 'session/request_permission', params: { sessionId: session.id, toolCall, options } })
         }),
       get cancelled() {
         return self.#cancelled.has(session.id) || self.closed
@@ -271,7 +332,7 @@ export class Connection {
   }
 }
 
-/** The agent: a server on a loopback port the system picks. */
+/** The agent: a server on a loopback port the system picks (`start`), and a program on standard streams (`serve`). */
 export class FakeAgent {
   readonly #server: Server
   readonly connections = new Set<Connection>()
@@ -289,8 +350,14 @@ export class FakeAgent {
       }
       const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
       stream.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
-      this.connections.add(new Connection(this, stream, request))
+      const load = new URL(request.url ?? '/', 'http://x').searchParams.get('load') !== 'no'
+      new Connection(this, (onText, onClose) => new Socket(stream, onText, onClose), request.headers, load)
     })
+  }
+
+  /** Be the program on these standard streams (a container's, attached), a JSON-RPC message a line, until its input closes. */
+  serve(lines: Lines): Connection {
+    return new Connection(this, (onText, onClose) => new LineWire(lines, onText, onClose))
   }
 
   /** Listen, and return the agent's address (`ws://127.0.0.1:<port>/acp`). */
@@ -300,8 +367,8 @@ export class FakeAgent {
   }
 
   async stop(): Promise<void> {
-    for (const connection of this.connections) connection.socket.close()
-    await new Promise<void>((resolve) => this.#server.close(() => resolve()))
+    for (const connection of this.connections) connection.wire.close()
+    if (this.#server.listening) await new Promise<void>((resolve) => this.#server.close(() => resolve()))
   }
 
   /** The session the last prompt that said `text` went to. */
