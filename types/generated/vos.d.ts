@@ -5854,12 +5854,12 @@ interface vnd_bollard_Client {
    * ```luau
    * local docker = assert(bollard.connect())
    * local context = "..." -- a tar archive with a Dockerfile in it
-   * for progress in docker:build_image({ t = "app:1", buildargs = { VERSION = "1" } }, context):items() do
+   * for progress in docker:build_image(context, { t = "app:1", buildargs = { VERSION = "1" } }):items() do
    *     if progress.stream then print(progress.stream) end
    * end
    * ```
    */
-  build_image(opts?: vnd_bollard_Build, context: string): mlua_Stream<vnd_bollard_BuildInfo, vnd_bollard_DockerError>
+  build_image(context: string, opts?: vnd_bollard_Build): mlua_Stream<vnd_bollard_BuildInfo, vnd_bollard_DockerError>
   /**
    * Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a
    * container uses is `conflict` unless `force`.

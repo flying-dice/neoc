@@ -60,7 +60,7 @@
 //! - TLS is `tls = { ca, cert, key }`.
 //! - `logs`, `events`, `pull_image` and `build_image` return the stream itself (they cannot fail before the first
 //!   `next()`), and a stream has `items()`.
-//! - `build_image` takes its options, then the build context: a tar archive, as a string of its bytes or a buffer.
+//! - `build_image` takes the build context (a tar archive, as a string of its bytes or a buffer), then its options.
 //!   It builds with Docker's classic builder, and what it reports is this module's own record of bollard's
 //!   `BuildInfo` (`id`, `stream`, `status`, `progressDetail`, `aux.ID`): bollard's model cannot be given to a script
 //!   as it is. A build that fails is the stream's error, not an `errorDetail`.
@@ -754,7 +754,10 @@ pub mod bollard {
         ) -> Result<(), DockerError> {
             let options = query::UploadToContainerOptions {
                 path: opts.path,
-                no_overwrite_dir_non_dir: opts.no_overwrite_dir_non_dir.unwrap_or(false).then(|| "true".to_owned()),
+                no_overwrite_dir_non_dir: opts
+                    .no_overwrite_dir_non_dir
+                    .unwrap_or(false)
+                    .then(|| "true".to_owned()),
                 ..Default::default()
             };
             self.api()
@@ -814,15 +817,15 @@ pub mod bollard {
         /// ```luau
         /// local docker = assert(bollard.connect())
         /// local context = "..." -- a tar archive with a Dockerfile in it
-        /// for progress in docker:build_image({ t = "app:1", buildargs = { VERSION = "1" } }, context):items() do
+        /// for progress in docker:build_image(context, { t = "app:1", buildargs = { VERSION = "1" } }):items() do
         ///     if progress.stream then print(progress.stream) end
         /// end
         /// ```
         pub fn build_image(
             &self,
             lua: &Lua,
-            opts: Build,
             context: Payload,
+            opts: Build,
         ) -> Stream<BuildInfo, DockerError> {
             let options = query::BuildImageOptions {
                 t: opts.t.map(|t| t.0),

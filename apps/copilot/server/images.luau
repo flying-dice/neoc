@@ -70,7 +70,7 @@ local function make(id: string, dockerfile: string, tag: string): string?
   end
   tell(id, `Building {tag}`, "running")
   local labels = { [OWNER] = app.id, [COPILOT] = id }
-  local stream = api:build_image({ t = tag, labels = labels, rm = true, forcerm = true }, context)
+  local stream = api:build_image(context, { t = tag, labels = labels, rm = true, forcerm = true })
   local told: typeof(time.now())? = nil
   -- the build runs as its progress is read: a step that fails is the error of a `next()`
   while true do

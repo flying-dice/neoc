@@ -706,10 +706,10 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
         refuse(function() return docker:create_volume({ Name = "data", Lables = {} }) end)
         refuse(function() return docker:list_volumes({ filters = { name = "data" } }) end)
         refuse(function() return docker:list_networks({ filter = { name = { "bridge" } } }) end)
-        refuse(function() return docker:build_image({ tag = "app:1" }, "") end)
-        refuse(function() return docker:build_image({ t = "app 1" }, "") end)
-        refuse(function() return docker:build_image({}, 42) end)
-        refuse(function() return docker:build_image({ rm = "yes" }, "") end)
+        refuse(function() return docker:build_image("", { tag = "app:1" }) end)
+        refuse(function() return docker:build_image("", { t = "app 1" }) end)
+        refuse(function() return docker:build_image(42, {}) end)
+        refuse(function() return docker:build_image("", { rm = "yes" }) end)
         refuse(function() return docker:attach_container("../containers/web", {}) end)
         refuse(function() return docker:attach_container("web", { stdn = true }) end)
         refuse(function() return docker:upload_to_container("web", {}, "") end)
@@ -738,9 +738,9 @@ async fn what_cannot_be_sent_is_refused_before_anything_is_sent() {
     assert!(refused[25].contains(place), "{}", refused[25]);
     assert!(refused[28].contains("argument #1 'body': unknown field `Lables`"), "{}", refused[28]);
     assert!(refused[30].contains("argument #1 'opts': unknown field `filter`"), "{}", refused[30]);
-    assert!(refused[31].contains("argument #1 'opts': unknown field `tag`"), "{}", refused[31]);
+    assert!(refused[31].contains("argument #2 'opts': unknown field `tag`"), "{}", refused[31]);
     assert!(refused[32].contains("the image must be a reference"), "{}", refused[32]);
-    assert!(refused[33].contains("argument #2 'context': expected a string or a buffer"), "{}", refused[33]);
+    assert!(refused[33].contains("argument #1 'context': expected a string or a buffer"), "{}", refused[33]);
     assert!(refused[35].contains("the container must be a name or an id"), "{}", refused[35]);
     assert!(refused[36].contains("unknown field `stdn`"), "{}", refused[36]);
     assert!(refused[37].contains("argument #2 'opts'"), "{}", refused[37]);
@@ -954,14 +954,14 @@ async fn a_build_sends_its_context_and_options_and_reports_its_progress() {
         &host,
         r#"
         local docker = assert(require("vnd:bollard").connect({ host = ... }))
-        local build = docker:build_image({
+        local build = docker:build_image("FROM alpine\0", {
             t = "app:1",
             dockerfile = "build/Dockerfile",
             labels = { app = "agent" },
             buildargs = { VERSION = "2" },
             nocache = true,
             pull = true,
-        }, "FROM alpine\0")
+        })
         local lines, total, image = {}, 0, nil
         for progress in build:items() do
             if progress.stream then table.insert(lines, progress.stream) end
@@ -969,8 +969,8 @@ async fn a_build_sends_its_context_and_options_and_reports_its_progress() {
             if progress.aux then image = progress.aux.ID end
         end
         -- a buffer is a context too, and the defaults are Docker's
-        assert(docker:build_image({}, buffer.fromstring("tar")):next())
-        local failing = docker:build_image({ t = "broken" }, "")
+        assert(docker:build_image(buffer.fromstring("tar"), {}):next())
+        local failing = docker:build_image("", { t = "broken" })
         local failure
         while failure == nil do
             local progress, err = failing:next()
