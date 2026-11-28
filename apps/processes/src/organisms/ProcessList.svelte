@@ -124,7 +124,7 @@
   .controls {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     padding: 0 16px 8px;
   }
 </style>

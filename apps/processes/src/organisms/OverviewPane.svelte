@@ -167,7 +167,7 @@
   .stack {
     flex: 1;
     min-width: 0;
-    padding: 10px 0;
+    padding: 12px 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
