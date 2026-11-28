@@ -1814,7 +1814,7 @@ export type lib_http = {
 	--- ```luau
 	--- local events, err = http.events("http://127.0.0.1:1/stream", { connect_timeout = 2 })
 	--- if events == nil then
-	---     assert(err ~= nil and err.kind == "connect")
+	---     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
 	--- end
 	--- ```
 	---
