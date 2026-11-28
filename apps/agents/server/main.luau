@@ -202,7 +202,7 @@ end
 
 -- Leave the agent's turn running in `chat`. Deferred: the caller has answered before the agent says anything.
 local function begin(chat: string, agent: roster.Agent, text: string)
-  local mine: Running = { task = nil, turn = { handle = nil, stopped = false } }
+  local mine: Running = { task = nil, turn = { session = nil, stopped = false } }
   running[chat] = mine
   mine.task = task.defer(function()
     local ok, problem = pcall(function(): string?
@@ -331,8 +331,8 @@ RPC.on_request("_answer", function(params: agents_AnswerParams, ctx: vos_app_Con
   local chat = params.chat
   local mine = running[chat]
   local row = timeline.get(chat, params.item)
-  local handle = if mine then mine.turn.handle else nil
-  if not row or row.kind ~= "permission" or row.done or not handle then
+  local session = if mine then mine.turn.session else nil
+  if not row or row.kind ~= "permission" or row.done or not session then
     return ctx:fail("That question is not open any more.")
   end
   local data = codec.decode(row.data) or {}
@@ -343,7 +343,7 @@ RPC.on_request("_answer", function(params: agents_AnswerParams, ctx: vos_app_Con
   if not offered then
     return ctx:fail("The agent did not offer that answer.")
   end
-  local answered = handle:respond_permission(row.key, { outcome = "selected", option_id = params.option })
+  local answered = session:respond_permission(row.key, { outcome = "selected", option_id = params.option })
   if not answered then
     return ctx:fail("That question is not open any more.")
   end
@@ -359,7 +359,8 @@ RPC.on_request("_stop", function(params: agents_StopParams, ctx: vos_app_Context
     mine.turn.stopped = true
     local live = link.get(chat)
     -- the agent is asked to stop (its open questions are answered `cancelled`), and ends its turn when it has
-    if mine.turn.handle and live and live.conn:cancel(live.session) then
+    local session = mine.turn.session
+    if session and live and live.cx:send_notification { session_id = session.session_id } then
       task.delay(STOP_GRACE, function()
         if running[chat] == mine then
           link.drop(chat)

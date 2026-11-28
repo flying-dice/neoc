@@ -51,7 +51,9 @@ fn full(status: u16, content_type: &str, body: &'static str) -> Reply {
 /// A body sent in the pieces given, each flushed on its own (chunked).
 fn chunked(pieces: Vec<&'static str>) -> Reply {
     let frames = futures_util::stream::iter(
-        pieces.into_iter().map(|piece| Ok::<_, Infallible>(Frame::data(Bytes::from_static(piece.as_bytes())))),
+        pieces
+            .into_iter()
+            .map(|piece| Ok::<_, Infallible>(Frame::data(Bytes::from_static(piece.as_bytes())))),
     );
     Response::builder().header("content-type", "text/plain").body(StreamBody::new(frames).boxed()).unwrap()
 }
@@ -192,7 +194,9 @@ async fn events_reconnect_with_the_last_event_id_and_a_refusal_is_an_error() {
             match (req.uri().path(), last.as_deref()) {
                 ("/refused", _) => full(500, "text/plain", "no"),
                 ("/plain", _) => full(200, "text/plain", "data: x\n\n"),
-                (_, None) => full(200, "text/event-stream", "retry: 50\nid: 1\nevent: greet\ndata: a\ndata: b\n\n"),
+                (_, None) => {
+                    full(200, "text/event-stream", "retry: 50\nid: 1\nevent: greet\ndata: a\ndata: b\n\n")
+                }
                 (_, Some(_)) => full(200, "text/event-stream", ": a comment\ndata: c\n\n"),
             }
         }

@@ -46,7 +46,12 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { headers: BTreeMap::new(), protocols: Vec::new(), ca_pem: None, connect_timeout: DEFAULT_CONNECT }
+        Self {
+            headers: BTreeMap::new(),
+            protocols: Vec::new(),
+            ca_pem: None,
+            connect_timeout: DEFAULT_CONNECT,
+        }
     }
 }
 
@@ -90,8 +95,7 @@ pub async fn connect(url: &str, opts: &Options) -> Result<Connected, NetError> {
     let attempt = async {
         let target = Target::new(&http)?;
         let tcp = tcp_connect(&target).await?;
-        let local_address =
-            tcp.local_addr().map_err(|e| NetError::connect(e.to_string()))?.ip().to_string();
+        let local_address = tcp.local_addr().map_err(|e| NetError::connect(e.to_string()))?.ip().to_string();
         let io: Box<dyn Io> = if tls {
             let name = ServerName::try_from(target.host.to_owned())
                 .map_err(|e| NetError::invalid_url(format!("{url}: {e}")))?;

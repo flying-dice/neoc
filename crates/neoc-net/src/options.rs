@@ -114,20 +114,13 @@ pub struct Prepared {
 
 impl Prepared {
     /// The request `method url` with `body`, as `opts` says, after the checks the types cannot make.
-    pub fn new(
-        method: &str,
-        url: String,
-        body: RequestBody,
-        opts: &ClientOptions,
-    ) -> Result<Self, NetError> {
+    pub fn new(method: &str, url: String, body: RequestBody, opts: &ClientOptions) -> Result<Self, NetError> {
         let method = normalize_method(method)?;
         let headers = headers_of(&opts.headers)?;
         // checked before anything is sent and whatever the URL's scheme, so a bad value is never silently unused
         let ca_pem = opts.ca_pem.as_deref().map(roots_of).transpose()?;
         if opts.max_body == 0 {
-            return Err(NetError::invalid_input(
-                "max_body must be a positive whole number of bytes, got 0",
-            ));
+            return Err(NetError::invalid_input("max_body must be a positive whole number of bytes, got 0"));
         }
         if opts.max_redirects == 0 {
             return Err(NetError::invalid_input(
@@ -153,10 +146,11 @@ impl Prepared {
         let Some(value) = self.headers.get(CONTENT_LENGTH) else {
             return Ok(());
         };
-        let declared: u64 =
-            value.to_str().ok().and_then(|s| s.trim().parse().ok()).ok_or_else(|| {
-                NetError::invalid_input("the Content-Length header is not a whole number")
-            })?;
+        let declared: u64 = value
+            .to_str()
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .ok_or_else(|| NetError::invalid_input("the Content-Length header is not a whole number"))?;
         let actual = match &self.body {
             RequestBody::Empty => 0,
             RequestBody::Full(bytes) => bytes.len() as u64,

@@ -152,7 +152,9 @@ impl Body {
         };
         let read = match self.deadline {
             None => next.await,
-            Some((at, limit)) => tokio::time::timeout_at(at, next).await.unwrap_or_else(|_| Err(whole(limit))),
+            Some((at, limit)) => {
+                tokio::time::timeout_at(at, next).await.unwrap_or_else(|_| Err(whole(limit)))
+            }
         };
         if !matches!(read, Ok(Some(_))) {
             self.done = true;
@@ -238,7 +240,8 @@ async fn head(prepared: Prepared, spawn: &Spawner) -> Result<Head, NetError> {
             reason: "the redirect asks for the body again, and a streamed body is sent only once".to_owned(),
         })?;
         let mut conn = Connection::open(&target, &mut tls, &limits, spawn).await?;
-        let resp = conn.send(build_request(&method, &target, &headers, sent, carries_content && empty)?).await?;
+        let resp =
+            conn.send(build_request(&method, &target, &headers, sent, carries_content && empty)?).await?;
         let status = resp.status().as_u16();
         if limits.redirects > 0
             && redirect::is_redirect(status)
@@ -298,8 +301,8 @@ fn build_request(
     let out = req.headers_mut();
     // a caller-set Host replaces ours: one `Host` line, as HTTP/1.1 requires
     if !headers.contains_key(HOST) {
-        let host = HeaderValue::from_str(&target.host_header())
-            .map_err(|e| NetError::invalid_url(e.to_string()))?;
+        let host =
+            HeaderValue::from_str(&target.host_header()).map_err(|e| NetError::invalid_url(e.to_string()))?;
         out.insert(HOST, host);
     }
     for (name, value) in headers {

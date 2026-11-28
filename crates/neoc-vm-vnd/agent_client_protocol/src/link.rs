@@ -298,7 +298,8 @@ impl Session {
                 SessionMessage::PromptResponse(Ok(response)) => {
                     // the turn is over: what it asked and was not answered is answered `cancelled`
                     cancel_all(&self.permissions);
-                    let stop_reason: StopReason = from_sdk(&response.stop_reason, "the answer to session/prompt")?;
+                    let stop_reason: StopReason =
+                        from_sdk(&response.stop_reason, "the answer to session/prompt")?;
                     return Ok(Message::PromptResponse { stop_reason });
                 }
                 SessionMessage::PromptResponse(Err(e)) => {
@@ -343,9 +344,7 @@ impl Drop for Link {
 }
 
 /// A connection that is starting: the SDK hands over its `ConnectionTo` once the transport is up.
-async fn connection(
-    rx: oneshot::Receiver<ConnectionTo<Agent>>,
-) -> Result<ConnectionTo<Agent>, AcpError> {
+async fn connection(rx: oneshot::Receiver<ConnectionTo<Agent>>) -> Result<ConnectionTo<Agent>, AcpError> {
     rx.await.map_err(|_| AcpError::Closed { reason: "the connection is closed".to_owned() })
 }
 
@@ -356,12 +355,15 @@ impl Link {
         let transport = Lines::new(outgoing, incoming);
         let (connection_tx, connection_rx) = oneshot::channel();
         let (close_tx, close_rx) = oneshot::channel::<()>();
-        life.spawn(Client.v1().name(name.clone()).connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-            let _ = connection_tx.send(cx.clone());
-            // until the script closes the connection (or lets go of every handle to it), or the agent hangs up
-            futures_util::future::select(close_rx, std::pin::pin!(cx.incoming_closed())).await;
-            Ok(())
-        }));
+        life.spawn(Client.v1().name(name.clone()).connect_with(
+            transport,
+            async move |cx: ConnectionTo<Agent>| {
+                let _ = connection_tx.send(cx.clone());
+                // until the script closes the connection (or lets go of every handle to it), or the agent hangs up
+                futures_util::future::select(close_rx, std::pin::pin!(cx.incoming_closed())).await;
+                Ok(())
+            },
+        ));
         LinkStart { connection: connection_rx, close: close_tx, name }
     }
 
@@ -372,7 +374,10 @@ impl Link {
             .then(|| AcpError::Closed { reason: "the connection was closed".to_owned() })
     }
 
-    pub(crate) async fn initialize(&self, request: InitializeRequest) -> Result<InitializeResponse, AcpError> {
+    pub(crate) async fn initialize(
+        &self,
+        request: InitializeRequest,
+    ) -> Result<InitializeResponse, AcpError> {
         if let Some(closed) = self.closed() {
             return Err(closed);
         }
@@ -386,7 +391,8 @@ impl Link {
             "client_capabilities": { "fs": { "read_text_file": false, "write_text_file": false }, "terminal": false },
             "client_info": client_info,
         }))?;
-        let answer = self.cx.send_request(initialize).block_task().await.map_err(|e| failure(&self.cx, &e))?;
+        let answer =
+            self.cx.send_request(initialize).block_task().await.map_err(|e| failure(&self.cx, &e))?;
         // another version is refused by the SDK's protocol guard (-32600)
         from_sdk(&answer, "the answer to initialize")
     }

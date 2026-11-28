@@ -10,20 +10,23 @@ local acp = require("vnd:agent_client_protocol")
 local roster = require("./roster")
 local task = require("std:task")
 local timeline = require("./timeline")
+local websocket = require("lib:websocket")
 local db = app.db
 
 -- Who this app says it is to an agent (`initialize`): the app and its version (package.json).
-local CLIENT = { name = "vos", version = "0.4.0" }
--- Seconds a connection and the agent's answer to `initialize` may take together.
+local CLIENT = { name = "vos", version = "0.6.1" }
+-- Seconds the WebSocket to the agent may take to open.
 local CONNECT_TIMEOUT = 30
 -- Seconds a chat's connection stays open after its last turn.
 local IDLE = 300
 
--- A chat's connection: the session on it, the agent it is to, and the lease its MCP server was given. `stale` when the
--- agent was changed during a turn: the connection is closed when the turn is over. `fresh` while its first turn runs.
+-- A chat's connection: the socket it runs on, the session on it, the agent it is to, and the lease its MCP server was
+-- given. `stale` when the agent was changed during a turn: the connection is closed when the turn is over. `fresh`
+-- while its first turn runs.
 export type Live = {
-  conn: vnd_agent_client_protocol_Connection,
-  session: string,
+  ws: lib_websocket_WebSocket,
+  cx: vnd_agent_client_protocol_ConnectionTo,
+  session: vnd_agent_client_protocol_ActiveSession?,
   agent: string,
   lease: string?,
   idle: std_task_Task?,
@@ -35,13 +38,14 @@ local lives: { [string]: Live } = {}
 
 local link = {}
 
--- the person's words for a failure of `vnd:agent_client_protocol`
-function link.sentence(err: vnd_agent_client_protocol_AcpError?): string
+-- the person's words for a failure of the socket to the agent (`lib:websocket`) or of ACP on it
+-- (`vnd:agent_client_protocol`)
+function link.sentence(err: (vnd_agent_client_protocol_AcpError | lib_websocket_WebSocketError)?): string
   if not err then
     return "The agent did not answer."
   end
   local kind, message = err.kind, err.message
-  if kind == "connect" then
+  if kind == "connect" or kind == "tls" or kind == "connection_lost" then
     return `The agent could not be reached: {message}`
   elseif kind == "status" then
     return `The agent's address refused the connection: {message}`
@@ -72,7 +76,8 @@ function link.drop(chat: string)
   if live.idle then
     task.cancel(live.idle)
   end
-  live.conn:close()
+  live.cx:close()
+  live.ws:close()
   if live.lease then
     app.tools.release(live.lease)
   end
@@ -130,22 +135,37 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
   if problem then
     return nil, problem
   end
-  local conn, refused = acp.connect(agent.url, {
+  local ws, refused = websocket.connect(agent.url, {
     headers = if token then { Authorization = `Bearer {token}` } else nil,
-    timeout = CONNECT_TIMEOUT,
-    client_info = CLIENT,
+    connect_timeout = CONNECT_TIMEOUT,
   })
-  if not conn then
+  if not ws then
     return nil, link.sentence(refused)
   end
+  local cx, broken = acp.Client.v1():name(CLIENT.name):connect((assert(acp.Lines.new(ws))))
+  if not cx then
+    ws:close()
+    return nil, link.sentence(broken)
+  end
   -- kept at once, so that whatever ends it from here on (a stop, a failure) closes it and ends its lease
-  local made: Live = { conn = conn, session = "", agent = agent.id, stale = false, fresh = true }
+  local made: Live = { ws = ws, cx = cx, agent = agent.id, stale = false, fresh = true }
   lives[chat] = made
 
-  local capabilities = conn.agent.agent_capabilities
+  local initialized, unanswered = cx:send_request { protocol_version = 1, client_info = CLIENT }
+  if not initialized then
+    link.drop(chat)
+    return nil, link.sentence(unanswered)
+  end
+  local capabilities = initialized.agent_capabilities
   local servers: { vnd_agent_client_protocol_McpServer } = {}
+  local function with(builder: vnd_agent_client_protocol_SessionBuilder): vnd_agent_client_protocol_SessionBuilder
+    for _, server in servers do
+      builder = builder:with_mcp_server(server)
+    end
+    return builder
+  end
   if capabilities.mcp_capabilities.http then
-    local lease = app.tools.lease({ id = agent.id, name = agent.name }, { host = conn.local_address })
+    local lease = app.tools.lease({ id = agent.id, name = agent.name }, { host = ws.local_address })
     made.lease = lease.token
     table.insert(servers, {
       type = "http",
@@ -159,9 +179,9 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
   local before: string = if row then row.session else ""
   local afresh: string? = nil
   if before ~= "" and capabilities.load_session then
-    local loaded, failed = conn:load_session { session_id = before, cwd = agent.folder, mcp_servers = servers }
+    local loaded, failed = with(cx:load_session(before, agent.folder)):start_session()
     if loaded then
-      made.session = before
+      made.session = loaded
       return made, nil
     end
     -- the agent no longer has the session (it answers with an error): a new one; anything else ends here
@@ -175,16 +195,16 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
     afresh =
       "The agent cannot load an earlier session, so it started a new one: it does not remember the earlier messages."
   end
-  local started, failed = conn:new_session { cwd = agent.folder, mcp_servers = servers }
+  local started, refusal = with(cx:build_session(agent.folder)):start_session()
   if not started then
     link.drop(chat)
     -- the agent's own refusal names the folder most often: one that is not there on its machine
-    if failed and failed.kind == "rpc" then
-      return nil, `The agent did not start a session in {agent.folder}: {failed.message}`
+    if refusal and refusal.kind == "rpc" then
+      return nil, `The agent did not start a session in {agent.folder}: {refusal.message}`
     end
-    return nil, link.sentence(failed)
+    return nil, link.sentence(refusal)
   end
-  made.session = started.session_id
+  made.session = started
   db:exec("update threads set session = :s where id = :id", { s = started.session_id, id = chat })
   if afresh then
     timeline.add(chat, "note", { text = afresh })

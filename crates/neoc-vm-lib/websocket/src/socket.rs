@@ -81,7 +81,9 @@ fn closed_error(reason: &str) -> WebSocketError {
 
 fn lost(e: &tungstenite::Error) -> WebSocketError {
     match e {
-        tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed => closed_error("the socket is closed"),
+        tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed => {
+            closed_error("the socket is closed")
+        }
         tungstenite::Error::Io(e) => WebSocketError::ConnectionLost { reason: e.to_string() },
         tungstenite::Error::Capacity(e) => WebSocketError::Protocol { reason: e.to_string() },
         tungstenite::Error::Protocol(e) => WebSocketError::Protocol { reason: e.to_string() },
@@ -98,11 +100,14 @@ async fn read(
 ) {
     while let Some(frame) = stream.next().await {
         let message = match frame {
-            Ok(Frame::Text(text)) => Message { kind: MessageKind::Text, data: Data(text.as_bytes().to_vec()) },
+            Ok(Frame::Text(text)) => {
+                Message { kind: MessageKind::Text, data: Data(text.as_bytes().to_vec()) }
+            }
             Ok(Frame::Binary(bytes)) => Message { kind: MessageKind::Binary, data: Data(bytes.to_vec()) },
             Ok(Frame::Close(frame)) => {
-                let (code, reason) = frame
-                    .map_or((1005, String::new()), |frame| (u16::from(frame.code), frame.reason.as_str().to_owned()));
+                let (code, reason) = frame.map_or((1005, String::new()), |frame| {
+                    (u16::from(frame.code), frame.reason.as_str().to_owned())
+                });
                 *closed.lock() = Some((code, reason));
                 return;
             }

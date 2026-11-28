@@ -176,7 +176,9 @@ pub(crate) fn client_options(
 
 /// The lines of `body`, without their `\n` or `\r\n`; the last one too when the body does not end with a newline.
 /// Bytes that are not UTF-8 become U+FFFD.
-pub(crate) fn lines(body: neoc_net::Body) -> impl futures_util::Stream<Item = Result<String, FetchError>> + Send {
+pub(crate) fn lines(
+    body: neoc_net::Body,
+) -> impl futures_util::Stream<Item = Result<String, FetchError>> + Send {
     struct State {
         body: Option<neoc_net::Body>,
         pending: Vec<u8>,
@@ -303,8 +305,13 @@ impl Source {
             set_id: bool,
             ended: bool,
         }
-        let state =
-            State { source: self, parsed: Some(parse(first)), last_id: String::new(), set_id: false, ended: false };
+        let state = State {
+            source: self,
+            parsed: Some(parse(first)),
+            last_id: String::new(),
+            set_id: false,
+            ended: false,
+        };
         futures_util::stream::unfold(state, |mut state| async move {
             loop {
                 if state.ended {
@@ -365,7 +372,9 @@ impl Source {
     }
 
     /// The first connection, whose failure is the caller's error.
-    pub(crate) async fn connect(self) -> Result<impl futures_util::Stream<Item = Result<Event, FetchError>> + Send, FetchError> {
+    pub(crate) async fn connect(
+        self,
+    ) -> Result<impl futures_util::Stream<Item = Result<Event, FetchError>> + Send, FetchError> {
         let first = self.open("").await?;
         Ok(self.events(first))
     }

@@ -17,9 +17,12 @@ async fn echo() -> u16 {
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             tokio::spawn(async move {
+                // the refusal's type is tungstenite's, whatever its size
+                #[allow(clippy::result_large_err)]
                 let callback = |req: &Request, mut resp: Response| {
                     if req.uri().path() == "/refused" {
-                        let mut refused = tokio_tungstenite::tungstenite::http::Response::new(Some("go away".to_owned()));
+                        let mut refused =
+                            tokio_tungstenite::tungstenite::http::Response::new(Some("go away".to_owned()));
                         *refused.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
                         return Err(refused);
                     }
@@ -31,17 +34,13 @@ async fn echo() -> u16 {
                 };
                 let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, callback).await else { return };
                 while let Some(Ok(message)) = ws.next().await {
-                    match message {
-                        Message::Text(text) if text.as_str() == "bye" => {
-                            let frame = CloseFrame { code: CloseCode::from(4000), reason: "later".into() };
-                            let _ = ws.send(Message::Close(Some(frame))).await;
-                        }
-                        Message::Text(_) | Message::Binary(_) => {
-                            if ws.send(message).await.is_err() {
-                                return;
-                            }
-                        }
-                        _ => {}
+                    if matches!(&message, Message::Text(text) if text.as_str() == "bye") {
+                        let frame = CloseFrame { code: CloseCode::from(4000), reason: "later".into() };
+                        let _ = ws.send(Message::Close(Some(frame))).await;
+                    } else if matches!(message, Message::Text(_) | Message::Binary(_))
+                        && ws.send(message).await.is_err()
+                    {
+                        return;
                     }
                 }
             });

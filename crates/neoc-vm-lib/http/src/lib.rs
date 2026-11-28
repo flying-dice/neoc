@@ -528,17 +528,19 @@ pub mod http {
     use bytes::Bytes as Chunk;
     use mlua::Lua;
     use mlua_ir::{Bytes, LuaError, Object, Options, Shape, Stream};
-    use neoc_net::{DEFAULT_CONNECT, DEFAULT_IDLE, DEFAULT_MAX_BODY, DEFAULT_REDIRECTS, Prepared, RequestBody};
+    use neoc_net::{
+        DEFAULT_CONNECT, DEFAULT_IDLE, DEFAULT_MAX_BODY, DEFAULT_REDIRECTS, Prepared, RequestBody,
+    };
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
     use tokio::net::TcpListener;
     use tokio::sync::{mpsc, oneshot};
 
     use super::client::{self, Source, client_options, spawner};
-    use super::{GlobError, build_index, resolve_glob, serve_loop};
     pub use super::client::{Event, FetchError, TimeLimit};
-    use neoc_vm_lib_json::json::Node;
+    use super::{GlobError, build_index, resolve_glob, serve_loop};
     use neoc_vm_core::lifecycle::Life;
+    use neoc_vm_lib_json::json::Node;
 
     // -----------------------------------------------------------------------------------------------------------
     // The client
@@ -751,7 +753,11 @@ pub mod http {
     /// end
     /// ```
     #[host("Wait")]
-    pub async fn events(lua: Lua, url: String, opts: EventsOptions) -> Result<Stream<Event, FetchError>, FetchError> {
+    pub async fn events(
+        lua: Lua,
+        url: String,
+        opts: EventsOptions,
+    ) -> Result<Stream<Event, FetchError>, FetchError> {
         let retry = Duration::try_from_secs_f64(opts.retry).map_err(|_| {
             FetchError::invalid_input(format!("retry must be a finite number of seconds, got {}", opts.retry))
         })?;
@@ -1014,9 +1020,9 @@ pub mod http {
             let Some(head) = self.upload.head.lock().await.take() else {
                 return Err(FetchError::invalid_input("the request was finished already"));
             };
-            let response = head.await.map_err(|_| FetchError::ConnectionLost {
-                reason: "the request was stopped".to_owned(),
-            })??;
+            let response = head
+                .await
+                .map_err(|_| FetchError::ConnectionLost { reason: "the request was stopped".to_owned() })??;
             Ok(Response::new(response, self.upload.max_body))
         }
     }

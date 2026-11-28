@@ -43,9 +43,7 @@ fn build(ca_pem: Option<RootCertStore>) -> Result<TlsConnector, NetError> {
             use rustls_platform_verifier::BuilderVerifierExt;
             builder
                 .with_platform_verifier()
-                .map_err(|e| {
-                    NetError::tls(format!("the platform certificate verifier is unavailable: {e}"))
-                })?
+                .map_err(|e| NetError::tls(format!("the platform certificate verifier is unavailable: {e}")))?
                 .with_no_client_auth()
         }
         Some(roots) => builder.with_root_certificates(roots).with_no_client_auth(),

@@ -268,14 +268,14 @@ pub mod websocket {
     /// ```
     #[host("Wait")]
     pub async fn connect(lua: Lua, url: String, opts: ConnectOptions) -> Result<WebSocket, WebSocketError> {
-        let connect_timeout =
-            Duration::try_from_secs_f64(opts.connect_timeout).ok().filter(|d| !d.is_zero()).ok_or_else(|| {
-                WebSocketError::InvalidInput {
-                    reason: format!(
-                        "connect_timeout must be a positive, finite number of seconds, got {}",
-                        opts.connect_timeout
-                    ),
-                }
+        let connect_timeout = Duration::try_from_secs_f64(opts.connect_timeout)
+            .ok()
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| WebSocketError::InvalidInput {
+                reason: format!(
+                    "connect_timeout must be a positive, finite number of seconds, got {}",
+                    opts.connect_timeout
+                ),
             })?;
         let options = neoc_net::websocket::Options {
             headers: opts.headers,

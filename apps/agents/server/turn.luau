@@ -1,6 +1,6 @@
 --!strict
--- The agent's turn in a chat: one prompt (ACP's `session/prompt`, through `vnd:agent_client_protocol`), and what each
--- thing the agent does in it does to the chat's items (timeline.luau).
+-- The agent's turn in a chat: one prompt (ACP's `session/prompt`, on `vnd:agent_client_protocol`'s `ActiveSession`), and
+-- what each thing the agent does in it does to the chat's items (timeline.luau).
 --
 -- What the agent says is the answer, what it thinks is reasoning, each tool call is a tool item (changed by every
 -- update of it), its plan is one plan item for the turn (replaced whole by each plan it sends), and a permission it
@@ -19,9 +19,9 @@ local MAX_TEXT = 200000
 -- The largest image kept in the chat, as base64: a larger one is named, not shown.
 local MAX_IMAGE = 1024 * 1024
 
--- The turn in progress in a chat: `handle` is the prompt's turn once it is sent (permissions are answered on it), and
--- `stopped` says the person stopped it.
-export type Turn = { handle: vnd_agent_client_protocol_Turn?, stopped: boolean }
+-- The turn in progress in a chat: `session` is the session its prompt was sent on, once it is (permissions are
+-- answered on it), and `stopped` says the person stopped it.
+export type Turn = { session: vnd_agent_client_protocol_ActiveSession?, stopped: boolean }
 -- How a turn ended: `lost` when the connection turned out closed before the agent did anything, and the caller said
 -- it may connect again and send the prompt once more; `over` however else it ended.
 export type Outcome = "over" | "lost"
@@ -226,8 +226,8 @@ local STOPPED: { [string]: string } = {
   refusal = "The agent refused to go on.",
 }
 
--- how much of the turn's allowance an event takes: all of it, whatever field the agent put its text in
-local function weight(event: vnd_agent_client_protocol_TurnEvent): number
+-- how much of the turn's allowance a message takes: all of it, whatever field the agent put its text in
+local function weight(event: vnd_agent_client_protocol_SessionMessage): number
   return 200 + #codec.encode(event)
 end
 
@@ -235,20 +235,21 @@ end
 -- over; a failure is an `error` item in the chat, never an error raised. With `retry`, a connection found closed
 -- before the agent did anything is left for the caller to connect again (`lost`), and adds nothing.
 function turn.take(chat: string, live: link.Live, text: string, current: Turn, retry: boolean): Outcome
-  local handle, refused = live.conn:prompt { session_id = live.session, prompt = { { type = "text", text = text } } }
-  if not handle then
+  local session = assert(live.session, "a live connection has its session")
+  local sent, refused = session:send_prompt_blocks { { type = "text", text = text } }
+  if not sent then
     if retry and refused and refused.kind == "closed" then
       return "lost"
     end
     timeline.add(chat, "error", { text = link.sentence(refused) })
     return "over"
   end
-  current.handle = handle
+  current.session = session
   local run: Run = { chat = chat, since = timeline.last(chat) }
   local heard = false
   local spent = 0
   while true do
-    local event, failed = handle:next()
+    local event, failed = session:read_update()
     if failed then
       -- a turn the person stopped may end with its connection: that is what stopping it is
       if current.stopped then
@@ -265,6 +266,7 @@ function turn.take(chat: string, live: link.Live, text: string, current: Turn, r
       return "over"
     end
     if not event then
+      -- `read_update` gives a message or an error: this is never reached
       return "over"
     end
     heard = true
@@ -277,13 +279,14 @@ function turn.take(chat: string, live: link.Live, text: string, current: Turn, r
     end
     if event.type == "update" then
       update(run, event.update)
-    elseif event.type == "permission" then
+    elseif event.type == "request_permission" then
       ask(run, event)
-    elseif event.type == "done" then
+    elseif event.type == "prompt_response" then
       local why = STOPPED[event.stop_reason]
       if why then
         timeline.add(chat, "note", { text = why })
       end
+      return "over"
     end
   end
 end

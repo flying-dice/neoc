@@ -1,25 +1,17 @@
 {
-  "events": [
+  "messages": [
     "text hi",
     "tool Edit edit",
     "other usage_update",
     "permission 7 yes",
     "done end_turn"
   ],
-  "failures": [
-    "invalid_input",
-    "invalid_input",
-    "invalid_input",
-    "invalid_input"
-  ],
-  "forbidden": 403,
-  "status": [
-    404,
-    "no such agent",
-    "vnd:agent_client_protocol.connect: status: the endpoint answered 404: no such agent"
+  "surface": [
+    "function",
+    "function"
   ],
   "wrong": [
-    "runtime error: vnd:agent_client_protocol.connect: argument #1 'url': expected a string, got nil",
-    "runtime error: vnd:agent_client_protocol.connect: argument #2 'opts': unknown field `origin`, expected one of headers, timeout, client_info"
+    "runtime error: vnd:agent_client_protocol.Lines.new: argument #1 'socket': expected a WebSocket, got nil",
+    "runtime error: vnd:agent_client_protocol.Lines.new: argument #1 'socket': expected a WebSocket, got \"ws://127.0.0.1:1/acp\""
   ]
 }

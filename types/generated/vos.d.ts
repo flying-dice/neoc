@@ -1859,6 +1859,214 @@ declare module "lib:html" {
  */
 type lib_http_BindCause = "addr_in_use" | "addr_not_available" | "permission_denied" | "other"
 
+/** One server-sent event. */
+interface lib_http_Event {
+  /** Its type: the stream's `event:` field, or `"message"`. */
+  event: string
+  /** Its data: the `data:` lines, joined with `"\n"`. */
+  data: string
+  /** The last event id the stream set (`id:`), which a reconnect sends as `Last-Event-ID`; `""` when none. */
+  id: string
+}
+
+/** How `events` connects, and reconnects. */
+interface lib_http_EventsOptions {
+  /** Headers to send, by name (`Authorization`). `Accept: text/event-stream` is sent unless given here. @default {} */
+  headers?: { [key: string]: string }
+  /** PEM certificates to trust instead of the platform's. */
+  ca_pem?: string
+  /** Seconds each connection's TCP connect and TLS handshake may take. @default 10.0 */
+  connect_timeout?: number
+  /**
+   * Seconds without data before a connection is given up (and opened again). No limit when not given: a
+   * quiet stream is not a broken one.
+   */
+  idle_timeout?: number
+  /**
+   * Open the stream again when it ends or its connection fails, as the HTML standard's `EventSource` does;
+   * `false` ends the stream with its first connection. @default true
+   */
+  reconnect?: boolean
+  /** Seconds to wait before a reconnection, until the server's `retry:` says otherwise. @default 3.0 */
+  retry?: number
+}
+
+/** The kinds of `lib_http_FetchError`. */
+type lib_http_FetchErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "too_many_redirects" | "too_large" | "connection_lost" | "bad_response" | "status" | "other"
+
+/**
+ * Why a request failed. The kind means the same on every platform; `reason` is for a person or a log. A response
+ * with a 4xx or 5xx status is a response, not an error.
+ */
+type lib_http_FetchError =
+  /**
+   * An option, a header, the method or the body was refused before anything was sent, or a call came after the
+   * thing it acts on was done (a write after `finish`).
+   */
+  | { kind: "invalid_input"; reason: string; message: string; op: string }
+  /** The URL (or a redirect's `Location`) is not an `http` or `https` URL with a host. */
+  | { kind: "invalid_url"; reason: string; message: string; op: string }
+  /** No connection could be made: the name did not resolve, or the host refused or could not be reached. */
+  | { kind: "connect"; reason: string; message: string; op: string }
+  /** The TLS handshake failed, usually over the certificate. */
+  | { kind: "tls"; reason: string; message: string; op: string }
+  /** A time limit passed: connecting, no data arriving, or the whole request. */
+  | { kind: "timed_out"; limit: lib_http_TimeLimit; reason: string; message: string; op: string }
+  /** More redirects than `max_redirects` allows. */
+  | { kind: "too_many_redirects"; max_redirects: number; message: string; op: string }
+  /** A body read whole is longer than `max_body`. */
+  | { kind: "too_large"; max_body: number; message: string; op: string }
+  /** The connection ended or failed after it was made, before the response was complete. */
+  | { kind: "connection_lost"; reason: string; message: string; op: string }
+  /**
+   * The server answered with something that is not what was asked for: not valid HTTP, a body that is not JSON
+   * for `json()`, an event stream that is not `text/event-stream`.
+   */
+  | { kind: "bad_response"; reason: string; message: string; op: string }
+  /** An event stream was answered with a status other than 200. */
+  | { kind: "status"; code: number; message: string; op: string }
+  /** Anything else, reported and never hidden. */
+  | { kind: "other"; reason: string; message: string; op: string }
+
+/** How `fetch` sends a request, and the limits it keeps to. */
+interface lib_http_FetchOptions {
+  /** The method; a standard one in any case is the standard one (`post` is `POST`). @default "GET" */
+  method?: string
+  /**
+   * Headers to send, by name. A `Content-Length` that is not the body's length is refused, a `Host` replaces
+   * the built-in one, and a name given twice in any case or a `Transfer-Encoding` is refused. @default {}
+   */
+  headers?: { [key: string]: string }
+  /**
+   * The body, sent with its length. A request that carries content (`POST`, `PUT`, `PATCH`) with none says
+   * `Content-Length: 0`.
+   */
+  body?: string
+  /** PEM certificates to trust instead of the platform's, on every hop. */
+  ca_pem?: string
+  /** Seconds the TCP connect and the TLS handshake may take. @default 10.0 */
+  connect_timeout?: number
+  /** Seconds without data moving in either direction; reset whenever any does. @default 60.0 */
+  idle_timeout?: number
+  /**
+   * Seconds the whole request may take, redirects and every read of the body included. No limit when not
+   * given.
+   */
+  timeout?: number
+  /** Follow 301, 302, 303, 307 and 308 (the rules of `vnd:hyper`); `false` returns the 3xx. @default true */
+  follow_redirects?: boolean
+  /** The most redirects to follow; one more is a `too_many_redirects` error. @default 16 */
+  max_redirects?: number
+  /**
+   * The most bytes `text()` and `json()` read; a longer body fails with `too_large`. `read()` and `lines()`
+   * are not capped. @default 67108864
+   */
+  max_body?: number
+}
+
+/** A request whose body is being written. Copies of the handle are the same request. */
+interface lib_http_Request {
+  /**
+   * Send `chunk` as the next piece of the body. Waits while the server is not reading. `(nil, err)` when the
+   * request has failed or ended (`finish` gives why) or was finished.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  write(chunk: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * End the body and wait for the response: the response as `fetch` returns it, or why the request failed.
+   * Once only.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  finish(): LuaMultiReturn<[lib_http_Response, undefined] | [undefined, lib_http_FetchError]>
+}
+
+/** How `request` sends a request whose body is written as it goes. */
+interface lib_http_RequestOptions {
+  /** The method; `POST` when not given. @default "POST" */
+  method?: string
+  /**
+   * Headers to send, by name. The body is sent chunked: a `Content-Length` or a `Transfer-Encoding` is
+   * refused. @default {}
+   */
+  headers?: { [key: string]: string }
+  /** PEM certificates to trust instead of the platform's, on every hop. */
+  ca_pem?: string
+  /** Seconds the TCP connect and the TLS handshake may take. @default 10.0 */
+  connect_timeout?: number
+  /**
+   * Seconds without data moving in either direction; reset whenever any does. Time the script takes between
+   * two writes counts: a server waits that long too. @default 60.0
+   */
+  idle_timeout?: number
+  /**
+   * Seconds the whole request may take, from `request` to the end of the response's body. No limit when
+   * not given.
+   */
+  timeout?: number
+  /**
+   * Follow 301, 302 and 303 (which drop the body); a 307 or 308 asks for the body again, which was sent
+   * once, and fails. `false` returns the 3xx. @default true
+   */
+  follow_redirects?: boolean
+  /** The most redirects to follow. @default 16 */
+  max_redirects?: number
+  /** The most bytes the response's `text()` and `json()` read. @default 67108864 */
+  max_body?: number
+}
+
+/** A response: its status and headers, and its body, read once. Copies of the handle are the same response. */
+interface lib_http_Response {
+  /** The status code. */
+  readonly status: number
+  /** The status is 2xx. */
+  readonly ok: boolean
+  /**
+   * One value under each lower-case name. A header sent more than once is joined with `", "`, `set-cookie`
+   * with `"\n"`, and bytes that are not UTF-8 become U+FFFD. Built on every read.
+   */
+  readonly headers: { [key: string]: string }
+  /** The URL the response came from: the last one of the redirect chain. */
+  readonly url: string
+  /** A redirect was followed on the way. */
+  readonly redirected: boolean
+  /** A header by name, in any case; `nil` when the response has none. */
+  header(name: string): string | undefined
+  /**
+   * The next piece of the body as it arrived: `(chunk, nil)`, `(nil, nil)` at the end, or `(nil, err)`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  read(): LuaMultiReturn<[string | undefined, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * The rest of the body, as one string (whatever its bytes), at most `max_body` bytes. `""` once read.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  text(): LuaMultiReturn<[string, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * The rest of the body parsed as JSON: a `lib:json` handle for an object or an array, a Lua value for a
+   * string, a number or a boolean, `nil` for `null`. A body that is not JSON is `bad_response`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  json(): LuaMultiReturn<[lib_json_Node | undefined, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
+   * `items()`. Bytes that are not UTF-8 become U+FFFD.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  lines(): LuaMultiReturn<[mlua_Stream<string, lib_http_FetchError>, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * Stop reading the body: its connection is closed. Reading after it gives the end.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  cancel(): void
+}
+
 /** The kinds of `lib_http_ServeError`. */
 type lib_http_ServeErrorKind = "invalid_glob" | "walk" | "bind"
 
@@ -1882,7 +2090,59 @@ interface lib_http_ServeOptions {
   port?: number
 }
 
+/**
+ * Which time limit a `timed_out` request passed: the option that sets it, or the operating system's own.
+ * - `connect_timeout`: Connecting (the name lookup, the TCP connect and the TLS handshake) took longer than `connect_timeout`.
+ * - `idle_timeout`: No data moved in either direction for `idle_timeout`.
+ * - `timeout`: The whole request, redirects and body included, took longer than `timeout`.
+ * - `system`: The operating system gave up on the connection by a limit of its own.
+ */
+type lib_http_TimeLimit = "connect_timeout" | "idle_timeout" | "timeout" | "system"
+
 declare module "lib:http" {
+  /**
+   * Send a request and return its response as soon as its head has arrived: the body is read with `read`,
+   * `lines`, `text` or `json`. A 4xx or 5xx status is a response (`ok` is `false`), not an error.
+   *
+   * ```luau
+   * local res, err = http.fetch("http://127.0.0.1:1/", { connect_timeout = 2 })
+   * if res == nil then
+   *     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+   * end
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  export function fetch(this: void, url: string, opts?: lib_http_FetchOptions): LuaMultiReturn<[lib_http_Response, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * Start a request whose body the script writes as it goes (`write`), sent chunked; `finish` ends the body and
+   * returns the response. Returns at once: the connection is made meanwhile, and the first `write` waits for it.
+   *
+   * ```luau
+   * local upload = assert(http.request("http://127.0.0.1:1/upload", { method = "PUT", connect_timeout = 2 }))
+   * local wrote, err = upload:write("hello")
+   * if not wrote then
+   *     local _, why = upload:finish()
+   *     assert(why ~= nil)
+   * end
+   * ```
+   */
+  export function request(this: void, url: string, opts?: lib_http_RequestOptions): LuaMultiReturn<[lib_http_Request, undefined] | [undefined, lib_http_FetchError]>
+  /**
+   * Connect to a stream of server-sent events (`text/event-stream`) and return its events, read with `next()`
+   * or `items()`. The first connection is made before this returns: a refusal of it is this call's error. Later
+   * ones reconnect on their own (`reconnect`); `close()` ends the stream.
+   *
+   * ```luau
+   * local events, err = http.events("http://127.0.0.1:1/stream", { connect_timeout = 2 })
+   * if events == nil then
+   *     assert(err ~= nil and err.kind == "connect")
+   * end
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  export function events(this: void, url: string, opts?: lib_http_EventsOptions): LuaMultiReturn<[mlua_Stream<lib_http_Event, lib_http_FetchError>, undefined] | [undefined, lib_http_FetchError]>
   /**
    * Serve the files matching `glob_pattern` over HTTP/1.1, with an index of them at `/`. The call blocks while
    * the server runs: until Ctrl-C, or until an embedder stops the script's background work or shuts it down;
@@ -1899,8 +2159,16 @@ declare module "lib:http" {
    */
   export function serve_static(this: void, glob_pattern: string, opts?: lib_http_ServeOptions): LuaMultiReturn<[boolean, undefined] | [undefined, lib_http_ServeError]>
   export type BindCause = lib_http_BindCause
+  export type Event = lib_http_Event
+  export type EventsOptions = lib_http_EventsOptions
+  export type FetchError = lib_http_FetchError
+  export type FetchOptions = lib_http_FetchOptions
+  export type Request = lib_http_Request
+  export type RequestOptions = lib_http_RequestOptions
+  export type Response = lib_http_Response
   export type ServeError = lib_http_ServeError
   export type ServeOptions = lib_http_ServeOptions
+  export type TimeLimit = lib_http_TimeLimit
 }
 
 // ===== lib:ini =====
@@ -3612,6 +3880,151 @@ declare module "lib:vcr" {
   export type PlayError = lib_vcr_PlayError
 }
 
+// ===== lib:websocket =====
+
+/** How `connect` connects. */
+interface lib_websocket_ConnectOptions {
+  /**
+   * Headers to add to the upgrade request (`Authorization`, `Origin`); no `Origin` is sent unless given. The
+   * upgrade's own headers (`Upgrade`, `Connection`, `Sec-WebSocket-*`) are refused. @default {}
+   */
+  headers?: { [key: string]: string }
+  /** The subprotocols to offer, in order of preference; `protocol` is the one the server chose. @default [] */
+  protocols?: string[]
+  /** PEM certificates to trust instead of the platform's. */
+  ca_pem?: string
+  /** Seconds the TCP connect, the TLS handshake and the upgrade may take together. @default 10.0 */
+  connect_timeout?: number
+}
+
+/** A message the peer sent. */
+interface lib_websocket_Message {
+  /** Text or bytes. */
+  kind: lib_websocket_MessageKind
+  /** The message: a string whatever its bytes. */
+  data: string
+}
+
+/**
+ * What a message holds.
+ * - `text`: Text: UTF-8.
+ * - `binary`: Bytes.
+ */
+type lib_websocket_MessageKind = "text" | "binary"
+
+/**
+ * Which time limit a `timed_out` connection passed.
+ * - `connect_timeout`: The TCP connect, the TLS handshake and the upgrade took longer than `connect_timeout`.
+ * - `system`: The operating system gave up on the connection by a limit of its own.
+ */
+type lib_websocket_TimeLimit = "connect_timeout" | "system"
+
+/** An open WebSocket. Copies of the handle are the same socket; when the last one goes, the socket closes. */
+interface lib_websocket_WebSocket {
+  /** The URL connected to. */
+  readonly url: string
+  /** The subprotocol the server chose; `nil` when it chose none. */
+  readonly protocol?: string
+  /** The IP address of this end of the connection: the address this machine has on the way to the peer. */
+  readonly local_address: string
+  /**
+   * The close code the peer sent (1000 for a normal close, 1005 when its close frame had none); `nil` while
+   * the socket is open.
+   */
+  readonly close_code?: number
+  /** The reason the peer gave with its close; `nil` while the socket is open. */
+  readonly close_reason?: string
+  /**
+   * Send `text` as a text message. Waits while the peer is not reading.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  send(text: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_websocket_WebSocketError]>
+  /**
+   * Send `data` as a binary message. Waits while the peer is not reading.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  send_binary(data: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_websocket_WebSocketError]>
+  /**
+   * Send a ping (with up to 125 bytes of `data`); the peer's pong is not given to the script.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  ping(data?: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_websocket_WebSocketError]>
+  /**
+   * The next message: `(message, nil)`; `(nil, nil)` once the socket is closed; or `(nil, err)` when the
+   * connection failed.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  receive(): LuaMultiReturn<[lib_websocket_Message | undefined, undefined] | [undefined, lib_websocket_WebSocketError]>
+  /** The messages, read as they come: `next()` or `items()`, ending when the socket closes. */
+  messages(): mlua_Stream<lib_websocket_Message, lib_websocket_WebSocketError>
+  /**
+   * Close the socket: send a close frame with `code` (1000 when not given; 1000, or 3000 to 4999) and
+   * `reason` (at most 123 bytes), and return. `receive` gives what the peer sent before its answer, then
+   * `nil`. Closing again does nothing.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  close(code?: number, reason?: string): LuaMultiReturn<[boolean, undefined] | [undefined, lib_websocket_WebSocketError]>
+}
+
+/** The kinds of `lib_websocket_WebSocketError`. */
+type lib_websocket_WebSocketErrorKind = "invalid_input" | "invalid_url" | "connect" | "tls" | "timed_out" | "status" | "protocol" | "connection_lost" | "closed" | "other"
+
+/** Why a connection or a call failed. `reason` is for a person or a log. */
+type lib_websocket_WebSocketError =
+  /** An option, a header, a close code or a reason was refused before anything was sent. */
+  | { kind: "invalid_input"; reason: string; message: string; op: string }
+  /** The URL is not a `ws` or `wss` URL with a host. */
+  | { kind: "invalid_url"; reason: string; message: string; op: string }
+  /** No connection could be made: the name did not resolve, or the host refused or could not be reached. */
+  | { kind: "connect"; reason: string; message: string; op: string }
+  /** The TLS handshake failed, usually over the certificate. */
+  | { kind: "tls"; reason: string; message: string; op: string }
+  /** A time limit passed. */
+  | { kind: "timed_out"; limit: lib_websocket_TimeLimit; reason: string; message: string; op: string }
+  /** The server answered the upgrade with an HTTP status instead (`401`, `403`, `404`). */
+  | { kind: "status"; code: number; body: string; message: string; op: string }
+  /**
+   * The peer broke the protocol: an upgrade or a frame that is not what RFC 6455 says, or a message over
+   * 64 MiB.
+   */
+  | { kind: "protocol"; reason: string; message: string; op: string }
+  /** The connection failed after it was made. */
+  | { kind: "connection_lost"; reason: string; message: string; op: string }
+  /**
+   * The socket is closed (by `close`, by the peer, or by the engine shutting down), or a transport took it
+   * over (`vnd:agent_client_protocol`).
+   */
+  | { kind: "closed"; reason: string; message: string; op: string }
+  /** Anything else, reported and never hidden. */
+  | { kind: "other"; reason: string; message: string; op: string }
+
+declare module "lib:websocket" {
+  /**
+   * Connect to `url` (`ws://` or `wss://`) and complete the upgrade.
+   *
+   * ```luau
+   * local ws, err = websocket.connect("ws://127.0.0.1:1/socket", { connect_timeout = 2 })
+   * if ws == nil then
+   *     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+   * end
+   * ```
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  export function connect(this: void, url: string, opts?: lib_websocket_ConnectOptions): LuaMultiReturn<[lib_websocket_WebSocket, undefined] | [undefined, lib_websocket_WebSocketError]>
+  export type ConnectOptions = lib_websocket_ConnectOptions
+  export type Message = lib_websocket_Message
+  export type MessageKind = lib_websocket_MessageKind
+  export type TimeLimit = lib_websocket_TimeLimit
+  export type WebSocket = lib_websocket_WebSocket
+  export type WebSocketError = lib_websocket_WebSocketError
+}
+
 // ===== std:collections =====
 
 /**
@@ -4982,23 +5395,16 @@ declare module "std:time" {
 // ===== vnd:agent_client_protocol =====
 
 /** The kinds of `vnd_agent_client_protocol_AcpError`. */
-type vnd_agent_client_protocol_AcpErrorKind = "invalid_input" | "connect" | "status" | "protocol" | "rpc" | "closed" | "timed_out"
+type vnd_agent_client_protocol_AcpErrorKind = "invalid_input" | "protocol" | "rpc" | "closed"
 
 /** Why a call failed. `reason` is for a person or a log. */
 type vnd_agent_client_protocol_AcpError =
-  /** An option, a header, the URL or an argument was refused before anything was sent. */
+  /**
+   * An argument was refused before anything was sent, or a call came at the wrong time (a socket a transport
+   * took already, a permission request that is not waiting).
+   */
   | { kind: "invalid_input"; reason: string; message: string; op: string }
-  /**
-   * No connection could be made: the name did not resolve, the host refused or could not be reached, or the
-   * TLS handshake failed.
-   */
-  | { kind: "connect"; reason: string; message: string; op: string }
-  /**
-   * The endpoint answered the WebSocket upgrade with an HTTP status instead (`403` for an `Origin` acpd
-   * refuses, `404` for an agent it does not have).
-   */
-  | { kind: "status"; code: number; body: string; message: string; op: string }
-  /** The endpoint is not an ACP agent: the WebSocket upgrade went wrong, or an answer is not what ACP v1 says. */
+  /** The peer is not an ACP v1 agent: an answer is not what ACP v1 says. */
   | { kind: "protocol"; reason: string; message: string; op: string }
   /**
    * The request failed with a JSON-RPC error: the agent's answer, or the SDK's own (-32600 for an agent of
@@ -5007,8 +5413,40 @@ type vnd_agent_client_protocol_AcpError =
   | { kind: "rpc"; code: number; reason: string; message: string; op: string }
   /** The connection is closed: by `close()`, by the agent, or by the engine shutting down. */
   | { kind: "closed"; reason: string; message: string; op: string }
-  /** `connect` took longer than its `timeout`. */
-  | { kind: "timed_out"; reason: string; message: string; op: string }
+
+/**
+ * A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session; when the
+ * last one goes, the permission requests that wait are answered `cancelled`.
+ */
+interface vnd_agent_client_protocol_ActiveSession {
+  /** The session's id. */
+  readonly session_id: string
+  /** The session's modes, when the agent has modes. */
+  readonly modes?: vnd_agent_client_protocol_SessionModeState
+  /**
+   * Send `text` as a prompt (`session/prompt`). What the agent does is read with `read_update`, up to the
+   * `prompt_response` that ends the turn.
+   */
+  send_prompt(text: string): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  /**
+   * Send a prompt made of content blocks. Content other than text and resource links needs the matching
+   * entry of the agent's `prompt_capabilities`.
+   */
+  send_prompt_blocks(prompt: vnd_agent_client_protocol_ContentBlock[]): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  /**
+   * The next message the agent sent for the session, in order: `(message, nil)`, or `(nil, err)` when the
+   * agent answered a prompt with an error (the session goes on) or the connection closed.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  read_update(): LuaMultiReturn<[vnd_agent_client_protocol_SessionMessage, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  /**
+   * Answer the permission request `id` (a `request_permission` message's `id`) with `outcome`: one of the
+   * options the agent offered, or `cancelled`. A request is answered once; an `id` that is not waiting is
+   * `invalid_input`.
+   */
+  respond_permission(id: string, outcome: vnd_agent_client_protocol_PermissionOutcome): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+}
 
 /** What the agent can do. */
 interface vnd_agent_client_protocol_AgentCapabilities {
@@ -5046,56 +5484,64 @@ interface vnd_agent_client_protocol_AvailableCommandInput {
   hint: string
 }
 
-/** How `connect` connects. */
-interface vnd_agent_client_protocol_ConnectOptions {
+/** A client connection being set up: the SDK's `Builder`. */
+interface vnd_agent_client_protocol_Builder {
   /**
-   * Headers to add to the WebSocket upgrade (`Authorization` for an endpoint that wants a token). No `Origin`
-   * is sent unless given here. @default {}
+   * The same builder, with a name: the connection's, and the client's in `initialize` unless the request
+   * says who it is.
    */
-  headers?: { [key: string]: string }
-  /** Seconds the connection and the agent's answer to `initialize` may take together. @default 30.0 */
-  timeout?: number
-  /** Who the client says it is in `initialize`; `neoc` and its version when not given. */
-  client_info?: vnd_agent_client_protocol_Implementation
+  name(name: string): vnd_agent_client_protocol_Builder
+  /**
+   * Start the connection over `transport`: the Luau form of the SDK's `connect_with`. The connection runs
+   * until `close()`, until every handle to it is gone, until the agent hangs up, or until the script stops.
+   * Nothing is sent: the first request is `send_request(InitializeRequest)`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  connect(transport: vnd_agent_client_protocol_Lines): LuaMultiReturn<[vnd_agent_client_protocol_ConnectionTo, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
 }
 
-/** A connection to an agent. Copies of the handle are the same connection. */
-interface vnd_agent_client_protocol_Connection {
-  /** The agent's answer to `initialize`: its version, what it can do, its name. */
-  readonly agent: vnd_agent_client_protocol_InitializeResponse
+/** What `send_notification` sends: `session/cancel`, which asks the agent to stop the session's turn. */
+interface vnd_agent_client_protocol_CancelNotification {
+  /** The session. */
+  session_id: string
+}
+
+/** The roles of a connection, as the SDK names them: `Client.v1()` starts a v1 client. */
+interface vnd_agent_client_protocol_Client {
+}
+
+/** The statics of `vnd_agent_client_protocol_Client`. */
+interface vnd_agent_client_protocol_ClientStatics {
+  /** The builder of a protocol v1 client connection. */
+  v1(this: void): vnd_agent_client_protocol_Builder
+}
+
+/** A connection to an agent: the SDK's `ConnectionTo<Agent>`. Copies of the handle are the same connection. */
+interface vnd_agent_client_protocol_ConnectionTo {
   /**
-   * The IP address of this end of the connection: the address this machine has on the way to the agent
-   * (`127.0.0.1` for an agent on this machine).
-   */
-  readonly local_address: string
-  /**
-   * Start a session (`session/new`) in `cwd` on the agent's machine, with the MCP servers it connects to.
-   * What the agent sends for the session from then on is read by its turns: an update sent between two
-   * turns (the commands a new session has, say) is given by the next one.
+   * Send `initialize` and wait for the agent's answer: its version, what it can do, its name. The client
+   * offers no file system and no terminal.
    *
    * Yields the calling coroutine while it waits.
    */
-  new_session(params: vnd_agent_client_protocol_NewSessionRequest): LuaMultiReturn<[vnd_agent_client_protocol_NewSessionResponse, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  send_request(request: vnd_agent_client_protocol_InitializeRequest): LuaMultiReturn<[vnd_agent_client_protocol_InitializeResponse, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
   /**
-   * Load a session the agent had before (`session/load`), when its `agent_capabilities.load_session` says
-   * it can. The agent replays the session's history before it answers; that history is dropped here.
-   *
-   * Yields the calling coroutine while it waits.
+   * Send `session/cancel`. The session's permission requests that wait are answered `cancelled` first, as
+   * ACP asks; the agent then answers the prompt with `stop_reason = "cancelled"` when it has stopped.
    */
-  load_session(params: vnd_agent_client_protocol_LoadSessionRequest): LuaMultiReturn<[vnd_agent_client_protocol_LoadSessionResponse, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  send_notification(notification: vnd_agent_client_protocol_CancelNotification): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  /** A new session (`session/new`) in `cwd`, an absolute path on the agent's machine. */
+  build_session(cwd: string): vnd_agent_client_protocol_SessionBuilder
   /**
-   * Send a prompt (`session/prompt`) to a session this connection started or loaded, and return the turn at
-   * once: its `next()` gives what the agent does until it answers. A session has one turn at a time: a
-   * prompt while one is going is `invalid_input`.
+   * A session the agent had before (`session/load`), when its `agent_capabilities.load_session` says it
+   * can.
    */
-  prompt(params: vnd_agent_client_protocol_PromptRequest): LuaMultiReturn<[vnd_agent_client_protocol_Turn, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  load_session(session_id: string, cwd: string): vnd_agent_client_protocol_SessionBuilder
   /**
-   * Ask the agent to stop the session's turn (`session/cancel`). The permission requests the turn is
-   * waiting on are answered `cancelled` first, as ACP asks; the turn then ends with a `done` event whose
-   * `stop_reason` is `cancelled`, when the agent has stopped.
+   * Close the connection. Calls in flight end with a `closed` error. Closing again does nothing. The socket
+   * closes when its own last handle goes, or with its `close()`.
    */
-  cancel(session_id: string): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
-  /** Close the connection. Calls in flight and turns end with a `closed` error. Closing again does nothing. */
   close(): void
 }
 
@@ -5153,6 +5599,14 @@ interface vnd_agent_client_protocol_Implementation {
   version: string
 }
 
+/** What `send_request` sends: `initialize`, the first request of a connection. */
+interface vnd_agent_client_protocol_InitializeRequest {
+  /** The protocol version the client speaks: 1. The SDK refuses an agent that answers with another. */
+  protocol_version: number
+  /** Who the client is; the builder's `name` and neoc's version when not given. */
+  client_info?: vnd_agent_client_protocol_Implementation
+}
+
 /** The agent's answer to `initialize`. */
 interface vnd_agent_client_protocol_InitializeResponse {
   /** The version of ACP the agent speaks: always 1 (the SDK refuses another with an `rpc` error, -32600). */
@@ -5165,20 +5619,17 @@ interface vnd_agent_client_protocol_InitializeResponse {
   auth_methods: vnd_agent_client_protocol_AuthMethod[]
 }
 
-/** What `load_session` is given. */
-interface vnd_agent_client_protocol_LoadSessionRequest {
-  /** The session to load: what `new_session` answered. */
-  session_id: string
-  /** The folder the session works in: an absolute path on the agent's machine. */
-  cwd: string
-  /** The MCP servers the agent connects to for the session. */
-  mcp_servers: vnd_agent_client_protocol_McpServer[]
+/** A transport of one JSON-RPC message per line: the SDK's `Lines`. */
+interface vnd_agent_client_protocol_Lines {
 }
 
-/** The agent's answer to `load_session`. */
-interface vnd_agent_client_protocol_LoadSessionResponse {
-  /** The session's modes, when the agent has modes. */
-  modes?: vnd_agent_client_protocol_SessionModeState
+/** The statics of `vnd_agent_client_protocol_Lines`. */
+interface vnd_agent_client_protocol_LinesStatics {
+  /**
+   * The lines of a `lib:websocket` socket: one per text frame, as `acpd` serves `/acp`. The socket is the
+   * transport's from then on: the script's `receive` on it gives `closed`, and `close` still closes it.
+   */
+  "new"(this: void, socket: lib_websocket_WebSocket): LuaMultiReturn<[vnd_agent_client_protocol_Lines, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
 }
 
 /** The MCP servers a session may be given besides `stdio` ones, which every agent takes. */
@@ -5197,22 +5648,6 @@ type vnd_agent_client_protocol_McpServer =
   | { type: "sse"; name: string; url: string; headers: vnd_agent_client_protocol_HttpHeader[] }
   /** A program the agent starts on its own machine, which every agent can do. The wire has no `type` for it. */
   | { type: "stdio"; name: string; command: string; args: string[]; env: vnd_agent_client_protocol_EnvVariable[] }
-
-/** What `new_session` is given. */
-interface vnd_agent_client_protocol_NewSessionRequest {
-  /** The folder the session works in: an absolute path on the agent's machine. */
-  cwd: string
-  /** The MCP servers the agent connects to for the session. */
-  mcp_servers: vnd_agent_client_protocol_McpServer[]
-}
-
-/** The agent's answer to `new_session`. */
-interface vnd_agent_client_protocol_NewSessionResponse {
-  /** The session: what a prompt, a load and a cancel name. */
-  session_id: string
-  /** Its modes, when the agent has modes. */
-  modes?: vnd_agent_client_protocol_SessionModeState
-}
 
 /** An answer the agent offers to a permission request. */
 interface vnd_agent_client_protocol_PermissionOption {
@@ -5276,13 +5711,30 @@ interface vnd_agent_client_protocol_PromptCapabilities {
   embedded_context: boolean
 }
 
-/** What `prompt` is given. */
-interface vnd_agent_client_protocol_PromptRequest {
-  /** The session. */
-  session_id: string
-  /** What the person says. */
-  prompt: vnd_agent_client_protocol_ContentBlock[]
+/** A session being set up: the SDK's `SessionBuilder`. */
+interface vnd_agent_client_protocol_SessionBuilder {
+  /** The same builder, with one more MCP server for the agent to connect to in the session. */
+  with_mcp_server(server: vnd_agent_client_protocol_McpServer): vnd_agent_client_protocol_SessionBuilder
+  /**
+   * Send `session/new` (or `session/load`) and wait for the agent's answer: the session. What the agent sends
+   * for it from then on is read with `read_update`.
+   *
+   * Yields the calling coroutine while it waits.
+   */
+  start_session(): LuaMultiReturn<[vnd_agent_client_protocol_ActiveSession, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
 }
+
+/** What a session's `read_update` gives, told apart by its `type`: the SDK's `SessionMessage`. */
+type vnd_agent_client_protocol_SessionMessage =
+  /** A `session/update`: the agent did or said something. */
+  | { type: "update"; update: vnd_agent_client_protocol_SessionUpdate }
+  /**
+   * A `session/request_permission`: the agent asks before it goes on. Answer it with
+   * `respond_permission(id, outcome)`.
+   */
+  | { type: "request_permission"; id: string; tool_call: vnd_agent_client_protocol_ToolCallUpdate; options: vnd_agent_client_protocol_PermissionOption[] }
+  /** The answer to a prompt: that turn is over. */
+  | { type: "prompt_response"; stop_reason: vnd_agent_client_protocol_StopReason }
 
 /** A mode the agent can work in (`ask`, `code`, ...). */
 interface vnd_agent_client_protocol_SessionMode {
@@ -5397,71 +5849,29 @@ interface vnd_agent_client_protocol_ToolCallUpdate {
  */
 type vnd_agent_client_protocol_ToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "switch_mode" | "other"
 
-/** A prompt's turn: what the agent does until it answers the prompt. */
-interface vnd_agent_client_protocol_Turn {
-  /**
-   * The next event of the turn: `(event, nil)`; `(nil, nil)` once the `done` event has been given; or
-   * `(nil, err)` when the turn failed (the agent answered the prompt with an error, or the connection
-   * closed), after which nothing follows.
-   *
-   * Yields the calling coroutine while it waits.
-   */
-  next(): LuaMultiReturn<[vnd_agent_client_protocol_TurnEvent | undefined, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
-  /**
-   * Answer the permission request `id` (a `permission` event's `id`) with `outcome`: one of the options the
-   * agent offered, or `cancelled`. A request is answered once; an `id` that is not waiting is
-   * `invalid_input`.
-   */
-  respond_permission(id: string, outcome: vnd_agent_client_protocol_PermissionOutcome): LuaMultiReturn<[boolean, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
-}
-
-/** What a turn gives, told apart by its `type`. */
-type vnd_agent_client_protocol_TurnEvent =
-  /** The agent did or said something. */
-  | { type: "update"; update: vnd_agent_client_protocol_SessionUpdate }
-  /** The agent asks before it goes on: answer with `respond_permission(id, outcome)`. */
-  | { type: "permission"; id: string; tool_call: vnd_agent_client_protocol_ToolCallUpdate; options: vnd_agent_client_protocol_PermissionOption[] }
-  /** The agent answered the prompt: the turn is over. */
-  | { type: "done"; stop_reason: vnd_agent_client_protocol_StopReason }
-
 declare module "vnd:agent_client_protocol" {
-  /**
-   * Connect to the ACP agent at `url` (`ws://` or `wss://`) and initialize it: the WebSocket upgrade, then
-   * `initialize` with protocol version 1 and no client capabilities (no file system, no terminal). Returns once
-   * the agent has answered with protocol version 1; the SDK refuses any other version (an `rpc` error, -32600).
-   *
-   * The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
-   * are collected, and when the script stops. Closing it is how an `acpd` agent process is stopped.
-   *
-   * ```luau
-   * local conn, err = agent_client_protocol.connect("ws://127.0.0.1:1/acp", { timeout = 2 })
-   * if conn == nil then
-   *     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
-   * end
-   * ```
-   *
-   * Yields the calling coroutine while it waits.
-   */
-  export function connect(this: void, url: string, opts?: vnd_agent_client_protocol_ConnectOptions): LuaMultiReturn<[vnd_agent_client_protocol_Connection, undefined] | [undefined, vnd_agent_client_protocol_AcpError]>
+  export const Client: vnd_agent_client_protocol_ClientStatics
+  export const Lines: vnd_agent_client_protocol_LinesStatics
   export type AcpError = vnd_agent_client_protocol_AcpError
+  export type ActiveSession = vnd_agent_client_protocol_ActiveSession
   export type AgentCapabilities = vnd_agent_client_protocol_AgentCapabilities
   export type AuthMethod = vnd_agent_client_protocol_AuthMethod
   export type AvailableCommand = vnd_agent_client_protocol_AvailableCommand
   export type AvailableCommandInput = vnd_agent_client_protocol_AvailableCommandInput
-  export type ConnectOptions = vnd_agent_client_protocol_ConnectOptions
-  export type Connection = vnd_agent_client_protocol_Connection
+  export type Builder = vnd_agent_client_protocol_Builder
+  export type CancelNotification = vnd_agent_client_protocol_CancelNotification
+  export type Client = vnd_agent_client_protocol_Client
+  export type ConnectionTo = vnd_agent_client_protocol_ConnectionTo
   export type ContentBlock = vnd_agent_client_protocol_ContentBlock
   export type EmbeddedResource = vnd_agent_client_protocol_EmbeddedResource
   export type EnvVariable = vnd_agent_client_protocol_EnvVariable
   export type HttpHeader = vnd_agent_client_protocol_HttpHeader
   export type Implementation = vnd_agent_client_protocol_Implementation
+  export type InitializeRequest = vnd_agent_client_protocol_InitializeRequest
   export type InitializeResponse = vnd_agent_client_protocol_InitializeResponse
-  export type LoadSessionRequest = vnd_agent_client_protocol_LoadSessionRequest
-  export type LoadSessionResponse = vnd_agent_client_protocol_LoadSessionResponse
+  export type Lines = vnd_agent_client_protocol_Lines
   export type McpCapabilities = vnd_agent_client_protocol_McpCapabilities
   export type McpServer = vnd_agent_client_protocol_McpServer
-  export type NewSessionRequest = vnd_agent_client_protocol_NewSessionRequest
-  export type NewSessionResponse = vnd_agent_client_protocol_NewSessionResponse
   export type PermissionOption = vnd_agent_client_protocol_PermissionOption
   export type PermissionOptionKind = vnd_agent_client_protocol_PermissionOptionKind
   export type PermissionOutcome = vnd_agent_client_protocol_PermissionOutcome
@@ -5469,7 +5879,8 @@ declare module "vnd:agent_client_protocol" {
   export type PlanEntryPriority = vnd_agent_client_protocol_PlanEntryPriority
   export type PlanEntryStatus = vnd_agent_client_protocol_PlanEntryStatus
   export type PromptCapabilities = vnd_agent_client_protocol_PromptCapabilities
-  export type PromptRequest = vnd_agent_client_protocol_PromptRequest
+  export type SessionBuilder = vnd_agent_client_protocol_SessionBuilder
+  export type SessionMessage = vnd_agent_client_protocol_SessionMessage
   export type SessionMode = vnd_agent_client_protocol_SessionMode
   export type SessionModeState = vnd_agent_client_protocol_SessionModeState
   export type SessionUpdate = vnd_agent_client_protocol_SessionUpdate
@@ -5479,8 +5890,6 @@ declare module "vnd:agent_client_protocol" {
   export type ToolCallStatus = vnd_agent_client_protocol_ToolCallStatus
   export type ToolCallUpdate = vnd_agent_client_protocol_ToolCallUpdate
   export type ToolKind = vnd_agent_client_protocol_ToolKind
-  export type Turn = vnd_agent_client_protocol_Turn
-  export type TurnEvent = vnd_agent_client_protocol_TurnEvent
 }
 
 // ===== vnd:bollard =====

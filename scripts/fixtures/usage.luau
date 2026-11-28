@@ -49,6 +49,7 @@ local tracing = require("lib:tracing")
 local unicode = require("lib:unicode")
 local url = require("lib:url")
 local vcr = require("lib:vcr")
+local websocket = require("lib:websocket")
 local agent_client_protocol = require("vnd:agent_client_protocol")
 local bollard = require("vnd:bollard")
 local hyper = require("vnd:hyper")
@@ -95,6 +96,7 @@ local _modules: { any } = {
   text,
   unicode,
   vcr,
+  websocket,
   agent_client_protocol,
   bollard,
   hyper,

@@ -880,7 +880,12 @@ pub mod agent_client_protocol {
         /// A session the agent had before (`session/load`), when its `agent_capabilities.load_session` says it
         /// can.
         pub fn load_session(&self, session_id: String, cwd: String) -> SessionBuilder {
-            SessionBuilder { link: Arc::clone(&self.link), cwd, load: Some(session_id), mcp_servers: Vec::new() }
+            SessionBuilder {
+                link: Arc::clone(&self.link),
+                cwd,
+                load: Some(session_id),
+                mcp_servers: Vec::new(),
+            }
         }
 
         /// Close the connection. Calls in flight end with a `closed` error. Closing again does nothing. The socket
@@ -913,7 +918,8 @@ pub mod agent_client_protocol {
         pub async fn start_session(&self) -> Result<ActiveSession, AcpError> {
             let session = match &self.load {
                 None => {
-                    let request = NewSessionRequest { cwd: self.cwd.clone(), mcp_servers: self.mcp_servers.clone() };
+                    let request =
+                        NewSessionRequest { cwd: self.cwd.clone(), mcp_servers: self.mcp_servers.clone() };
                     self.link.new_session(&request).await?
                 }
                 Some(session_id) => {
