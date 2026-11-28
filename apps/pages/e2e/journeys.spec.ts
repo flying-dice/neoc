@@ -21,7 +21,7 @@ const frame = (page: Page): FrameLocator => frameOf(page, ID)
 const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${ID}-${name}`)
 // the kit's text field holds the real input in its shadow tree
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
-const rows = (page: Page): Locator => frame(page).locator(`li[data-testid^="${ID}-site-"]`)
+const rows = (page: Page): Locator => frame(page).locator(`ui-row[data-testid^="${ID}-site-"]`)
 const names = (page: Page): Locator => rows(page).locator('[data-testid$="-name"]')
 /** Something of the row of the site called `name`: its switch, a button, an address. */
 const of = (page: Page, name: string, what: string): Locator =>
