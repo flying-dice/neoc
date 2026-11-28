@@ -38,7 +38,7 @@
         type="button"
         class="link {classOf(run.style)}"
         class:missing={!resolves(run.target)}
-        title={resolves(run.target) ? run.target : `${run.target} is not written yet`}
+        title={resolves(run.target) ? undefined : `${run.target} is not written yet`}
         onclick={() => onfollow(run.target)}
         data-testid="{testid}-link-{run.target}">{run.text}</button
       >
@@ -174,14 +174,14 @@
     color: var(--label-secondary);
   }
   code {
+    font: var(--type-subheadline);
     font-family: var(--font-mono);
-    font-size: 0.9em;
     padding: 1px 4px;
     border-radius: var(--radius-xs);
     background: var(--fill-tertiary);
   }
   pre {
-    padding: 10px 12px;
+    padding: 12px;
     border-radius: var(--radius-md);
     background: var(--fill-tertiary);
     overflow-x: auto;
@@ -207,7 +207,7 @@
   }
   .mark {
     background: color-mix(in srgb, var(--ios-yellow) 35%, transparent);
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
   }
   /* a link and a tag are buttons that sit in the line as words do */
   button {

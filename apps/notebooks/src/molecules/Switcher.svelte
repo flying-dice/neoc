@@ -172,7 +172,7 @@
   }
   ul {
     margin: 0;
-    padding: 6px;
+    padding: 8px;
     list-style: none;
     overflow-y: auto;
   }
@@ -181,7 +181,7 @@
     flex-direction: column;
     justify-content: center;
     min-height: 44px;
-    padding: 4px 10px;
+    padding: 4px 12px;
     border-radius: var(--radius-md);
     cursor: pointer;
   }
