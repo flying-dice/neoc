@@ -22,6 +22,19 @@ const HOOKS = `/* A subtree that says "follow the system setting" (the document 
   color-scheme: light dark;
 }
 
+/* An app's window is above the desktop, so its content is on the elevated backgrounds, not the desktop's (in dark: gray6, not
+   black). The names stay what an app reads; only what they are changes. The secondary and tertiary steps go one up as well,
+   so a row, a card or a field still stands out from what it sits on. */
+:root,
+[data-theme] {
+  --bg: var(--bg-elevated);
+  --bg-secondary: light-dark(var(--ios-gray6), var(--ios-gray5));
+  --bg-tertiary: light-dark(#ffffff, var(--ios-gray4));
+  --bg-grouped: var(--bg-grouped-elevated);
+  --bg-grouped-secondary: var(--bg-grouped-elevated-secondary);
+  --bg-grouped-tertiary: light-dark(var(--ios-gray6), var(--ios-gray4));
+}
+
 /* Reduce Motion set on the document (the host's setting): no transition starts. */
 :root[data-reduce-motion] {
   --duration-fast: 0s;

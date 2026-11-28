@@ -82,7 +82,12 @@
   --label-secondary: light-dark(rgb(60 60 67 / 0.75), rgb(235 235 245 / 0.6));
   --label-tertiary: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
   --label-quaternary: light-dark(rgb(60 60 67 / 0.18), rgb(235 235 245 / 0.16));
-  --placeholder: var(--label-tertiary);
+  /*
+   * The hint in an empty field. Not --label-tertiary (1.7:1 in light, 2.4:1 in dark): a hint is text, and has to read at
+   * 4.5:1 (COLOR-17) on a field's own fill over every background: 4.65:1 in light and 4.87:1 in dark at worst, against
+   * 21:1 for what is typed, in --label.
+   */
+  --placeholder: light-dark(rgb(60 60 67 / 0.77), rgb(235 235 245 / 0.65));
   --link: var(--ios-blue);
 
   /* ── Separators ─────────────────────────────────────────────── */
@@ -207,4 +212,6 @@
   --material-regular: var(--bg-grouped-elevated);
   --material-thick: var(--bg-grouped-elevated);
   --material-chrome: var(--bg-grouped-elevated);
+  /* the off track's own 16% alpha would let what is behind it show through: the grays it comes to over the grouped backgrounds */
+  --switch-off: light-dark(var(--ios-gray5), var(--ios-gray4));
 }
