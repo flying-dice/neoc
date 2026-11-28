@@ -308,3 +308,46 @@ async fn a_close_behind_a_send_to_a_peer_that_stopped_reading_is_cut_off_in_time
     let ended = tokio::time::timeout(Duration::from_secs(15), ended_rx).await.expect("the server ended");
     assert_eq!(ended.unwrap(), "released");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_close_after_a_failure_stuck_behind_unread_messages_still_releases_the_connection() {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (ended_tx, ended_rx) = tokio::sync::oneshot::channel::<String>();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        // as many messages as the client queues, then a frame with a reserved opcode: the client's reader fails
+        // with a full queue nobody reads
+        for i in 0..64 {
+            ws.send(Message::text(format!("m{i}"))).await.unwrap();
+        }
+        let tcp = ws.get_mut();
+        tcp.write_all(&[0x83, 0x00]).await.unwrap();
+        let mut buf = vec![0_u8; 1 << 16];
+        let ended = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match tcp.read(&mut buf).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        let _ = ended_tx.send(if ended.is_ok() { "released".to_owned() } else { "still open".to_owned() });
+    });
+    let lua = neoc_vm_core::make_engine().unwrap();
+    run(&lua, port, "WS = assert(websocket.connect(base .. '/')) return ''").await;
+    // the reader takes the messages and the failure, and stops at the full queue
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let got = lua
+        .load("return tostring(WS.close_code) .. ' ' .. tostring(WS:close(1000, 'bye'))")
+        .eval_async::<String>()
+        .await
+        .unwrap();
+    assert_eq!(got, "1006 true");
+    let ended = tokio::time::timeout(Duration::from_secs(5), ended_rx).await.expect("the server ended");
+    assert_eq!(ended.unwrap(), "released");
+}

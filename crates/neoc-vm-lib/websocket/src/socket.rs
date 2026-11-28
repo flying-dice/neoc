@@ -295,12 +295,13 @@ impl Inner {
             }
             *closing = true;
         }
+        // the deadline starts here, before anything is awaited: a close stuck behind a send to a peer that stopped
+        // reading, or one the caller stops waiting for, is still cut off in time; so is a connection whose reader is
+        // still at work after the peer's close or a failure (stuck queueing it behind messages nobody reads)
+        self.drop_after_close_wait();
         if self.closed.lock().is_some() {
             return Ok(());
         }
-        // the deadline starts here, before anything is awaited: a close stuck behind a send to a peer that stopped
-        // reading, or one the caller stops waiting for, is still cut off in time
-        self.drop_after_close_wait();
         let frame = CloseFrame { code: CloseCode::from(code), reason: reason.into() };
         let sent = self
             .cut
