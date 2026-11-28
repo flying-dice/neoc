@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Telemetry, RENDER_FAILURE } from './telemetry.svelte'
+import { COPIED_FOR, Telemetry, RENDER_FAILURE, type Clipboard } from './telemetry.svelte'
 import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS, createFakeBackend, rpcError } from './fakeApi'
 
 const window = (options: Parameters<typeof createFakeBackend>[0] = {}, later?: (fn: () => void) => void) => {
@@ -95,5 +95,85 @@ describe('Telemetry', () => {
     expect(telemetry.pane).toBe('content')
     telemetry.back()
     expect(telemetry.pane).toBe('sidebar')
+  })
+})
+
+describe('copying what is known of a trace or a log', () => {
+  /** A window whose clipboard keeps what it was given, and whose waits are run by the test. */
+  const copying = (options: Parameters<typeof createFakeBackend>[0] = {}, clipboard?: Clipboard) => {
+    const written: string[] = []
+    const waits: [() => void, number][] = []
+    const backend = createFakeBackend(options)
+    const telemetry = new Telemetry(backend.reader, backend.rpc, {
+      clipboard: clipboard ?? { writeText: async (text) => void written.push(text) },
+      after: (fn, ms) => void waits.push([fn, ms])
+    })
+    return { backend, telemetry, written, waits }
+  }
+
+  test('the open trace is copied as JSON, and the button says Copied until the wait is over', async () => {
+    const { telemetry, written, waits } = copying()
+    await telemetry.open(RENDER_TRACE)
+    expect(telemetry.copied).toBe('idle')
+    await telemetry.copyTrace()
+    expect(telemetry.copied).toBe('copied')
+    const report = JSON.parse(written[0]!) as { kind: string; traceId: string; name: string; spans: unknown[]; logs: unknown[] }
+    expect([report.kind, report.traceId, report.name, report.spans.length, report.logs.length]).toEqual(['trace', RENDER_TRACE, 'rpc overview', 4, 2])
+    expect(waits.map(([, ms]) => ms)).toEqual([COPIED_FOR])
+    waits[0]![0]()
+    expect(telemetry.copied).toBe('idle')
+  })
+
+  test('a log of the Logs view is copied with its span and the trace it belongs to, which is read for it', async () => {
+    const { telemetry, written } = copying()
+    telemetry.show('logs')
+    await telemetry.refresh()
+    const error = telemetry.logs.find((l) => l.body.includes('each_key_duplicate'))!
+    await telemetry.copyLog(error)
+    expect(telemetry.copied).toBe('copied')
+    const report = JSON.parse(written[0]!) as { kind: string; log: { message: string }; span: { name: string }; trace: { spans: unknown[]; logs: unknown[] } }
+    expect(report.kind).toBe('log')
+    expect(report.log.message).toContain('each_key_duplicate')
+    expect(report.span.name).toBe('rpc overview')
+    expect([report.trace.spans.length, report.trace.logs.length]).toEqual([4, 2])
+  })
+
+  test('a log written outside any call is copied alone, and one whose trace cannot be read says so and is still copied', async () => {
+    const lone = { ...LOGS[0]!, traceId: undefined, spanId: undefined }
+    const alone = copying()
+    await alone.telemetry.copyLog(lone)
+    expect(JSON.parse(alone.written[0]!)).toMatchObject({ kind: 'log', span: null, trace: null })
+    const broken = copying()
+    await broken.telemetry.refresh()
+    broken.backend.reader.query = () => Promise.reject(new Error('The host went away'))
+    await broken.telemetry.copyLog(LOGS[1]!)
+    expect(broken.telemetry.copied).toBe('copied')
+    expect(JSON.parse(broken.written[0]!)).toMatchObject({ trace: null, note: 'The trace could not be read: The host went away' })
+  })
+
+  test('a clipboard that refuses, or none at all, is said, never raised', async () => {
+    const refusing = copying({}, { writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) })
+    await refusing.telemetry.open(RENDER_TRACE)
+    await refusing.telemetry.copyTrace()
+    expect(refusing.telemetry.copied).toBe('refused')
+    const none = new Telemetry(createFakeBackend().reader, createFakeBackend().rpc)
+    await none.copyLog(LOGS[1]!)
+    expect(none.copied).toBe('refused')
+  })
+
+  test('an older copy’s wait does not end a newer copy’s Copied; opening something else clears it; nothing to copy copies nothing', async () => {
+    const { telemetry, written, waits } = copying()
+    await telemetry.copyTrace()
+    expect(written).toEqual([])
+    await telemetry.open(RENDER_TRACE)
+    await telemetry.copyTrace()
+    await telemetry.copyTrace()
+    waits[0]![0]()
+    expect(telemetry.copied).toBe('copied')
+    waits[1]![0]()
+    expect(telemetry.copied).toBe('idle')
+    await telemetry.copyTrace()
+    await telemetry.open(FAILED_TRACE)
+    expect(telemetry.copied).toBe('idle')
   })
 })

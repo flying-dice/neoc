@@ -16,6 +16,7 @@
     images: () => RPC.send_request('agents', '_images'),
     chats: () => RPC.send_request('agents', '_chats'),
     open: (params) => RPC.send_request('agents', '_open', params),
+    readItem: (params) => RPC.send_request('agents', '_read_item', params),
     send: (params) => RPC.send_request('agents', '_send', params),
     answer: (params) => RPC.send_request('agents', '_answer', params),
     stop: (params) => RPC.send_request('agents', '_stop', params),
@@ -29,6 +30,8 @@
           return RPC.on_notification('agents', '_item', fn)
         case 'piece':
           return RPC.on_notification('agents', '_piece', fn)
+        case 'item_changed':
+          return RPC.on_notification('agents', '_item_changed', fn)
         case 'turn':
           return RPC.on_notification('agents', '_turn', fn)
         default:

@@ -1,11 +1,12 @@
 <!-- @organism TraceInspector — one trace in full: the call it started with and how it went, its spans as a waterfall from the page to the host and the backend, its logs, and the span or log that was picked, in rows -->
 <script lang="ts">
+  import CopyButton from '../molecules/CopyButton.svelte'
   import LogDetails from '../molecules/LogDetails.svelte'
   import LogRow from '../molecules/LogRow.svelte'
   import SpanDetails from '../molecules/SpanDetails.svelte'
   import SpanRow from '../molecules/SpanRow.svelte'
   import { SOURCE_LABEL, SOURCE_TINT, clock, duration, logKey, type Bar, type Log, type Source, type Span, type TraceSummary } from '../lib/telemetry'
-  import type { Choice } from '../lib/telemetry.svelte'
+  import type { Choice, Copied } from '../lib/telemetry.svelte'
 
   interface Props {
     traceId: string
@@ -18,12 +19,16 @@
     span?: Span | null
     /** The log to show in full. */
     log?: Log | null
+    /** How the last copy went. */
+    copied?: Copied
     back?: boolean
     onback?: () => void
     onchoose: (choice: NonNullable<Choice>) => void
+    /** Put everything known of the trace on the clipboard. */
+    oncopy: () => void
   }
 
-  let { traceId, summary = null, bars, logs, choice = null, span = null, log = null, back = false, onback, onchoose }: Props = $props()
+  let { traceId, summary = null, bars, logs, choice = null, span = null, log = null, copied = 'idle', back = false, onback, onchoose, oncopy }: Props = $props()
 
   const root = $derived(bars[0]?.span ?? null)
   const failed = $derived((summary?.errors ?? 0) > 0)
@@ -50,6 +55,7 @@
       <h1 class="ios-large-title" data-testid="telemetry-trace-name">{summary?.name ?? root?.name ?? 'Trace'}</h1>
       {#if subline}<p class="ios-subheadline ios-secondary" data-testid="telemetry-trace-summary">{subline}</p>{/if}
       <p class="ios-footnote ios-secondary mono" data-testid="telemetry-trace-id">{traceId}</p>
+      <div class="actions"><CopyButton {copied} disabled={bars.length === 0} {oncopy} testid="telemetry-trace-copy" /></div>
       {#if failed}
         <ui-banner tone="error" data-testid="telemetry-trace-failed">
           {summary?.errors === 1 ? 'Something in this trace failed.' : `${summary?.errors} things in this trace failed.`} The failed spans and the error logs are in red.
@@ -122,6 +128,9 @@
   .mono {
     font-family: var(--font-mono);
     overflow-wrap: anywhere;
+  }
+  .actions {
+    padding-top: 4px;
   }
   .legend {
     display: flex;

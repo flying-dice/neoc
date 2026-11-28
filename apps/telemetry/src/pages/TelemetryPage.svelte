@@ -102,12 +102,21 @@
           choice={telemetry.choice}
           span={telemetry.pickedSpan}
           log={telemetry.pickedLog}
+          copied={telemetry.copied}
           back={narrow}
           onback={() => telemetry.back()}
           onchoose={(choice) => telemetry.choose(choice)}
+          oncopy={() => void telemetry.copyTrace()}
         />
       {:else if telemetry.view === 'logs' && entry}
-        <LogInspector log={entry} back={narrow} onback={() => telemetry.back()} ontrace={(traceId) => void telemetry.open(traceId)} />
+        <LogInspector
+          log={entry}
+          copied={telemetry.copied}
+          back={narrow}
+          onback={() => telemetry.back()}
+          ontrace={(traceId) => void telemetry.open(traceId)}
+          oncopy={() => void telemetry.copyLog(entry)}
+        />
       {:else}
         <div class="waiting">
           <ui-empty-state

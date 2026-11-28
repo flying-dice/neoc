@@ -472,6 +472,83 @@ describe("an agent's picture", () => {
   })
 })
 
+describe('an item too large to be sent', () => {
+  /** A window with an open chat whose one item the backend has a longer text of than it sent; every read waits on its gate. */
+  async function reading(): Promise<{ agents: Agents; backend: FakeBackend; reads: number[]; open(): void; text: { now: string } }> {
+    const backend = createFakeBackend({ pace: 1, chats: [conversation('big', 'Big', [['user', 'Go'], ['assistant', 'a']])] })
+    const reads: number[] = []
+    const text = { now: 'abc' }
+    let gate = Promise.resolve()
+    let release = (): void => {}
+    const rpc = {
+      ...backend.rpc,
+      readItem: async ({ item }: { chat: string; item: number }) => {
+        reads.push(item)
+        await gate
+        return { id: item, chat: 'big', kind: 'assistant' as const, text: text.now, name: '', data: '', done: true }
+      }
+    }
+    const agents = new Agents(rpc, backend.events)
+    agents.listen()
+    await agents.load()
+    await agents.openChat(agents.chats[0]!)
+    // the next reads wait until `open` is called
+    gate = new Promise<void>((resolve) => (release = resolve))
+    return { agents, backend, reads, open: () => release(), text }
+  }
+
+  test('is read when the backend says it changed, and shown as it is', async () => {
+    const { agents, backend, reads, open } = await reading()
+    open()
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    await until(() => said(agents).at(-1) === 'assistant: abc')
+    expect(reads).toEqual([2])
+    expect(agents.failure).toBeNull()
+  })
+
+  test('is read one at a time: a change that comes during a read has it read once more, not twice', async () => {
+    const { agents, backend, reads, open, text } = await reading()
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    expect(reads).toEqual([2])
+    text.now = 'abcdef'
+    open()
+    await until(() => said(agents).at(-1) === 'assistant: abcdef')
+    expect(reads).toEqual([2, 2])
+  })
+
+  test('is read again when a smaller change of it comes during a read: the read cannot be older than the change', async () => {
+    const { agents, backend, reads, open, text } = await reading()
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    backend.emit('piece', { chat: 'big', item: 2, text: '!' })
+    text.now = 'abc!'
+    open()
+    await until(() => said(agents).at(-1) === 'assistant: abc!')
+    expect(reads).toEqual([2, 2])
+  })
+
+  test('is not read when its chat is not the one open', async () => {
+    const { agents, backend, reads, open } = await reading()
+    open()
+    backend.emit('item_changed', { chat: 'elsewhere', item: 2 })
+    await Bun.sleep(10)
+    expect(reads).toEqual([])
+    expect(said(agents)).toEqual(['user: Go', 'assistant: a'])
+  })
+
+  test('that the backend cannot give is said, when its chat is still open', async () => {
+    const backend = createFakeBackend({ pace: 1, chats: [conversation('big', 'Big', [['user', 'Go']])] })
+    const agents = new Agents(backend.rpc, backend.events)
+    agents.listen()
+    await agents.load()
+    await agents.openChat(agents.chats[0]!)
+    backend.emit('item_changed', { chat: 'big', item: 99 })
+    await until(() => agents.failure !== null)
+    expect(agents.failure).toBe('There is no such item in that chat.')
+  })
+})
+
 describe('the host connection', () => {
   test('when it comes back, the open chat is read again', async () => {
     const backend = createFakeBackend({ pace: 1 })

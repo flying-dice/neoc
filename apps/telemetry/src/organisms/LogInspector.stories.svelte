@@ -4,26 +4,31 @@
   import LogInspector from './LogInspector.svelte'
   import { LOGS, RENDER_TRACE } from '../lib/fakeApi'
   import type { Log } from '../lib/telemetry'
+  import type { Copied } from '../lib/telemetry.svelte'
 
   interface Args {
     log: Log
+    copied: Copied
     back: boolean
     onback: () => void
     ontrace: (traceId: string) => void
+    oncopy: () => void
   }
 
   const onback = fn<() => void>()
   const ontrace = fn<(traceId: string) => void>()
+  const oncopy = fn<() => void>()
 
   /** One log in full, and the way to its trace. */
   const { Story } = defineMeta({
     title: 'Organisms/LogInspector',
     component: LogInspector,
     tags: ['autodocs'],
-    args: { log: LOGS[1]!, back: false, onback, ontrace },
+    args: { log: LOGS[1]!, copied: 'idle', back: false, onback, ontrace, oncopy },
     beforeEach: () => {
       onback.mockClear()
       ontrace.mockClear()
+      oncopy.mockClear()
     },
     render: template
   })
@@ -40,6 +45,18 @@
     await expect(ontrace).toHaveBeenCalledWith(RENDER_TRACE)
   }}
 />
+
+<Story
+  name="Copying everything"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('telemetry-log-copy'))
+    await expect(oncopy).toHaveBeenCalledTimes(1)
+  }}
+/>
+
+<Story name="Copied" args={{ copied: 'copied' }} />
+
+<Story name="Copy refused" args={{ copied: 'refused' }} />
 
 <Story name="A backend's log" args={{ log: LOGS[0]! }} />
 

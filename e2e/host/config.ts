@@ -74,6 +74,8 @@ export const NOTIFIER_APP_REF = appRef('fixtures', 'notifier')
 /** The Journal at 0.1.0, and at 0.2.0: the update journey installs the first and publishes the second in the test registry. */
 export const JOURNAL_APP_REF = appRef('fixtures', 'journal')
 export const JOURNAL_NEXT_APP_REF = appRef('fixtures', 'journal-next')
+/** Telemetry, as the test registry lists it (a repo app, built with the others): its journeys install and remove it. */
+export const TELEMETRY_APP_REF = fileUrl(join(DIR, 'registry', 'telemetry', appMeta('apps/telemetry').version, 'app-ref.json'))
 /** Memos, as the test registry lists it: what the Discover journeys paste to add an app by URL. */
 export const MEMOS_APP_REF = appRef('registry', 'memos')
 /**

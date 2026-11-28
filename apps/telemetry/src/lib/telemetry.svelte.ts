@@ -2,9 +2,12 @@
 // sends. What it needs from outside arrives through the constructor (the reader, the backend, a way to run work later),
 // so a test or a story builds one with fakes.
 import {
+  exportText,
+  logExport,
   logKey,
   matchingLogs,
   matchingTraces,
+  traceExport,
   waterfall,
   type Bar,
   type Found,
@@ -20,6 +23,11 @@ import {
 export interface TelemetryReader {
   traces(): Promise<TraceSummary[]>
   query(q: LogQuery): Promise<Found>
+}
+
+/** Where what is copied goes (the page's `navigator.clipboard`, which the app's frame is allowed to write to). */
+export interface Clipboard {
+  writeText(text: string): Promise<void>
 }
 
 /** The backend's one method: a call to try tracing with (the app's private `_probe` on the bus: `App.svelte` sends it). */
@@ -40,7 +48,16 @@ export interface TelemetryOptions {
   later?: (fn: () => void) => void
   /** Traces the probes (by default, nothing does). */
   tracer?: Tracer
+  /** Where a copy goes (by default, nowhere: a copy is refused). */
+  clipboard?: Clipboard
+  /** Runs work after a wait, in milliseconds (a timer, by default). */
+  after?: (fn: () => void, ms: number) => void
 }
+
+/** How the last copy went: nothing yet (or long enough ago), put on the clipboard, or refused by it. */
+export type Copied = 'idle' | 'copied' | 'refused'
+/** How long "Copied" is said before the button says Copy again, in milliseconds. */
+export const COPIED_FOR = 2500
 
 /** The two things the window shows. */
 export type View = 'traces' | 'logs'
@@ -80,17 +97,23 @@ export class Telemetry {
   #source = $state<SourceFilter>('all')
   #failedOnly = $state(false)
   #probing = $state<Probe | null>(null)
+  #copied = $state<Copied>('idle')
+  #copies = 0
 
   readonly #reader: TelemetryReader
   readonly #rpc: ProbeRpc
   readonly #later: (fn: () => void) => void
   readonly #tracer: Tracer
+  readonly #clipboard: Clipboard | null
+  readonly #after: (fn: () => void, ms: number) => void
 
   constructor(reader: TelemetryReader, rpc: ProbeRpc, options: TelemetryOptions = {}) {
     this.#reader = reader
     this.#rpc = rpc
     this.#later = options.later ?? ((fn) => void setTimeout(fn))
     this.#tracer = options.tracer ?? untraced
+    this.#clipboard = options.clipboard ?? null
+    this.#after = options.after ?? ((fn, ms) => void setTimeout(fn, ms))
   }
 
   get loaded(): boolean {
@@ -125,6 +148,10 @@ export class Telemetry {
   }
   get probing(): Probe | null {
     return this.#probing
+  }
+  /** How the last copy of a log or a trace went. */
+  get copied(): Copied {
+    return this.#copied
   }
   get traceCount(): number {
     return this.#traces.length
@@ -205,6 +232,7 @@ export class Telemetry {
   /** Open a trace in the detail column, from the list or from a log. */
   async open(traceId: string): Promise<void> {
     this.#view = 'traces'
+    this.#copied = 'idle'
     this.#selected = traceId
     this.#choice = null
     this.#trace = null
@@ -214,6 +242,7 @@ export class Telemetry {
 
   /** Open a log of the Logs view in the detail column. */
   inspect(log: Log): void {
+    this.#copied = 'idle'
     this.#entry = logKey(log)
     this.#pane = 'detail'
   }
@@ -223,6 +252,47 @@ export class Telemetry {
     const now = this.#choice
     const same = now?.kind === pick.kind && (now.kind === 'span' ? now.id === (pick as { id: string }).id : now.key === (pick as { key: string }).key)
     this.#choice = same ? null : pick
+  }
+
+  /** Put everything known of the open trace on the clipboard: its spans and logs, as JSON. */
+  async copyTrace(): Promise<void> {
+    const traceId = this.#selected
+    const found = this.#trace
+    if (!traceId || !found) return
+    await this.#copy(() => exportText(traceExport(traceId, found, this.summary)))
+  }
+
+  /**
+   * Put everything known of a log on the clipboard, as JSON: the log, its span and, read now, the trace it belongs to
+   * (the Logs view holds no trace). A trace that cannot be read is left out, and the copy says so.
+   */
+  async copyLog(log: Log): Promise<void> {
+    await this.#copy(async () => {
+      const traceId = log.traceId
+      if (!traceId) return exportText(logExport(log, null, null))
+      const summary = this.#traces.find((t) => t.traceId === traceId) ?? null
+      try {
+        return exportText(logExport(log, await this.#reader.query({ traceId, limit: 1000 }), summary))
+      } catch (e) {
+        return exportText(logExport(log, null, summary, `The trace could not be read: ${messageOf(e)}`))
+      }
+    })
+  }
+
+  /** Copy what `text` makes; how it went is `copied` for a while. Never rejects. */
+  async #copy(text: () => string | Promise<string>): Promise<void> {
+    const copy = ++this.#copies
+    try {
+      if (!this.#clipboard) throw new Error('There is no clipboard.')
+      await this.#clipboard.writeText(await text())
+      this.#copied = 'copied'
+    } catch {
+      this.#copied = 'refused'
+    }
+    // the answer stays for a while, unless another copy has been made by then
+    this.#after(() => {
+      if (copy === this.#copies) this.#copied = 'idle'
+    }, COPIED_FOR)
   }
 
   /** A narrow window goes back one column. */

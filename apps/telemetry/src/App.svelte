@@ -4,9 +4,10 @@
   import TelemetryPage from './pages/TelemetryPage.svelte'
 
   // The composition root: the one place the state meets the real host page, backend (the app's private method on the
-  // bus, the global `RPC`) and tracing (the global `vos.tracing`). Each window has its own.
+  // bus, the global `RPC`), tracing (the global `vos.tracing`) and the clipboard (the app declares `clipboardWrite`). Each
+  // window has its own.
   const rpc: ProbeRpc = { probe: (params) => RPC.send_request('telemetry', '_probe', params) }
-  const telemetry = new Telemetry(bridgeReader(), rpc, { tracer: vos.tracing })
+  const telemetry = new Telemetry(bridgeReader(), rpc, { tracer: vos.tracing, clipboard: { writeText: (text) => navigator.clipboard.writeText(text) } })
 </script>
 
 <TelemetryPage {telemetry} />

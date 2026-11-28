@@ -26,14 +26,15 @@ export interface AgentsRpc {
   images(): Promise<VosApp.Agents.ImageChoice>
   chats(): Promise<Chat[]>
   open(params: VosApp.Agents.OpenParams): Promise<Conversation>
+  readItem(params: VosApp.Agents.ReadItemParams): Promise<Item>
   send(params: VosApp.Agents.SendParams): Promise<Conversation>
   answer(params: VosApp.Agents.AnswerParams): Promise<Conversation>
   stop(params: VosApp.Agents.StopParams): Promise<Conversation>
   removeChat(params: VosApp.Agents.RemoveChatParams): Promise<Chat[]>
 }
 /**
- * Where the window hears the backend's notifications (`item`, `piece`, `turn`: `App.svelte` wires them to the bus) and
- * the host's events (`host:reconnected`).
+ * Where the window hears the backend's notifications (`item`, `piece`, `item_changed`, `turn`: `App.svelte` wires them
+ * to the bus) and the host's events (`host:reconnected`).
  */
 export interface AgentsEvents {
   on(name: string, fn: (data: unknown) => void): () => void
@@ -43,6 +44,11 @@ export interface AgentsEvents {
 interface Changed {
   chat: string
   item: Item
+}
+/** An item that changed and is too large to send: the window reads it. */
+interface Reference {
+  chat: string
+  item: number
 }
 /** Text added to an item, as the backend sends it while the text comes. */
 interface Piece {
@@ -63,6 +69,7 @@ export interface Choices<T> {
   problem: string | null
 }
 
+const readKey = (chat: string, item: number): string => `${chat}/${item}`
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const none = <T>(): Choices<T> => ({ items: [], problem: null })
 
@@ -95,6 +102,8 @@ export class Agents {
 
   readonly #rpc: AgentsRpc
   readonly #events: AgentsEvents
+  // the items being read, by chat and id: `again` says the item changed since the read began, so it is read once more
+  readonly #reading = new Map<string, { again: boolean }>()
 
   constructor(rpc: AgentsRpc, events: AgentsEvents) {
     this.#rpc = rpc
@@ -230,6 +239,8 @@ export class Agents {
     const stops = [
       this.#events.on('item', (data) => this.#change(data as Changed)),
       this.#events.on('piece', (data) => this.#add(data as Piece)),
+      // an item too large to have been sent
+      this.#events.on('item_changed', (data) => this.#read(data as Reference)),
       // the turn is over (complete, stopped or failed): read the chat as the backend has it
       this.#events.on('turn', (data) => {
         const chat = (data as { chat: string }).chat
@@ -241,7 +252,14 @@ export class Agents {
     return () => stops.forEach((stop) => stop())
   }
 
-  #change({ chat, item }: Changed): void {
+  #change(changed: Changed): void {
+    // a read that is out is of an older item than this
+    const reading = this.#reading.get(readKey(changed.chat, changed.item.id))
+    if (reading) reading.again = true
+    this.#put(changed)
+  }
+
+  #put({ chat, item }: Changed): void {
     const open = this.#open
     if (open?.chat.id !== chat) return
     const known = open.items.some((i) => i.id === item.id)
@@ -250,7 +268,38 @@ export class Agents {
     this.#open = { ...open, items, waiting: items.some((i) => i.kind === 'permission' && !i.done) }
   }
 
+  /**
+   * Read an item the backend did not send: it was more than a notification may hold. An item is read one at a time; a
+   * change that comes while it is being read has it read again, so what is shown is never older than the last change.
+   */
+  #read({ chat, item }: Reference): void {
+    if (this.#open?.chat.id !== chat) return
+    const key = readKey(chat, item)
+    const reading = this.#reading.get(key)
+    if (reading) {
+      reading.again = true
+      return
+    }
+    const state = { again: false }
+    this.#reading.set(key, state)
+    void (async () => {
+      try {
+        do {
+          state.again = false
+          this.#put({ chat, item: await this.#rpc.readItem({ chat, item }) })
+        } while (state.again)
+      } catch (e) {
+        // the chat was left or deleted while the item was read: nothing to say about it
+        if (this.#open?.chat.id === chat) this.#failure = messageOf(e)
+      } finally {
+        this.#reading.delete(key)
+      }
+    })()
+  }
+
   #add(piece: Piece): void {
+    const reading = this.#reading.get(readKey(piece.chat, piece.item))
+    if (reading) reading.again = true
     const open = this.#open
     if (open?.chat.id !== piece.chat) return
     this.#open = { ...open, items: open.items.map((i) => (i.id === piece.item ? { ...i, text: i.text + piece.text } : i)) }

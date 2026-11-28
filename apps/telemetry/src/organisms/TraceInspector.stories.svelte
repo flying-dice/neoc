@@ -4,7 +4,7 @@
   import TraceInspector from './TraceInspector.svelte'
   import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS, T0 } from '../lib/fakeApi'
   import { logKey, waterfall, type Bar, type Log, type Span, type TraceSummary } from '../lib/telemetry'
-  import type { Choice } from '../lib/telemetry.svelte'
+  import type { Choice, Copied } from '../lib/telemetry.svelte'
 
   interface Args {
     traceId: string
@@ -14,11 +14,14 @@
     choice: Choice
     span: Span | null
     log: Log | null
+    copied: Copied
     back: boolean
     onback: () => void
     onchoose: (choice: NonNullable<Choice>) => void
+    oncopy: () => void
   }
 
+  const oncopy = fn<() => void>()
   const onchoose = fn<(choice: NonNullable<Choice>) => void>()
   const onback = fn<() => void>()
   const of = (traceId: string) => ({
@@ -34,10 +37,11 @@
     title: 'Organisms/TraceInspector',
     component: TraceInspector,
     tags: ['autodocs'],
-    args: { traceId: RENDER_TRACE, summary: renderSummary, ...render, choice: null, span: null, log: null, back: false, onback, onchoose },
+    args: { traceId: RENDER_TRACE, summary: renderSummary, ...render, choice: null, span: null, log: null, copied: 'idle', back: false, onback, onchoose, oncopy },
     beforeEach: () => {
       onchoose.mockClear()
       onback.mockClear()
+      oncopy.mockClear()
     },
     render: template
   })
@@ -56,6 +60,18 @@
     await expect(onchoose).toHaveBeenCalledWith({ kind: 'span', id: '2222222222222222' })
   }}
 />
+
+<Story
+  name="Copying everything"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('telemetry-trace-copy'))
+    await expect(oncopy).toHaveBeenCalledTimes(1)
+  }}
+/>
+
+<Story name="Copied" args={{ copied: 'copied' }} play={async ({ canvas }) => expect(canvas.getByTestId('telemetry-trace-copy-status')).toHaveTextContent('on the clipboard')} />
+
+<Story name="Copy refused" args={{ copied: 'refused' }} />
 
 <Story name="A span picked" args={{ choice: { kind: 'span', id: '2222222222222222' }, span: SPANS[1]! }} />
 
