@@ -87,7 +87,7 @@
           data-testid="dns-record-address"
         ></ui-text-field>
       </ui-row>
-      <ui-row heading="Every name under it" subheading={draft.name.trim() === '' ? undefined : `*.${draft.name.trim().toLowerCase()}`}>
+      <ui-row heading="Every Name Under It" subheading={draft.name.trim() === '' ? undefined : `*.${draft.name.trim().toLowerCase()}`}>
         <ui-toggle
           slot="trailing"
           label="Every name under it answers too"
