@@ -36,6 +36,38 @@ const CLOSE_WAIT: std::time::Duration =
 /// reading task let go of it).
 type Sink = Arc<tokio::sync::Mutex<Option<SplitSink<Socket, Frame>>>>;
 
+/// Set once the connection is being cut off: whoever waits on the writing half (for its lock, or on a peer that stopped
+/// reading) gives up, so the half can be taken and dropped.
+#[derive(Clone)]
+struct Cut(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Cut {
+    fn new() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(false).0))
+    }
+
+    fn cut(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Run `work` (which locks the writing half), unless the connection is cut off first or meanwhile: then `work`
+    /// is dropped, the lock with it, and the answer is `None`.
+    async fn unless_cut<T>(&self, work: impl Future<Output = T>) -> Option<T> {
+        let mut cut = self.0.subscribe();
+        tokio::select! {
+            biased;
+            _ = cut.wait_for(|cut| *cut) => None,
+            done = work => Some(done),
+        }
+    }
+
+    /// Take the writing half (once nobody can be waiting on it) and drop it.
+    async fn release(&self, sink: &Sink) -> Option<SplitSink<Socket, Frame>> {
+        self.cut();
+        sink.lock().await.take()
+    }
+}
+
 type Queue = mpsc::Receiver<Result<Message, WebSocketError>>;
 
 /// A socket taken over as a transport of text lines: what to send them with, and the lines that come. When the
@@ -74,6 +106,7 @@ pub(crate) struct Inner {
     closed: Arc<Mutex<Option<(u16, String)>>>,
     /// A close frame was sent.
     closing: Mutex<bool>,
+    cut: Cut,
     reader: AbortHandle,
 }
 
@@ -106,6 +139,7 @@ async fn read(
     sink: Sink,
     queue: mpsc::Sender<Result<Message, WebSocketError>>,
     closed: Arc<Mutex<Option<(u16, String)>>>,
+    cut: Cut,
 ) {
     let peer_closed = read_frames(&mut stream, &queue, &closed).await;
     if peer_closed {
@@ -114,11 +148,19 @@ async fn read(
         let drain = async { while stream.next().await.is_some() {} };
         let _ = tokio::time::timeout(CLOSE_WAIT, drain).await;
     }
-    if let Some(mut sink) = sink.lock().await.take() {
+    // the connection is over: a send stuck on a peer that stopped reading gives up, and the writing half is ours
+    if let Some(mut sink) = cut.release(&sink).await {
         // flush what is still queued (the close reply); the connection is over either way
         let _ = tokio::time::timeout(CLOSE_WAIT, sink.flush()).await;
     }
     drop(stream);
+    abnormal(&closed);
+    // the queue's sender goes last, so a `receive` it wakes sees the close code
+    drop(queue);
+}
+
+/// Record an abnormal close (1006) unless the peer's close came.
+fn abnormal(closed: &Mutex<Option<(u16, String)>>) {
     let mut closed = closed.lock();
     if closed.is_none() {
         *closed = Some((1006, String::new()));
@@ -169,8 +211,10 @@ impl Inner {
         let sink: Sink = Arc::new(tokio::sync::Mutex::new(Some(sink)));
         let (tx, rx) = mpsc::channel(QUEUE);
         let closed = Arc::new(Mutex::new(None));
-        let reader =
-            Life::of(lua).spawn(read(stream, Arc::clone(&sink), tx, Arc::clone(&closed))).abort_handle();
+        let cut = Cut::new();
+        let reader = Life::of(lua)
+            .spawn(read(stream, Arc::clone(&sink), tx, Arc::clone(&closed), cut.clone()))
+            .abort_handle();
         Arc::new(Self {
             url,
             protocol,
@@ -180,6 +224,7 @@ impl Inner {
             taken: Mutex::new(false),
             closed,
             closing: Mutex::new(false),
+            cut,
             reader,
         })
     }
@@ -195,9 +240,16 @@ impl Inner {
         if self.closed.lock().is_some() {
             return Err(closed_error("the peer closed the socket"));
         }
-        let mut sink = self.sink.lock().await;
-        let sink = sink.as_mut().ok_or_else(|| closed_error("the socket is closed"))?;
-        sink.send(frame).await.map_err(|e| lost(&e))
+        let sent = self
+            .cut
+            .unless_cut(async {
+                match self.sink.lock().await.as_mut() {
+                    Some(sink) => sink.send(frame).await.map_err(|e| lost(&e)),
+                    None => Err(closed_error("the socket is closed")),
+                }
+            })
+            .await;
+        sent.unwrap_or_else(|| Err(closed_error("the socket is closed")))
     }
 
     pub(crate) async fn send_text(&self, text: String) -> Result<(), WebSocketError> {
@@ -246,37 +298,46 @@ impl Inner {
         if self.closed.lock().is_some() {
             return Ok(());
         }
-        let frame = CloseFrame { code: CloseCode::from(code), reason: reason.into() };
-        let sent = {
-            let mut sink = self.sink.lock().await;
-            let Some(sink) = sink.as_mut() else { return Ok(()) };
-            sink.send(Frame::Close(Some(frame))).await
-        };
+        // the deadline starts here, before anything is awaited: a close stuck behind a send to a peer that stopped
+        // reading, or one the caller stops waiting for, is still cut off in time
         self.drop_after_close_wait();
+        let frame = CloseFrame { code: CloseCode::from(code), reason: reason.into() };
+        let sent = self
+            .cut
+            .unless_cut(async {
+                match self.sink.lock().await.as_mut() {
+                    Some(sink) => sink.send(Frame::Close(Some(frame))).await,
+                    None => Ok(()),
+                }
+            })
+            .await;
         match sent {
-            Ok(()) | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => Ok(()),
-            Err(e) => Err(lost(&e)),
+            // cut off before the close frame went: the connection is dropped all the same
+            None
+            | Some(Ok(()) | Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed)) => {
+                Ok(())
+            }
+            Some(Err(e)) => Err(lost(&e)),
         }
     }
 
-    /// A peer that does not answer this end's close within [`CLOSE_WAIT`] (or a reading task stuck behind a full
-    /// queue) is cut off: the reading task stops, which ends a `receive` that waits, and both halves are dropped.
+    /// A peer that does not take this end's close or answer it within [`CLOSE_WAIT`] (or a reading task stuck behind
+    /// a full queue) is cut off: the abnormal close is recorded, then the reading task stops, which ends a `receive`
+    /// that waits, and both halves are dropped, a send or close stuck on the writing half giving up.
     fn drop_after_close_wait(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
         let reader = self.reader.clone();
         let sink = Arc::clone(&self.sink);
         let closed = Arc::clone(&self.closed);
+        let cut = self.cut.clone();
         runtime.spawn(async move {
             tokio::time::sleep(CLOSE_WAIT).await;
             if reader.is_finished() {
                 return;
             }
+            abnormal(&closed);
             reader.abort();
-            drop(sink.lock().await.take());
-            let mut closed = closed.lock();
-            if closed.is_none() {
-                *closed = Some((1006, String::new()));
-            }
+            drop(cut.release(&sink).await);
         });
     }
 

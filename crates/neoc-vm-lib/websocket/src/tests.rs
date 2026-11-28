@@ -232,3 +232,72 @@ async fn a_peer_that_ignores_this_ends_close_is_cut_off_and_receive_ends() {
         tokio::time::timeout(std::time::Duration::from_secs(5), ended_rx).await.expect("the server ended");
     assert_eq!(ended.unwrap(), "released");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_close_behind_a_send_to_a_peer_that_stopped_reading_is_cut_off_in_time() {
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt as _;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ended_tx, ended_rx) = tokio::sync::oneshot::channel::<String>();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        // the peer stops reading: the client's send fills the TCP buffers and stalls, and its close cannot go
+        let _ = done_rx.await;
+        let tcp = ws.get_mut();
+        let mut buf = vec![0_u8; 1 << 16];
+        let ended = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match tcp.read(&mut buf).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        let _ = ended_tx.send(if ended.is_ok() { "released".to_owned() } else { "still open".to_owned() });
+    });
+    let lua = neoc_vm_core::make_engine().unwrap();
+    run(&lua, port, "WS = assert(websocket.connect(base .. '/')) return ''").await;
+    let sender = lua.clone();
+    let sending = tokio::spawn(async move {
+        sender
+            .load("local ok, err = WS:send(string.rep('x', 64 * 1024 * 1024)) return tostring(ok) .. ' ' .. err.kind")
+            .eval_async::<String>()
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!sending.is_finished(), "the send stalls on a peer that stopped reading");
+    // the caller stops waiting for its close (stuck behind the send): the deadline runs all the same
+    let first = lua.load("WS:close(1000, 'bye')").exec_async();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), first).await.is_err(),
+        "the close waits behind the send"
+    );
+    let got = tokio::time::timeout(
+        Duration::from_secs(5),
+        lua.load(
+            r#"
+            local message, err = WS:receive()
+            assert(message == nil and err == nil, tostring(err))
+            return tostring(WS.close_code) .. " " .. tostring(WS:close(1000, "again"))
+            "#,
+        )
+        .eval_async::<String>(),
+    )
+    .await
+    .expect("receive ends once the close wait is over")
+    .unwrap();
+    assert_eq!(got, "1006 true");
+    let sent = tokio::time::timeout(Duration::from_secs(5), sending)
+        .await
+        .expect("the stalled send gives up")
+        .unwrap()
+        .unwrap();
+    assert_eq!(sent, "nil closed");
+    let _ = done_tx.send(());
+    let ended = tokio::time::timeout(Duration::from_secs(15), ended_rx).await.expect("the server ended");
+    assert_eq!(ended.unwrap(), "released");
+}
