@@ -74,7 +74,7 @@
           description={(keyProblem ?? refused) || undefined}
           placeholder="WEB"
           autocomplete="off"
-          autocapitalize="characters"
+          autocapitalize="off"
           enterkeyhint="done"
           maxlength={5}
           invalid={keyProblem !== null || (nameProblem === null && refused !== null)}

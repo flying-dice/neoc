@@ -45,7 +45,7 @@
   {#if next}
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <ui-button variant="plain" size="small" square label="Move {issue.key} to {next}" onclick={onadvance} data-testid="{id}-advance">
+    <ui-button variant="plain" size="small" square hit label="Move {issue.key} to {next}" title="Move {issue.key} to {next}" onclick={onadvance} data-testid="{id}-advance">
       <ui-icon slot="icon" name="chevron.right"></ui-icon>
     </ui-button>
   {/if}
@@ -69,7 +69,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 10px 4px 10px 12px;
+    padding: 12px 4px 12px 12px;
     border: 0;
     border-radius: var(--radius-md);
     background: none;
@@ -88,7 +88,7 @@
   .about {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font: var(--type-caption1);
     color: var(--label-secondary);
     font-variant-numeric: tabular-nums;
@@ -100,7 +100,7 @@
     margin-inline-start: auto;
   }
   .priority.high {
-    color: var(--ios-red);
+    color: var(--label);
     font-weight: 600;
   }
 </style>

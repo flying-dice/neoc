@@ -33,7 +33,7 @@
     oninput={(e) => ondraft((e.currentTarget as unknown as { value: string }).value)}
     data-testid="{testid}-input"
   ></ui-text-field>
-  <ui-button type="submit" square shape="circle" hit label={action} disabled={draft.trim() === ''} data-testid="{testid}-add">
+  <ui-button type="submit" square shape="circle" hit label={action} title={action} disabled={draft.trim() === ''} data-testid="{testid}-add">
     <ui-icon slot="icon" name="plus"></ui-icon>
   </ui-button>
 </form>

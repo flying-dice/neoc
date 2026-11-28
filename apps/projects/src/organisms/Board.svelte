@@ -121,8 +121,8 @@
   header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 6px 8px;
+    gap: 8px;
+    padding: 4px 8px 8px;
   }
   .dot {
     flex: none;
@@ -150,7 +150,7 @@
   }
   .none {
     margin: 0;
-    padding: 12px 6px 16px;
+    padding: 12px 8px 16px;
     text-align: center;
     font: var(--type-footnote);
     color: var(--label-secondary);
