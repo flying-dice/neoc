@@ -334,7 +334,7 @@ where
         conn: Box::pin(async move {
             if let Err(message) = neoc_vm_core::panics::caught(conn).await {
                 panicked.store(true, Ordering::SeqCst);
-                tracing::error!(target: "lua::lib::hyper", "connection driver panicked: {message}");
+                tracing::error!(target: "lua::lib::hyper", %message, "a connection's driver panicked");
             }
         }),
         finished: false,

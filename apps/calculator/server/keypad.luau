@@ -3,6 +3,7 @@
 -- Pure: `press(state, key)` takes where a sum has got to and gives the next state; nothing is kept here. The client holds
 -- the state and sends it with each key, so every window has a calculator of its own. The arithmetic is calc.luau.
 local calc = require("./calc")
+local tracing = require("lib:tracing")
 
 export type Op = "+" | "-" | "*" | "/"
 
@@ -214,6 +215,10 @@ function keypad.press(given: State, key: string): Screen
   local ok, err = pcall(apply :: (State, string) -> any, s, key)
   if not ok then
     local reason = calc.reason(err) -- an unexpected error is a generic sentence, never a source position
+    -- A failure on purpose reads as its own sentence; anything else was turned into the generic one, so it is a bug.
+    if reason ~= tostring(err) then
+      tracing.error("the keypad failed on a key", { error = tostring(err), key = key })
+    end
     local failed = keypad.initial()
     failed.err, failed.caption = true, reason
     return keypad.screen(failed)

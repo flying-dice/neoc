@@ -11,6 +11,7 @@ local diff = require("lib:diff")
 local link = require("./link")
 local strings = require("lib:text")
 local timeline = require("./timeline")
+local tracing = require("lib:tracing")
 
 -- How much one turn may bring into the chat, in bytes of what the agent sent: an agent cannot fill the database.
 local MAX_TURN = 8 * 1024 * 1024
@@ -240,6 +241,7 @@ function turn.take(chat: string, live: link.Live, text: string, current: Turn, r
     if retry and refused and refused.kind == "closed" then
       return "lost"
     end
+    tracing.warn("the agent did not take the prompt", { error = link.sentence(refused), chat = chat })
     timeline.add(chat, "error", { text = link.sentence(refused) })
     return "over"
   end
@@ -254,10 +256,11 @@ function turn.take(chat: string, live: link.Live, text: string, current: Turn, r
       if current.stopped then
         return "over"
       end
+      if failed.kind == "closed" and retry and not heard then
+        return "lost"
+      end
+      tracing.warn("the agent's turn ended early", { error = link.sentence(failed), kind = failed.kind, chat = chat })
       if failed.kind == "closed" then
-        if retry and not heard then
-          return "lost"
-        end
         timeline.add(chat, "error", { text = "The connection to the agent closed before it finished answering." })
       else
         timeline.add(chat, "error", { text = link.sentence(failed) })
@@ -270,6 +273,7 @@ function turn.take(chat: string, live: link.Live, text: string, current: Turn, r
     heard = true
     spent += weight(event)
     if spent > MAX_TURN then
+      tracing.warn("the agent sent more than a turn may hold", { chat = chat, limit = MAX_TURN })
       timeline.add(chat, "error", { text = "The agent sent more than a turn may hold (8 MB), and was stopped." })
       -- the connection goes with what is still coming on it
       link.drop(chat)

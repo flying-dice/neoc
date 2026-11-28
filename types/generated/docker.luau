@@ -498,6 +498,7 @@ end function __DARKLUA_BUNDLE_MODULES.c()local v=__DARKLUA_BUNDLE_MODULES.cache.
 local app = require("vos:app")
 local task = require("std:task")
 local time = require("std:time")
+local tracing = require("lib:tracing")
 local declaration = __DARKLUA_BUNDLE_MODULES.c()
 local engine = __DARKLUA_BUNDLE_MODULES.b()
 
@@ -666,6 +667,17 @@ return if declared then make(api, declared, always == true) else removeAll(api)
       end)
     end
     local failure= if ran then answer else "The container could not be made."
+    
+    
+    if api and failure then
+      local message = `the container {name} could not be {if declared then "made" else "removed"}`
+      local fields = { container = name, error = tostring(answer) }
+      if ran then
+        tracing.warn(message, fields)
+      else
+        tracing.error(message, fields)
+      end
+    end
     
     if turn == mine then
       since = nil

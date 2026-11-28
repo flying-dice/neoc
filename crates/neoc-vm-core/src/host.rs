@@ -44,8 +44,9 @@ fn spanned(call: &Call) -> bool {
     call.module != Some("lib:tracing")
 }
 
-/// The first line of what a call raised: the message, without the Lua stack under it.
-fn error_text(e: &mlua::Error) -> String {
+/// What a call raised, without the Lua stack under it: the message a person reads (the stack is for a field of its own).
+#[must_use]
+pub fn error_text(e: &mlua::Error) -> String {
     let text = e.to_string();
     let message = text
         .split_once(

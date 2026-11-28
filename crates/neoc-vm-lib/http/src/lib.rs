@@ -72,12 +72,12 @@ async fn serve_loop(listener: TcpListener, files: Arc<FileMap>, index: Arc<Strin
                     let index = index.clone();
                     connections.spawn(async move {
                         if let Err(e) = handle_connection(stream, &files, &index).await {
-                            tracing::debug!("connection error: {e}");
+                            tracing::debug!(error = %e, "a connection ended with an error");
                         }
                     });
                 }
                 Err(e) => {
-                    tracing::error!("accept error: {e}");
+                    tracing::error!(error = %e, "could not accept a connection");
                     // a persistent error (out of descriptors) must not spin
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
@@ -601,7 +601,7 @@ pub mod http {
             Err(e) => return Err(ServeError::of_bind(&e, addr)),
         };
 
-        tracing::info!("http static server on http://{addr} ({} files)", files.len());
+        tracing::info!(%addr, files = files.len(), "serving files over http");
 
         // Runs until Ctrl-C (a fresh SIGINT, as ever: this call listens for it itself), until the script's registry
         // stops its background work or shuts down (an embedder unloading or replacing the script) or until the
@@ -615,7 +615,7 @@ pub mod http {
             () = life.closed() => {},
             result = tokio::signal::ctrl_c() => {
                 if let Err(e) = result {
-                    tracing::error!("signal error: {e}");
+                    tracing::error!(error = %e, "could not wait for Ctrl+C");
                 }
             },
         }

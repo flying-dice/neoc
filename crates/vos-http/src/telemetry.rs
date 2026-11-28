@@ -423,11 +423,12 @@ pub fn ingest(app: &str, batch: Batch) -> usize {
         l.span_id = l.span_id.filter(|s| is_hex(s, 16));
         l.app = Some(app.to_owned());
         l.source = "browser".into();
-        l.body = cut(l.body);
         if !matches!(l.severity.as_str(), "trace" | "debug" | "info" | "warn" | "error") {
             l.severity = "info".into();
         }
         l.attributes = clean(l.attributes);
+        // a page's line says its error too, as the host's do
+        l.body = cut(readable(l.body, &l.attributes));
         push(&STORE.logs, MAX_LOGS, l);
         kept += 1;
     }
@@ -654,7 +655,8 @@ mod tests {
                 { "traceId": "nope", "spanId": "00f067aa0ba902b9", "name": "x", "source": "browser",
                   "startMs": 1.0, "endMs": 2.0, "status": "ok" }
             ],
-            "logs": [{ "timeMs": 1.5, "severity": "error", "body": "boom", "source": "browser", "traceId": trace }]
+            "logs": [{ "timeMs": 1.5, "severity": "warn", "body": "Couldn't copy the link.", "source": "browser",
+                       "traceId": trace, "attributes": { "error": "NotAllowedError: Write permission denied." } }]
         }))
         .unwrap();
         assert_eq!(ingest("services", batch), 2);
@@ -662,5 +664,6 @@ mod tests {
         assert_eq!(found.spans[0].app.as_deref(), Some("services"));
         assert_eq!(found.spans[0].source, "browser");
         assert_eq!(found.logs[0].app.as_deref(), Some("services"));
+        assert_eq!(found.logs[0].body, "Couldn't copy the link: NotAllowedError: Write permission denied.");
     }
 }

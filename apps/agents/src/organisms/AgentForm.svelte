@@ -34,7 +34,8 @@
     try {
       form.avatar = await pictureOf(file)
       unreadable = false
-    } catch {
+    } catch (e) {
+      vos.tracing.warn('could not read the chosen picture', { error: String(e), type: file.type })
       unreadable = true
     }
   }

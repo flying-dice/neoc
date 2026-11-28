@@ -500,7 +500,7 @@ impl AppService {
             match outcome {
                 Ok(app) => tracing::info!(%app, %url, "app ready"),
                 Err(AppError::Domain(e @ DomainError::OlderVersion { .. })) => {
-                    tracing::info!(%url, "not installed: {e}");
+                    tracing::info!(%url, reason = %e, "not installed: a newer version is installed already");
                 }
                 Err(e) => tracing::warn!(%url, error = %e, "could not install app from registry"),
             }

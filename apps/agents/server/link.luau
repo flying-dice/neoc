@@ -10,6 +10,7 @@ local acp = require("vnd:agent_client_protocol")
 local roster = require("./roster")
 local task = require("std:task")
 local timeline = require("./timeline")
+local tracing = require("lib:tracing")
 local db = app.db
 
 -- Who this app says it is to an agent (`initialize`): the app and its version (package.json).
@@ -169,6 +170,7 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
       link.drop(chat)
       return nil, link.sentence(failed)
     end
+    tracing.warn("the agent could not load the chat's session", { error = failed.message, chat = chat })
     afresh =
       `The agent could not load this chat's session ({failed.message}), so it started a new one: it does not remember the earlier messages.`
   elseif before ~= "" then

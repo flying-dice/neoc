@@ -13,6 +13,7 @@
 local app = require("vos:app")
 local task = require("std:task")
 local time = require("std:time")
+local tracing = require("lib:tracing")
 local declaration = require("./declaration")
 local engine = require("./engine")
 
@@ -181,6 +182,17 @@ function owned.container(name: string): Container
       end)
     end
     local failure: string? = if ran then answer else "The container could not be made."
+    -- said once, here: the app keeps it for its status, and nothing else records it. Docker that cannot be reached
+    -- is said by `engine` already
+    if api and failure then
+      local message = `the container {name} could not be {if declared then "made" else "removed"}`
+      local fields = { container = name, error = tostring(answer) }
+      if ran then
+        tracing.warn(message, fields)
+      else
+        tracing.error(message, fields)
+      end
+    end
     -- an `apply` that another took over says nothing of the container as it now is
     if turn == mine then
       since = nil

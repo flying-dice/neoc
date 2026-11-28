@@ -196,7 +196,8 @@ async fn handle(
     match answer {
         Ok(answer) => Ok(response_of(answer)),
         Err(e) => {
-            tracing::error!(target: "lua::lib::hyper", "handler error: {e}");
+            let error = neoc_vm_core::host::error_text(&e);
+            tracing::error!(target: "lua::lib::hyper", %error, traceback = %e, "a request handler failed");
             Ok(error_response(500, "handler error"))
         }
     }

@@ -18,6 +18,7 @@ local link = require("./link")
 local roster = require("./roster")
 local strings = require("lib:text")
 local task = require("std:task")
+local tracing = require("lib:tracing")
 local timeline = require("./timeline")
 local turn = require("./turn")
 local db = app.db
@@ -187,6 +188,7 @@ local function converse(chat: string, agent: roster.Agent, text: string, current
   for _ = 1, 2 do
     local live, problem = link.attach(chat, agent)
     if not live then
+      tracing.warn("could not reach the agent", { error = problem, chat = chat, agent = agent.id })
       timeline.add(chat, "error", { text = problem or "The agent could not be reached." })
       return
     end
@@ -210,6 +212,7 @@ local function begin(chat: string, agent: roster.Agent, text: string)
       return nil
     end)
     if not ok then
+      tracing.error("the agent's turn stopped", { error = tostring(problem), chat = chat })
       timeline.add(chat, "error", { text = `The agent's turn stopped: {tostring(problem)}` })
     end
     finish(chat, mine)
