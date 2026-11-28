@@ -88,8 +88,9 @@ local function announce(chat: string, id: number)
   if not row then
     return
   end
+  -- an item whose text and data alone are over the limit does not fit: no need to encode it to learn that
   local params = { chat = chat, item = itemOf(chat, row) }
-  if fits(params) then
+  if #row.text + #row.data <= MAX_NOTIFICATION and fits(params) then
     RPC.send_notification("_item", params)
   else
     changed(chat, id)

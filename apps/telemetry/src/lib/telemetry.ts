@@ -232,10 +232,23 @@ export function logExport(log: Log, trace: Found | null, summary: TraceSummary |
   }
 }
 
-/** A trace's export: its report, said to be a trace's. */
-export const traceExport = (traceId: string, found: Found, summary: TraceSummary | null): Record<string, unknown> => ({
+/**
+ * The most spans, and the most logs, an export reads: the host keeps no more than that of either (`MAX_LOGS`), and answers
+ * with the newest when asked for fewer.
+ */
+export const EXPORT_LIMIT = 10_000
+
+/** The note an export carries when what was read reached the limit asked for, so the oldest may be missing; none otherwise. */
+export const cutOff = (found: Found, limit = EXPORT_LIMIT): string | undefined =>
+  found.spans.length >= limit || found.logs.length >= limit
+    ? `Only the newest ${limit} spans and ${limit} logs of the trace were read, so the oldest may be missing.`
+    : undefined
+
+/** A trace's export: its report, said to be a trace's, and the note (if any) of what it lacks. */
+export const traceExport = (traceId: string, found: Found, summary: TraceSummary | null, note?: string): Record<string, unknown> => ({
   kind: 'trace',
-  ...traceReport(traceId, found, summary)
+  ...traceReport(traceId, found, summary),
+  ...(note ? { note } : {})
 })
 
 /** An export as the text that is copied: JSON, indented, so a person can read it as well as a program. */

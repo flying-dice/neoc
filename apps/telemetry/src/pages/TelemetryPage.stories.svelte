@@ -35,7 +35,7 @@
   {@const backend = args.backend()}
   <!-- the failing render is never run: a story's page must not throw -->
   <!-- and a copy goes nowhere real: the clipboard is a note of what was written -->
-  {@const telemetry = new Telemetry(backend.reader, backend.rpc, { later: () => {}, clipboard: { writeText: async () => {} }, after: () => {} })}
+  {@const telemetry = new Telemetry(backend.reader, backend.rpc, { later: () => {}, clipboard: { write: async () => {} }, after: () => {} })}
   <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <!-- a story reads once: a window that read on a timer would change under the story's checks -->
     <TelemetryPage {telemetry} every={0} />

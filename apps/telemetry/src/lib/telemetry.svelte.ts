@@ -2,6 +2,8 @@
 // sends. What it needs from outside arrives through the constructor (the reader, the backend, a way to run work later),
 // so a test or a story builds one with fakes.
 import {
+  cutOff,
+  EXPORT_LIMIT,
   exportText,
   logExport,
   logKey,
@@ -25,9 +27,13 @@ export interface TelemetryReader {
   query(q: LogQuery): Promise<Found>
 }
 
-/** Where what is copied goes (the page's `navigator.clipboard`, which the app's frame is allowed to write to). */
+/**
+ * Where what is copied goes (the page's `navigator.clipboard`, which the app's frame is allowed to write to). It is given
+ * the text as a promise, started in the click: a browser that is strict about when the clipboard may be written (WebKit)
+ * takes a write begun in the click, even when what it holds is read from the host afterwards.
+ */
 export interface Clipboard {
-  writeText(text: string): Promise<void>
+  write(text: Promise<string>): Promise<void>
 }
 
 /** The backend's one method: a call to try tracing with (the app's private `_probe` on the bus: `App.svelte` sends it). */
@@ -224,6 +230,7 @@ export class Telemetry {
 
   show(view: View): void {
     if (view !== this.#view) this.#query = ''
+    this.#forgetCopy()
     this.#view = view
     this.#pane = 'content'
     void this.refresh()
@@ -232,7 +239,7 @@ export class Telemetry {
   /** Open a trace in the detail column, from the list or from a log. */
   async open(traceId: string): Promise<void> {
     this.#view = 'traces'
-    this.#copied = 'idle'
+    this.#forgetCopy()
     this.#selected = traceId
     this.#choice = null
     this.#trace = null
@@ -242,7 +249,7 @@ export class Telemetry {
 
   /** Open a log of the Logs view in the detail column. */
   inspect(log: Log): void {
-    this.#copied = 'idle'
+    this.#forgetCopy()
     this.#entry = logKey(log)
     this.#pane = 'detail'
   }
@@ -254,12 +261,23 @@ export class Telemetry {
     this.#choice = same ? null : pick
   }
 
-  /** Put everything known of the open trace on the clipboard: its spans and logs, as JSON. */
+  /**
+   * Put everything known of the open trace on the clipboard: its spans and logs, as JSON, read again now with the most
+   * the host keeps (what the window shows is the last 1,000). One that could not be read again is copied as it was
+   * loaded, and the copy says so.
+   */
   async copyTrace(): Promise<void> {
     const traceId = this.#selected
-    const found = this.#trace
-    if (!traceId || !found) return
-    await this.#copy(() => exportText(traceExport(traceId, found, this.summary)))
+    const loaded = this.#trace
+    if (!traceId || !loaded) return
+    await this.#copy(async () => {
+      try {
+        const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
+        return exportText(traceExport(traceId, found, this.summary, cutOff(found)))
+      } catch (e) {
+        return exportText(traceExport(traceId, loaded, this.summary, `The trace could not be read again, so this is what the window had: ${messageOf(e)}`))
+      }
+    })
   }
 
   /**
@@ -272,24 +290,37 @@ export class Telemetry {
       if (!traceId) return exportText(logExport(log, null, null))
       const summary = this.#traces.find((t) => t.traceId === traceId) ?? null
       try {
-        return exportText(logExport(log, await this.#reader.query({ traceId, limit: 1000 }), summary))
+        const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
+        return exportText(logExport(log, found, summary, cutOff(found)))
       } catch (e) {
         return exportText(logExport(log, null, summary, `The trace could not be read: ${messageOf(e)}`))
       }
     })
   }
 
-  /** Copy what `text` makes; how it went is `copied` for a while. Never rejects. */
-  async #copy(text: () => string | Promise<string>): Promise<void> {
+  /** What was copied is no longer what is shown: an answer about it must not be given for what is shown now. */
+  #forgetCopy(): void {
+    this.#copies++
+    this.#copied = 'idle'
+  }
+
+  /**
+   * Copy what `text` makes; how it went is `copied` for a while, if what is shown has not changed by then. Never rejects.
+   * `text` is called at once, in the click.
+   */
+  async #copy(text: () => Promise<string>): Promise<void> {
     const copy = ++this.#copies
+    let answer: Copied
     try {
       if (!this.#clipboard) throw new Error('There is no clipboard.')
-      await this.#clipboard.writeText(await text())
-      this.#copied = 'copied'
+      await this.#clipboard.write(text())
+      answer = 'copied'
     } catch {
-      this.#copied = 'refused'
+      answer = 'refused'
     }
-    // the answer stays for a while, unless another copy has been made by then
+    if (copy !== this.#copies) return
+    this.#copied = answer
+    // the answer stays for a while, unless another copy, or another thing on show, has come by then
     this.#after(() => {
       if (copy === this.#copies) this.#copied = 'idle'
     }, COPIED_FOR)

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { EXPORT_LIMIT } from './telemetry'
 import { COPIED_FOR, Telemetry, RENDER_FAILURE, type Clipboard } from './telemetry.svelte'
 import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS, createFakeBackend, rpcError } from './fakeApi'
 
@@ -105,7 +106,7 @@ describe('copying what is known of a trace or a log', () => {
     const waits: [() => void, number][] = []
     const backend = createFakeBackend(options)
     const telemetry = new Telemetry(backend.reader, backend.rpc, {
-      clipboard: clipboard ?? { writeText: async (text) => void written.push(text) },
+      clipboard: clipboard ?? { write: async (text) => void written.push(await text) },
       after: (fn, ms) => void waits.push([fn, ms])
     })
     return { backend, telemetry, written, waits }
@@ -152,7 +153,7 @@ describe('copying what is known of a trace or a log', () => {
   })
 
   test('a clipboard that refuses, or none at all, is said, never raised', async () => {
-    const refusing = copying({}, { writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) })
+    const refusing = copying({}, { write: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) })
     await refusing.telemetry.open(RENDER_TRACE)
     await refusing.telemetry.copyTrace()
     expect(refusing.telemetry.copied).toBe('refused')
@@ -175,5 +176,65 @@ describe('copying what is known of a trace or a log', () => {
     await telemetry.copyTrace()
     await telemetry.open(FAILED_TRACE)
     expect(telemetry.copied).toBe('idle')
+  })
+
+  test('the write begins in the click, with the text still to come', async () => {
+    let given: unknown
+    const { telemetry } = copying({}, { write: (text) => ((given = text), text.then(() => {})) })
+    await telemetry.open(RENDER_TRACE)
+    const copy = telemetry.copyTrace()
+    expect(given).toBeInstanceOf(Promise)
+    await copy
+    expect(telemetry.copied).toBe('copied')
+  })
+
+  test('a trace is read for the copy with the most the host keeps, and a copy that reached it says the oldest may be missing', async () => {
+    const asked: (number | undefined)[] = []
+    const { backend, telemetry, written } = copying()
+    await telemetry.open(RENDER_TRACE)
+    const query = backend.reader.query
+    backend.reader.query = (q) => {
+      asked.push(q.limit)
+      return query(q)
+    }
+    await telemetry.copyTrace()
+    expect(asked).toEqual([EXPORT_LIMIT])
+    expect(JSON.parse(written[0]!)).not.toHaveProperty('note')
+
+    const full = { spans: SPANS.slice(0, 1), logs: Array.from({ length: EXPORT_LIMIT }, () => LOGS[0]!) }
+    backend.reader.query = () => Promise.resolve(full)
+    await telemetry.copyTrace()
+    expect((JSON.parse(written[1]!) as { note: string }).note).toContain('may be missing')
+    telemetry.show('logs')
+    await telemetry.copyLog(LOGS[1]!)
+    expect((JSON.parse(written[2]!) as { note: string }).note).toContain('may be missing')
+  })
+
+  test('a trace that cannot be read again is copied as the window had it, and says so', async () => {
+    const { backend, telemetry, written } = copying()
+    await telemetry.open(RENDER_TRACE)
+    backend.reader.query = () => Promise.reject(new Error('The host went away'))
+    await telemetry.copyTrace()
+    expect(telemetry.copied).toBe('copied')
+    const report = JSON.parse(written[0]!) as { note: string; spans: unknown[] }
+    expect([report.spans.length, report.note]).toEqual([4, 'The trace could not be read again, so this is what the window had: The host went away'])
+  })
+
+  test('a copy still being made does not report on what is shown by the time it is done', async () => {
+    const { backend, telemetry, written, waits } = copying()
+    telemetry.show('logs')
+    await telemetry.refresh()
+    const [first, second] = [LOGS[0]!, LOGS[1]!]
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const query = backend.reader.query
+    backend.reader.query = async (q) => (await gate, query(q))
+    const copying1 = telemetry.copyLog(first)
+    telemetry.inspect(second)
+    release()
+    await copying1
+    expect(written).toHaveLength(1)
+    expect(telemetry.copied).toBe('idle')
+    expect(waits).toEqual([])
   })
 })

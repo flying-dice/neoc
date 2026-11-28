@@ -23,11 +23,12 @@
 <div class="copy">
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <ui-button variant="tinted" {disabled} onclick={oncopy} data-testid={testid}>
-    <ui-icon slot="icon" name={copied === 'copied' ? 'checkmark' : 'square.and.arrow.up'} size="16"></ui-icon>
+    <ui-icon slot="icon" name={copied === 'copied' ? 'checkmark' : 'doc.on.doc'} size="16"></ui-icon>
     {copied === 'copied' ? 'Copied' : 'Copy Details'}
   </ui-button>
-  <!-- said as it changes, to people who cannot see the button's label change -->
-  <p class="ios-footnote ios-secondary" class:ios-red={copied === 'refused'} role="status" data-testid="{testid}-status">{SAID[copied]}</p>
+  <!-- Said as it changes, to people who cannot see the button's label change. A copy that worked is quiet to the eye (the
+       label and the checkmark say so, FEED-01) and takes no room; one that failed is written out under the button. -->
+  <p class:ios-footnote={copied === 'refused'} class:ios-red={copied === 'refused'} class:said={copied === 'copied'} role="status" data-testid="{testid}-status">{SAID[copied]}</p>
 </div>
 
 <style>
@@ -39,6 +40,15 @@
   }
   p {
     margin: 0;
-    min-height: 1lh;
+  }
+  /* seen by assistive technology only */
+  .said,
+  p:empty {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 </style>
