@@ -46,6 +46,11 @@ export class UiToggle extends BooleanControl {
       button[aria-checked='true'] {
         background: var(--toggle-tint, var(--ios-green));
       }
+      /* with Reduce Transparency the off track is opaque (the tokens' own 16% alpha would let what is behind it show
+         through): the grays that the alpha comes to over the grouped backgrounds */
+      :host-context(.reduce-transparency) button:not([aria-checked='true']) {
+        background: light-dark(var(--ios-gray5), var(--ios-gray4));
+      }
       button:disabled {
         opacity: 0.4;
         cursor: default;
