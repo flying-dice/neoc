@@ -20,7 +20,7 @@
 
 <ui-row
   value={took}
-  label="{span.name} {took}, {SOURCE_LABEL[span.source]}{failed ? `, failed${why ? `: ${why}` : ''}` : ''}"
+  label="{span.name}{why ? ` ${why}` : ''} {took}, {SOURCE_LABEL[span.source]}{failed ? ', failed' : ''}"
   {selected}
   {onpress}
   data-testid="telemetry-span-{span.spanId}"
