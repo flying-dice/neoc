@@ -56,7 +56,7 @@
           >
         </ui-row>
       {/each}
-      <ui-row heading="Add an agent" action tappable onpress={onadd} data-testid="agents-add"></ui-row>
+      <ui-row heading="Add an Agent" action tappable onpress={onadd} data-testid="agents-add"></ui-row>
     </ui-section>
   </ui-list>
   <!-- an empty selectable list is not valid ARIA: the list is there once there is a chat -->

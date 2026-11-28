@@ -106,7 +106,7 @@
             {#if agents.loaded && agents.agents.length === 0}
               <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-              <ui-button slot="action" variant="filled" hit onclick={() => agents.add()} data-testid="agents-add-first">Add an agent</ui-button>
+              <ui-button slot="action" variant="filled" hit onclick={() => agents.add()} data-testid="agents-add-first">Add an Agent</ui-button>
             {/if}
           </ui-empty-state>
         </div>

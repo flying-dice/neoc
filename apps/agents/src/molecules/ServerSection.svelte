@@ -128,7 +128,7 @@
     {/each}
     <ui-row heading="Add a header" action tappable onpress={() => server.headers.push(blankVariable())} data-testid="{testid}-add-header"></ui-row>
   {/if}
-  <ui-row heading="Remove this server" action destructive tappable onpress={onremove} data-testid="{testid}-remove"></ui-row>
+  <ui-row heading="Remove this server" destructive tappable onpress={onremove} data-testid="{testid}-remove"></ui-row>
 </ui-section>
 
 <style>

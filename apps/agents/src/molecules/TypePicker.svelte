@@ -16,7 +16,7 @@
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button variant="plain" hit onclick={oncancel} data-testid="agents-types-cancel">Cancel</ui-button>
-    <h1>New agent</h1>
+    <h1>New Agent</h1>
     <!-- the bar's title stays in its middle -->
     <span class="spacer" aria-hidden="true"></span>
   </header>
@@ -52,19 +52,19 @@
     background: var(--bg-secondary);
   }
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
-    padding: 0 8px 6px;
+    padding: 0 12px 4px;
     border-bottom: 1px solid var(--separator);
+  }
+  .bar > :last-child {
+    justify-self: end;
   }
   h1 {
     margin: 0;
     font: var(--type-headline);
-  }
-  .spacer {
-    width: 64px;
   }
   .list {
     flex: 1;

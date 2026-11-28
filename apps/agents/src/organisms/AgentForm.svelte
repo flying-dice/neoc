@@ -79,7 +79,7 @@
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button variant="plain" hit onclick={oncancel} data-testid="agents-form-cancel">Cancel</ui-button>
-    <h1>{adding ? 'New agent' : 'Agent'}</h1>
+    <h1>{adding ? 'New Agent' : 'Agent'}</h1>
     <ui-button type="submit" variant="plain" hit disabled={!savable} data-testid="agents-form-save">{adding ? 'Add' : 'Save'}</ui-button>
   </header>
   <div class="fields">
@@ -237,6 +237,7 @@
               label="Token"
               placeholder={hasToken ? 'Has a token: write a new one to replace it' : 'None'}
               type="password"
+              autocapitalize="off"
               autocomplete="off"
               maxlength={4000}
               variant="bare"
@@ -330,7 +331,7 @@
         <!-- no space between what goes in the row's slots: a space would be its content, in place of its heading -->
         <ui-row heading={form.avatar === '' ? 'Its initials' : 'Its picture'}>
           <span slot="leading" class="preview">
-            <Avatar id={form.agent?.id ?? ''} name={form.name.trim() || 'New agent'} picture={form.avatar} size={44} />
+            <Avatar id={form.agent?.id ?? ''} name={form.name.trim() || 'New Agent'} picture={form.avatar} size={44} />
           </span><span slot="trailing" class="actions">
             {#if form.avatar !== ''}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -345,7 +346,7 @@
       </ui-section>
       {#if !adding}
         <ui-section footer={form.kind === 'container' ? 'Its chats, with their containers and volumes, go with it. Its image stays, in Containers.' : 'Its chats stay, and can be read.'}>
-          <ui-row heading="Remove this agent" action destructive tappable onpress={onremove} data-testid="agents-form-remove"></ui-row>
+          <ui-row heading="Remove this agent" destructive tappable onpress={onremove} data-testid="agents-form-remove"></ui-row>
         </ui-section>
       {/if}
     </ui-list>
@@ -365,12 +366,15 @@
     background: var(--bg-secondary);
   }
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
-    padding: 0 8px 6px;
+    padding: 0 12px 4px;
     border-bottom: 1px solid var(--separator);
+  }
+  .bar > :last-child {
+    justify-self: end;
   }
   h1 {
     margin: 0;
@@ -398,7 +402,7 @@
   }
   .preview {
     display: flex;
-    padding: 6px 0;
+    padding: 4px 0;
   }
   .actions {
     display: flex;
