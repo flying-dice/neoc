@@ -67,7 +67,7 @@ textarea {
 .ios-subheadline { font: var(--type-subheadline); letter-spacing: var(--tracking-subheadline); }
 .ios-footnote { font: var(--type-footnote); letter-spacing: var(--tracking-footnote); }
 .ios-caption1 { font: var(--type-caption1); }
-.ios-caption2 { font: var(--type-caption2); letter-spacing: 0.07px; }
+.ios-caption2 { font: var(--type-caption2); letter-spacing: var(--tracking-caption); }
 
 .ios-secondary { color: var(--label-secondary); }
 .ios-tertiary { color: var(--label-tertiary); }

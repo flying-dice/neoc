@@ -15,26 +15,28 @@ weight, a tracking and a family; it is applied whole, never in pieces.
 
 | Style | Token | Size / leading at `s` = 1 | Default weight | Emphasised weight | Tracking token | Family |
 | --- | --- | --- | --- | --- | --- | --- |
-| Large Title | `--type-large-title` | 34 / 41 | 400 | 700 | `--tracking-large-title` (0.37px) | display |
-| Title 1 | `--type-title1` | 28 / 34 | 400 | 700 | `--tracking-title1` (0.36px) | display |
-| Title 2 | `--type-title2` | 22 / 28 | 400 | 700 | `--tracking-title2` (0.35px) | display |
-| Title 3 | `--type-title3` | 20 / 25 | 400 | 600 | `--tracking-title3` (0.38px) | display |
-| Headline | `--type-headline` | 17 / 22 | 600 | 600 | `--tracking-body` (-0.41px) | text |
-| Body | `--type-body` | 17 / 22 | 400 | 600 | `--tracking-body` (-0.41px) | text |
-| Callout | `--type-callout` | 16 / 21 | 400 | 600 | `--tracking-callout` (-0.32px) | text |
-| Subheadline | `--type-subheadline` | 15 / 20 | 400 | 600 | `--tracking-subheadline` (-0.24px) | text |
-| Footnote | `--type-footnote` | 13 / 18 | 400 | 600 | `--tracking-footnote` (-0.08px) | text |
+| Large Title | `--type-large-title` | 34 / 41 | 400 | 700 | `--tracking-large-title` (0px) | display |
+| Title 1 | `--type-title1` | 28 / 34 | 400 | 700 | `--tracking-title1` (0px) | display |
+| Title 2 | `--type-title2` | 22 / 28 | 400 | 700 | `--tracking-title2` (0px) | display |
+| Title 3 | `--type-title3` | 20 / 25 | 400 | 600 | `--tracking-title3` (0px) | display |
+| Headline | `--type-headline` | 17 / 22 | 600 | 600 | `--tracking-body` (0px) | text |
+| Body | `--type-body` | 17 / 22 | 400 | 600 | `--tracking-body` (0px) | text |
+| Callout | `--type-callout` | 16 / 21 | 400 | 600 | `--tracking-callout` (0px) | text |
+| Subheadline | `--type-subheadline` | 15 / 20 | 400 | 600 | `--tracking-subheadline` (0px) | text |
+| Footnote | `--type-footnote` | 13 / 18 | 400 | 600 | `--tracking-footnote` (0px) | text |
 | Caption 1 | `--type-caption1` | 12 / 16 | 400 | 600 | `--tracking-caption` (0px) | text |
-| Caption 2 | `--type-caption2` | 11 / 13 | 400 | 600 | 0.07px (`.ios-caption2`) | text |
+| Caption 2 | `--type-caption2` | 11 / 13 | 400 | 600 | `--tracking-caption` (0px) | text |
 
-The tracking values are the repo's tokens. They come from Apple's older split Text/Display table, which matches the
-static `SF Pro Text` and `SF Pro Display` the font stack names; the current HIG table, for the variable system font,
-differs (notably Title 2 and Title 3, which it tracks negative). The tokens are the design language: a check
-compares with `tokens.css`, and if the tokens are brought up to date, the checks follow them.
+The family is Inter, bundled (`packages/ui/src/fonts`, loaded by `fonts.css` in the shell and by `/kit/tokens.css`
+in an app frame), the open face closest to SF Pro, so every machine draws the same text. Its optical sizes do what SF
+Text and SF Display do, and are spaced for their size already (17px runs 1.5% tighter than the text cut, 34px 9%), so
+every tracking token is 0. Apple's tracking table is for SF and does not apply. The tokens are the design language: a
+check compares with `tokens.css`, and if a token is tuned, the checks follow it.
 
-The `font` shorthand does not set `letter-spacing`. `font: var(--type-…)` alone keeps the tracking it inherits,
-usually body's −0.41px, so every style is set as a pair: the font token and its tracking token (or an `.ios-*` class,
-or a kit element, that sets both).
+The `font` shorthand does not set `letter-spacing`. `font: var(--type-…)` alone keeps the tracking it inherits, so
+every style is set as a pair: the font token and its tracking token (or an `.ios-*` class, or a kit element, that sets
+both). All are 0 today, so a missing pair does not show yet; a hand-set value (`letter-spacing: -0.4px`, `0.07px`, an
+`em`) does, and it fails TYPE-25.
 
 Apple's sizes are not one ramp scaled: at its smallest setting Caption 1 and Caption 2 stay at 11 pt. vos multiplies
 every size by `s`, so at `s` = 0.85 Caption 2 draws at 9.35px, under the 11 pt minimum (TYPE-04 is checked at `s` = 1):
@@ -102,7 +104,7 @@ a gap in the tokens, not something an app works around.
   legal text.
 - **Why (iPadOS):** Typography.
 - **Check:** `auto`: at `s` = 1, any text with computed `font-size` < 11px.
-- **Wrong / Right:** `.axis { font-size: 9px }` / `.axis { font: var(--type-caption2); letter-spacing: 0.07px }`
+- **Wrong / Right:** `.axis { font-size: 9px }` / `.axis { font: var(--type-caption2); letter-spacing: var(--tracking-caption) }`
 
 ### TYPE-05 Glyphs that carry meaning grow with the text
 - **Rule:** An icon that says something next to text (a status glyph, a row's leading symbol that is not a coloured
@@ -254,12 +256,14 @@ a gap in the tokens, not something an app works around.
 
 ## Family
 
-### TYPE-23 Text is in the system font
-- **Rule:** All interface and content text uses `--font-text` or `--font-display` (the system stack, first family
-  `-apple-system`). No web fonts, no other stacks, no `--font-rounded` (it has no use yet).
+### TYPE-23 Text is in the vos font
+- **Rule:** All interface and content text uses `--font-text` or `--font-display` (first family `InterVariable`, the
+  bundled Inter), and the font has loaded. No other web fonts, no other stacks, no `--font-rounded` (it has no use
+  yet).
 - **Why (iPadOS):** Typography.
-- **Check:** `auto`: the first family of the computed `font-family` is neither `-apple-system` nor `ui-monospace`.
-- **Wrong / Right:** `font-family: Inter, sans-serif` / `font: var(--type-body)`
+- **Check:** `auto`: the first family of the computed `font-family` is neither `InterVariable` nor `ui-monospace`,
+  or the page has no loaded `InterVariable` face (the system font is standing in).
+- **Wrong / Right:** `font-family: -apple-system, sans-serif` / `font: var(--type-body)`
 
 ### TYPE-24 Monospace only for code and data
 - **Rule:** `--font-mono` is for code, terminal output, logs, and machine values a person compares character by
@@ -279,7 +283,7 @@ a gap in the tokens, not something an app works around.
 - **Why (iPadOS):** Typography.
 - **Check:** `auto`: computed `letter-spacing` differs by more than 0.02px from the token for the style that
   `font-size / s` maps to (see auto-checks.md for the table).
-- **Wrong / Right:** `font: var(--type-title3);` with no tracking (so 0, or inherited -0.41px) /
+- **Wrong / Right:** `font: var(--type-title3); letter-spacing: 0.35px;` (SF's value, by hand) /
   `font: var(--type-title3); letter-spacing: var(--tracking-title3);`
 
 ## Truncation and wrapping

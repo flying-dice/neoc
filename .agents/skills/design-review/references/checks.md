@@ -66,7 +66,7 @@ content box is the window content root. LAYOUT-08 is partial for that reason, an
 | TYPE-18 | The confirming bar button is semibold | implemented | default | error |  |
 | TYPE-20 | Only four weights exist | implemented | default | error |  |
 | TYPE-21 | Emphasis is one step, by size class | implemented | default | error |  |
-| TYPE-23 | Text is in the system font | implemented | default | error |  |
+| TYPE-23 | Text is in the vos font | implemented | default | error |  |
 | TYPE-24 | Monospace only for code and data | implemented | default | warn | **review**: is it code or a machine value? |
 | TYPE-25 | Letter spacing is the style's tracking | implemented | default | error |  |
 | TYPE-26 | Clipped text ends in an ellipsis | implemented | default, large-text, smallest | error | Only when the element's own text runs past its padding box (overflow from a child is not its text). |

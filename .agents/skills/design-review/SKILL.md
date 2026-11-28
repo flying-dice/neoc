@@ -33,8 +33,8 @@ Read `typography.md` and `writing.md` in full, then go through `styles.md` line 
 the role table, whole: size, leading, weight, tracking and colour.
 - A size marked off-ramp (TYPE-01), a weight outside 400/500/600/700 (TYPE-20) or a colour in bold (off the palette)
   is a finding.
-- Tracking that is not its size's token fails TYPE-25. `-0.41` on any size but 17 is almost always
-  `font: var(--type-…)` set without its `letter-spacing`.
+- Tracking that is not its size's token fails TYPE-25. The tokens are all 0 (Inter's optical sizes are spaced for
+  their size), so any other value is a hand-set one, often SF's old table (`-0.41px`, `0.35px`, `0.07px`).
 - Two lines for one role (two bar-title styles, two bar-button sizes) fail TYPE-49 and the role's own rule.
 - The samples say where a style is drawn: search the source for them.
 

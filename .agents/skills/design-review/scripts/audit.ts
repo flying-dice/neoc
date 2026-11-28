@@ -100,17 +100,19 @@ export async function audit(o: AuditOptions): Promise<AuditResult> {
   const s = parseFloat(getComputedStyle(root).getPropertyValue('--text-scale')) || 1
 
   // ---- the ramp (auto-checks.md, Definitions) ------------------------------------------------------------------
+  // the tracking is the page's own --tracking-* token, so the table follows tokens.css
+  const tracking = (token: string): number => parseFloat(getComputedStyle(root).getPropertyValue(`--tracking-${token}`)) || 0
   const RAMP: [number, number, number, string][] = [
-    [34, 41, 0.37, 'large-title'],
-    [28, 34, 0.36, 'title1'],
-    [22, 28, 0.35, 'title2'],
-    [20, 25, 0.38, 'title3'],
-    [17, 22, -0.41, 'body/headline'],
-    [16, 21, -0.32, 'callout'],
-    [15, 20, -0.24, 'subheadline'],
-    [13, 18, -0.08, 'footnote'],
-    [12, 16, 0, 'caption1'],
-    [11, 13, 0.07, 'caption2']
+    [34, 41, tracking('large-title'), 'large-title'],
+    [28, 34, tracking('title1'), 'title1'],
+    [22, 28, tracking('title2'), 'title2'],
+    [20, 25, tracking('title3'), 'title3'],
+    [17, 22, tracking('body'), 'body/headline'],
+    [16, 21, tracking('callout'), 'callout'],
+    [15, 20, tracking('subheadline'), 'subheadline'],
+    [13, 18, tracking('footnote'), 'footnote'],
+    [12, 16, tracking('caption'), 'caption1'],
+    [11, 13, tracking('caption'), 'caption2']
   ]
   const styleOf = (fontSize: number): [number, number, number, string] | undefined => RAMP.find(([z]) => Math.abs(z - fontSize / s) <= 0.25)
 
@@ -315,6 +317,11 @@ export async function audit(o: AuditOptions): Promise<AuditResult> {
   function add(check: string, severity: AuditFinding['severity'], el: Element, text: string, detail: string, box?: DOMRect): void {
     if (!on(check)) return
     findings.push({ check, severity, element: describe(el), text: clip80(text), detail, box: boxOf(box ?? el) })
+  }
+
+  // the bundled font loaded (capture waits for document.fonts.ready), or every text run is in a stand-in face
+  if (run === 'default' && ![...document.fonts].some((f) => f.family.replace(/["']/g, '') === 'InterVariable' && f.status === 'loaded')) {
+    add('TYPE-23', 'error', root, '', 'the bundled InterVariable font has not loaded: the system font stands in for it')
   }
 
   // ---- the elements -------------------------------------------------------------------------------------------
@@ -1566,7 +1573,7 @@ export async function audit(o: AuditOptions): Promise<AuditResult> {
     if (run === 'default' && size < 10.75) add('TYPE-04', 'error', el, text, `font-size ${r1(size)}px; nothing is smaller than Caption 2 (11px)`)
     if (![400, 500, 600, 700].includes(weight)) add('TYPE-20', 'error', el, text, `font-weight ${weight}; expected 400, 500, 600 or 700`)
     const fam = firstFamily(c)
-    if (fam !== '-apple-system' && fam !== 'ui-monospace') add('TYPE-23', 'error', el, text, `first font family "${fam}"; expected -apple-system (--font-text, --font-display) or ui-monospace`)
+    if (fam !== 'InterVariable' && fam !== 'ui-monospace') add('TYPE-23', 'error', el, text, `first font family "${fam}"; expected InterVariable (--font-text, --font-display) or ui-monospace`)
     if (fam === 'ui-monospace' && !inside(el, 'code, pre, kbd, samp, textarea, [role=log], canvas, .xterm')) add('TYPE-24', 'warn', el, text, 'monospace outside code, pre, kbd, samp or a log: is it code or a machine value?')
     if (c.textAlign === 'center' && t.lines >= 2 && !inside(el, '[role=alertdialog], ui-empty-state, ui-button, button')) add('TYPE-33', 'warn', el, text, `${t.lines} lines centred; text aligns to the leading edge`)
     if (c.textAlign === 'justify') add('TYPE-34', 'error', el, text, 'text-align justify')

@@ -107,16 +107,16 @@ colour's alpha before compositing it.
 
 **Ramp** (size → leading, tracking) at `s` = 1:
 
-| Size | Leading | Tracking | Size | Leading | Tracking |
+| Size | Leading | Tracking token | Size | Leading | Tracking token |
 | --- | --- | --- | --- | --- | --- |
-| 34 | 41 | 0.37 | 16 | 21 | −0.32 |
-| 28 | 34 | 0.36 | 15 | 20 | −0.24 |
-| 22 | 28 | 0.35 | 13 | 18 | −0.08 |
-| 20 | 25 | 0.38 | 12 | 16 | 0 |
-| 17 | 22 | −0.41 | 11 | 13 | 0.07 |
+| 34 | 41 | `--tracking-large-title` | 16 | 21 | `--tracking-callout` |
+| 28 | 34 | `--tracking-title1` | 15 | 20 | `--tracking-subheadline` |
+| 22 | 28 | `--tracking-title2` | 13 | 18 | `--tracking-footnote` |
+| 20 | 25 | `--tracking-title3` | 12 | 16 | `--tracking-caption` |
+| 17 | 22 | `--tracking-body` | 11 | 13 | `--tracking-caption` |
 
-The tracking column mirrors `--tracking-*` in `tokens.css` (and `.ios-caption2`'s 0.07px); if the tokens change, the
-table follows them. **style(el)** is the ramp row whose size is within 0.25px of `parseFloat(cs(el).fontSize) / s`.
+The tracking is read from the page's `--tracking-*` tokens (all 0 at present: Inter's optical sizes are spaced for
+their size), so the table follows `tokens.css`. **style(el)** is the ramp row whose size is within 0.25px of `parseFloat(cs(el).fontSize) / s`.
 
 **Title-case test**: split the string on white space; strip leading and trailing punctuation (`“”"'’()…:.!?`) from each
 word. A word **fails** when it has four or more letters, starts with a lowercase letter, is not in {a, an, the, and,
@@ -170,9 +170,10 @@ kbd, samp, [role=log], [role=textbox], canvas` or a terminal (`.xterm`).
 ### TYPE-21 Emphasis is one step, by size class
 - Scope: T with `style()`. Fail: size ≤ 20 and weight 700; or size ≥ 22 and weight 500 or 600.
 
-### TYPE-23 Text is in the system font
+### TYPE-23 Text is in the vos font
 - Scope: T. Fail: the first family of `cs.fontFamily` (split on commas, quotes removed, trimmed) is neither
-  `-apple-system` nor `ui-monospace`.
+  `InterVariable` nor `ui-monospace`. Once per page: fail when `document.fonts` has no `InterVariable` face with
+  status `loaded` after `document.fonts.ready` (the bundled font did not load; the system font stands in).
 
 ### TYPE-24 Monospace only for code and data
 - Scope: T whose first family is `ui-monospace`. Finding when it is not, and is not inside, `code, pre, kbd, samp,

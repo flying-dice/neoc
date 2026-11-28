@@ -49,7 +49,7 @@ themes; `interact` operate it (keyboard, pointer, resize, settings).
 | TYPE-20 | Only four weights exist | `auto` | [Typography](typography.md) | |
 | TYPE-21 | Emphasis is one step, by size class | `auto` | [Typography](typography.md) | |
 | TYPE-22 | Emphasis is weight or colour, not size | `look` | [Typography](typography.md) | |
-| TYPE-23 | Text is in the system font | `auto` | [Typography](typography.md) | |
+| TYPE-23 | Text is in the vos font | `auto` | [Typography](typography.md) | |
 | TYPE-24 | Monospace only for code and data | `auto`, `source`, `look` | [Typography](typography.md) | |
 | TYPE-25 | Letter spacing is the style's tracking | `auto` | [Typography](typography.md) | |
 | TYPE-26 | Clipped text ends in an ellipsis | `auto` | [Typography](typography.md) | |

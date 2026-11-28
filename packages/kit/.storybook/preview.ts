@@ -1,5 +1,6 @@
 import type { Preview } from '@storybook/web-components-vite'
 import { withThemeByDataAttribute } from '@storybook/addon-themes'
+import '../../ui/src/styles/fonts.css'
 import 'virtual:kit-tokens.css'
 import '../src/index'
 import './preview.css'

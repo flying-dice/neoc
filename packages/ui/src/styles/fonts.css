@@ -1,0 +1,13 @@
+/*
+ * Inter 4.1 (rsms.me/inter, SIL Open Font License 1.1: ../fonts/Inter-LICENSE.txt), the open face closest to SF Pro,
+ * so every machine draws the same text. One variable file: weights 100–900 and optical sizes 14–32, chosen from the
+ * font size (`font-optical-sizing: auto`), as SF switches from Text to Display. The kit's token sheet carries this
+ * rule too, pointing at /kit/fonts/ (scripts/kit-tokens.ts).
+ */
+@font-face {
+  font-family: InterVariable;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../fonts/InterVariable.woff2') format('woff2');
+}

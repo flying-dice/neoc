@@ -8,6 +8,9 @@ import { join, resolve } from 'node:path'
 
 const STYLES = resolve(import.meta.dirname, '../packages/ui/src/styles')
 
+/** The bundled font file, which the kit's build writes next to the sheet, at `/kit/fonts/` (fonts.css). */
+export const FONT_FILE = resolve(STYLES, '../fonts/InterVariable.woff2')
+
 /**
  * Settings the host puts on the frame's document drive the tokens, so a component (inside its shadow root, where the
  * page's own rules do not reach) follows them through custom properties. Reduce Motion: `data-reduce-motion` on `<html>`
@@ -26,10 +29,15 @@ const HOOKS = `/* A subtree that says "follow the system setting" (the document 
   --duration-slow: 0s;
 }`
 
-export function buildTokensCss(): string {
+/**
+ * The sheet. `fonts` is where the font file is, relative to the sheet (`fonts/` for `/kit/tokens.css`); without it
+ * the sheet has no `@font-face`, and whoever loads it loads `fonts.css` itself (the kit's Storybook, through Vite).
+ */
+export function buildTokensCss(fonts?: string): string {
   const part = (file: string): string => readFileSync(join(STYLES, file), 'utf8').trimEnd()
   return [
     '/* vos app kit: design tokens and the base reset. Generated from packages/ui/src/styles; do not edit. */',
+    ...(fonts === undefined ? [] : [part('fonts.css').replaceAll("url('../fonts/", `url('${fonts}`)]),
     part('tokens.css'),
     part('base.css'),
     HOOKS,
