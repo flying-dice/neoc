@@ -4,20 +4,14 @@
 -- skill is a folder: copied into the container under the agent's skills folder, in a folder of its name
 -- (sandbox.luau).
 --
--- The Skills app is not one this app's types are made with, so what it answers is checked here, as text from
--- anywhere would be.
+-- The Skills app's public requests are typed (vite.config.ts makes this app's types with it). Its paths are checked
+-- here all the same: the archive a skill is packed in is unpacked at the container's root.
 local skills = {}
 
 -- A file of a skill besides its SKILL.md, by its path in the skill's folder.
 export type File = { path: string, text: string }
 -- A skill as it is copied into a container.
 export type Skill = { name: string, text: string, files: { File } }
-
--- A request to the Skills app: its answer, or why there is none.
-local function ask(method: string, params: { [string]: any }?): (any, vos_rpc_RequestError?)
-  local bus: any = RPC
-  return bus.send_request("skills", method, params)
-end
 
 -- why the Skills app gave nothing, in the person's words
 local function sentence(err: vos_rpc_RequestError?, what: string): string
@@ -29,18 +23,13 @@ end
 
 -- The skills of the Skills app, by name. When it is not there or does not answer, none, and why.
 function skills.list(): agents_SkillChoice
-  local listed, err = ask("list_skills", nil)
-  if type(listed) ~= "table" then
+  local listed: skills_ListSkillsResult?, err = RPC.send_request("skills", "list_skills")
+  if not listed then
     return { skills = {}, problem = sentence(err, "list its skills") }
   end
   local out: { agents_SkillSummary } = {}
-  for _, skill in if type(listed.skills) == "table" then listed.skills else {} do
-    if type(skill) == "table" and type(skill.name) == "string" then
-      table.insert(out, {
-        name = skill.name,
-        description = if type(skill.description) == "string" then skill.description else "",
-      })
-    end
+  for _, skill in listed.skills do
+    table.insert(out, { name = skill.name, description = skill.description })
   end
   return { skills = out, problem = "" }
 end
@@ -61,18 +50,12 @@ end
 
 -- The skill of that name, with its files. Otherwise why there is none, in the person's words.
 function skills.get(name: string): (Skill?, string?)
-  local got, err = ask("get_skill", { name = name })
-  if type(got) ~= "table" then
+  local got: skills_GetSkillResult?, err = RPC.send_request("skills", "get_skill", { name = name })
+  if not got then
     return nil, sentence(err, `give the skill {name}`)
   end
-  if type(got.text) ~= "string" then
-    return nil, `The Skills app gave the skill {name} without its SKILL.md.`
-  end
   local files: { File } = {}
-  for _, file in if type(got.files) == "table" then got.files else {} do
-    if type(file) ~= "table" or type(file.path) ~= "string" or type(file.text) ~= "string" then
-      return nil, `The Skills app gave a file of the skill {name} without its path or its text.`
-    end
+  for _, file in got.files do
     local wrong = badPath(file.path)
     if wrong then
       return nil, wrong
