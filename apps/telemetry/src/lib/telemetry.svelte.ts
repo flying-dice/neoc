@@ -109,6 +109,7 @@ export class Telemetry {
   #probing = $state<Probe | null>(null)
   #copied = $state<Copied>('idle')
   #copies = 0
+  #refreshes = 0
 
   readonly #reader: TelemetryReader
   readonly #rpc: ProbeRpc
@@ -211,20 +212,30 @@ export class Telemetry {
     return this.#logs.find((l) => logKey(l) === this.#entry) ?? null
   }
 
-  /** Read what the view shows again. Never rejects: a failure is kept, to be shown. */
+  /**
+   * Read what the view shows again. Never rejects: a failure is kept, to be shown. A read that is overtaken by a later one
+   * (a trace opened, a view shown, a poll) gives nothing: what it read may be of what is no longer on show, and the later
+   * read is at least as new.
+   */
   async refresh(): Promise<void> {
+    const run = ++this.#refreshes
     try {
       if (this.#view === 'traces') {
-        this.#traces = await this.#reader.traces()
+        const traces = await this.#reader.traces()
         const selected = this.#selected
-        if (selected) this.#trace = await this.#reader.query({ traceId: selected, limit: 1000 })
+        const trace = selected ? await this.#reader.query({ traceId: selected, limit: 1000 }) : null
+        if (run !== this.#refreshes) return
+        this.#traces = traces
+        if (trace) this.#trace = trace
       } else {
         const found = await this.#reader.query({ severity: this.#level, limit: 300 })
+        if (run !== this.#refreshes) return
         this.#logs = [...found.logs].reverse()
       }
       this.#failure = null
       this.#unavailable = null
     } catch (e) {
+      if (run !== this.#refreshes) return
       // a poll that fails again, the same way, is the same failure: it is warned of when it starts or changes, not on each tick
       if (codeOf(e) === NOT_OFFERED) {
         const said = 'This host page does not offer telemetry to this app.'
@@ -282,13 +293,19 @@ export class Telemetry {
     const traceId = this.#selected
     const loaded = this.#trace
     if (!traceId || !loaded) return
+    // of this trace, as it is now: the window may show another by the time the host answers
+    const summary = this.summary
     await this.#copy(async () => {
       try {
         const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
-        return exportText(traceExport(traceId, found, this.summary, cutOff(found)))
+        return exportText(traceExport(traceId, found, summary, cutOff(found)))
       } catch (e) {
         this.#tracer.warn('could not read the trace again to copy it', { error: messageOf(e), traceId })
-        return exportText(traceExport(traceId, loaded, this.summary, `The trace could not be read again, so this is what the window had: ${messageOf(e)}`))
+        // what the window had is a stand-in only if it is of this trace
+        if (!loaded.spans.every((s) => s.traceId === traceId) || !loaded.logs.every((l) => l.traceId === traceId)) {
+          throw new Error('The trace could not be read again, and the window has no copy of it.')
+        }
+        return exportText(traceExport(traceId, loaded, summary, `The trace could not be read again, so this is what the window had: ${messageOf(e)}`))
       }
     })
   }

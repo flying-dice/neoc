@@ -238,6 +238,66 @@ describe('copying what is known of a trace or a log', () => {
     expect(waits).toEqual([])
   })
 
+  test('a trace is copied with its own name and app, whichever trace is open by the time the host answers', async () => {
+    const { backend, telemetry, written } = copying()
+    await telemetry.open(RENDER_TRACE)
+    const mine = telemetry.summary!
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const query = backend.reader.query
+    backend.reader.query = async (q) => (q.limit === EXPORT_LIMIT ? (await gate, query(q)) : query(q))
+    const copy = telemetry.copyTrace()
+    await telemetry.open(FAILED_TRACE)
+    const other = telemetry.summary!
+    expect(other.name).not.toBe(mine.name)
+    release()
+    await copy
+    const report = JSON.parse(written[0]!) as { traceId: string; name: string; app: string | null }
+    expect([report.traceId, report.name, report.app]).toEqual([RENDER_TRACE, mine.name, mine.app ?? null])
+    expect(telemetry.copied).toBe('idle')
+  })
+
+  test('reads of two traces that finish out of order leave the open trace its own, and a failed copy falls back on that', async () => {
+    const { backend, telemetry, written } = copying()
+    await telemetry.refresh()
+    const query = backend.reader.query
+    const answer: Record<string, () => void> = {}
+    backend.reader.query = (q) => (q.limit === 1000 && q.traceId ? new Promise((resolve) => (answer[q.traceId!] = () => resolve(query(q)))) : query(q))
+    const first = telemetry.open(RENDER_TRACE)
+    await Bun.sleep(5)
+    const second = telemetry.open(FAILED_TRACE)
+    await Bun.sleep(5)
+    answer[FAILED_TRACE]!()
+    await second
+    answer[RENDER_TRACE]!()
+    await first
+    expect(telemetry.selected).toBe(FAILED_TRACE)
+    expect(telemetry.bars.length).toBeGreaterThan(0)
+    expect(telemetry.bars.every((b) => b.span.traceId === FAILED_TRACE)).toBe(true)
+
+    backend.reader.query = () => Promise.reject(new Error('The host went away'))
+    await telemetry.copyTrace()
+    const report = JSON.parse(written[0]!) as { traceId: string; name: string; spans: { name: string }[]; note: string }
+    expect(report.traceId).toBe(FAILED_TRACE)
+    expect(report.name).toBe(telemetry.summary!.name)
+    expect(report.spans.length).toBe(telemetry.bars.length)
+    expect(report.note).toContain('this is what the window had')
+  })
+
+  test('a read that is overtaken by a later one gives nothing, not a failure either', async () => {
+    const { backend, telemetry } = copying()
+    await telemetry.refresh()
+    const traces = backend.reader.traces
+    let fail: (e: Error) => void = () => {}
+    backend.reader.traces = () => new Promise((_, reject) => (fail = reject))
+    const slow = telemetry.refresh()
+    backend.reader.traces = traces
+    await telemetry.refresh()
+    fail(new Error('too old to matter'))
+    await slow
+    expect(telemetry.failure).toBeNull()
+  })
+
   test('a failure the window catches and shows is warned of, once, where it is caught', async () => {
     const warned: [string, unknown][] = []
     const tracer = { span: () => ({ in_scope: <T,>(body: () => T) => body() }), warn: (message: string, fields?: unknown) => void warned.push([message, fields]) }
