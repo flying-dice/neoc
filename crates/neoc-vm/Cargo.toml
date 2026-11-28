@@ -47,6 +47,7 @@ neoc-vm-lib-hex = { workspace = true }
 neoc-vm-lib-hmac = { workspace = true }
 neoc-vm-lib-html = { workspace = true }
 neoc-vm-lib-http = { workspace = true }
+neoc-vm-lib-websocket = { workspace = true }
 neoc-vm-lib-ini = { workspace = true }
 neoc-vm-lib-json = { workspace = true }
 neoc-vm-lib-log = { workspace = true }

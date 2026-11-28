@@ -30,18 +30,18 @@ const FAR: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 30);
 /// connection ends with: hyper may report a timed-out socket as a closed connection or a cancelled request, and
 /// this says what it really was.
 #[derive(Clone)]
-pub(super) struct Fired {
+pub(crate) struct Fired {
     flag: Arc<AtomicBool>,
     idle: Duration,
 }
 
 impl Fired {
-    pub(super) fn new(idle: Duration) -> Self {
+    pub(crate) fn new(idle: Duration) -> Self {
         Self { flag: Arc::default(), idle }
     }
 
     /// The idle timeout, if it has fired.
-    pub(super) fn after(&self) -> Option<Duration> {
+    pub(crate) fn after(&self) -> Option<Duration> {
         self.flag.load(Ordering::SeqCst).then_some(self.idle)
     }
 
@@ -51,12 +51,12 @@ impl Fired {
 }
 
 /// What a request that hit the idle timeout says, whatever hyper made of it.
-pub(super) fn message(idle: Duration) -> String {
+pub(crate) fn message(idle: Duration) -> String {
     format!("no data for {}s", idle.as_secs_f64())
 }
 
 /// A socket whose reads and writes fail with `TimedOut` after `idle` without progress.
-pub(super) struct IdleIo<T> {
+pub(crate) struct IdleIo<T> {
     inner: T,
     idle: Duration,
     timer: Pin<Box<Sleep>>,
@@ -65,7 +65,7 @@ pub(super) struct IdleIo<T> {
 }
 
 impl<T> IdleIo<T> {
-    pub(super) fn new(inner: T, fired: Fired) -> Self {
+    pub(crate) fn new(inner: T, fired: Fired) -> Self {
         let idle = fired.idle;
         Self { inner, idle, timer: Box::pin(tokio::time::sleep(idle)), armed: false, fired }
     }

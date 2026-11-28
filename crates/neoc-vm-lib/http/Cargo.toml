@@ -16,6 +16,8 @@ path = "src/lib.rs"
 neoc-vm-core = { workspace = true }
 neoc-vm-lib-glob = { workspace = true }
 neoc-vm-std = { workspace = true }
+neoc-vm-lib-json = { workspace = true }
+neoc-net = { workspace = true }
 mlua-ir = { workspace = true }
 # The engine is Luau.
 mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
@@ -27,9 +29,17 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 walkdir = "2"
 tempfile = "3"
 globset = "0.4"
+bytes = "1"
+parking_lot = { workspace = true }
+serde_json = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 neoc-vm-std = { workspace = true, features = ["testing"] }
+# the client's tests run their servers with hyper's
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 
 [lints.cargo]
 missing_lints_inheritance = "allow"

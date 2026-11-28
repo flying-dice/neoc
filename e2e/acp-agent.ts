@@ -9,7 +9,7 @@
  *
  * What the person says picks what the agent does (the scripts a spec gives it). Its sessions outlive a connection, as
  * an agent that keeps them on disk does: a new connection can load one. `?load=no` in the URL makes an agent that
- * cannot load a session.
+ * cannot load a session, and `?initialize=never` one that takes the connection and never answers `initialize`.
  */
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server } from 'node:http'
@@ -220,7 +220,9 @@ export class Connection {
     /** The headers of the WebSocket's upgrade; none on standard streams. */
     readonly headers: IncomingHttpHeaders = {},
     /** Whether it can load a session. */
-    readonly load = true
+    readonly load = true,
+    /** Whether it answers `initialize` at all. */
+    readonly initializes = true
   ) {
     agent.connections.add(this)
     this.wire = wire(
@@ -254,6 +256,7 @@ export class Connection {
     }
     const { id, method, params } = message
     if (method === 'initialize') {
+      if (!this.initializes) return
       return this.#answer(id, {
         protocolVersion: 1,
         agentCapabilities: { loadSession: this.load, promptCapabilities: {}, mcpCapabilities: { http: true, sse: false } },
@@ -351,8 +354,10 @@ export class FakeAgent {
       }
       const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
       stream.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
-      const load = new URL(request.url ?? '/', 'http://x').searchParams.get('load') !== 'no'
-      new Connection(this, (onText, onClose) => new Socket(stream, onText, onClose), request.headers, load)
+      const query = new URL(request.url ?? '/', 'http://x').searchParams
+      const load = query.get('load') !== 'no'
+      const initializes = query.get('initialize') !== 'never'
+      new Connection(this, (onText, onClose) => new Socket(stream, onText, onClose), request.headers, load, initializes)
     })
   }
 

@@ -206,12 +206,18 @@ pub mod json {
 
     /// A JSON object in a document: a live handle. Keys are read in sorted order.
     #[derive(Debug, Clone, LuaObject)]
+    // named by hand: `#[module]` tags only a derive spelt `Object`, and a module that returns a handle (lib:http's
+    // `json()`) would otherwise name it
+    #[shape(module = "lib:json")]
     pub struct Object {
         place: Place,
     }
 
     /// A JSON array in a document: a live handle. Indices count from 1.
     #[derive(Debug, Clone, LuaObject)]
+    // named by hand: `#[module]` tags only a derive spelt `Object`, and a module that returns a handle (lib:http's
+    // `json()`) would otherwise name it
+    #[shape(module = "lib:json")]
     pub struct Array {
         place: Place,
     }

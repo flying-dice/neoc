@@ -19,13 +19,13 @@ local db = app.db
 -- Seconds a chat's connection stays open after its last turn.
 local IDLE = 300
 
--- A chat's connection: the session on it, the agent it is to, how to close it, and the lease its MCP server was
--- given. `stale` when the agent was changed during a turn: the connection is closed when the turn is over. `fresh`
--- while its first turn runs.
+-- A chat's connection: the session on it (once it is started), the agent it is to, how to close it, and the lease
+-- its MCP server was given. `stale` when the agent was changed during a turn: the connection is closed when the turn
+-- is over. `fresh` while its first turn runs.
 export type Live = {
-  conn: vnd_agent_client_protocol_Connection,
+  cx: vnd_agent_client_protocol_ConnectionTo,
   close: () -> (),
-  session: string,
+  session: vnd_agent_client_protocol_ActiveSession?,
   agent: string,
   lease: string?,
   idle: std_task_Task?,
@@ -37,7 +37,7 @@ local lives: { [string]: Live } = {}
 
 local link = {}
 
--- the person's words for a failure of `vnd:agent_client_protocol`
+-- the person's words for a failure of the socket to the agent or of ACP on it
 link.sentence = transport.sentence
 
 -- The chat's connection, when it has one.
@@ -148,15 +148,15 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
   if not opened then
     return nil, problem
   end
-  local conn = opened.conn
+  local cx = opened.cx
   local function quoted(said: string): string
     return transport.quoted(said, opened.errors())
   end
   -- kept at once, so that whatever ends it from here on (a stop, a failure) closes it and ends its lease
-  local made: Live = { conn = conn, close = opened.close, session = "", agent = agent.id, stale = false, fresh = true }
+  local made: Live = { cx = cx, close = opened.close, agent = agent.id, stale = false, fresh = true }
   lives[chat] = made
 
-  local capabilities = conn.agent.agent_capabilities
+  local capabilities = opened.agent.agent_capabilities
   local http = capabilities.mcp_capabilities.http
   local servers, left, unresolved = serversOf(agent, http)
   if not servers then
@@ -178,14 +178,22 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
     then `The agent does not take MCP servers over HTTP, so it was not given {table.concat(left, ", ")}.`
     else nil
 
+  -- a session builder with the session's MCP servers
+  local function with(builder: vnd_agent_client_protocol_SessionBuilder): vnd_agent_client_protocol_SessionBuilder
+    for _, server in servers :: { vnd_agent_client_protocol_McpServer } do
+      builder = builder:with_mcp_server(server)
+    end
+    return builder
+  end
+
   local cwd = opened.cwd
   local row = db:one("select session from threads where id = :id", { id = chat })
   local before: string = if row then row.session else ""
   local afresh: string? = nil
   if before ~= "" and capabilities.load_session then
-    local loaded, failed = conn:load_session { session_id = before, cwd = cwd, mcp_servers = servers }
+    local loaded, failed = with(cx:load_session(before, cwd)):start_session()
     if loaded then
-      made.session = before
+      made.session = loaded
       return made, nil
     end
     -- the agent no longer has the session (it answers with an error): a new one; anything else ends here
@@ -200,7 +208,7 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
     afresh =
       "The agent cannot load an earlier session, so it started a new one: it does not remember the earlier messages."
   end
-  local started, failed = conn:new_session { cwd = cwd, mcp_servers = servers }
+  local started, failed = with(cx:build_session(cwd)):start_session()
   if not started then
     link.drop(chat)
     -- the agent's own refusal names the folder most often: one that is not there on its machine
@@ -209,7 +217,7 @@ function link.attach(chat: string, agent: roster.Agent): (Live?, string?)
     end
     return nil, quoted(link.sentence(failed))
   end
-  made.session = started.session_id
+  made.session = started
   db:exec("update threads set session = :s where id = :id", { s = started.session_id, id = chat })
   if afresh then
     timeline.add(chat, "note", { text = afresh })

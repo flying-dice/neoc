@@ -1,4 +1,37 @@
-//! `lib:http`: a glob-scoped HTTP/1.1 static file server.
+//! `lib:http`: an HTTP client modelled on the clients of Swift (`URLSession`), Node and Bun, and a glob-scoped
+//! static file server.
+//!
+//! ## Client
+//!
+//! ```lua
+//! local http = require("lib:http")
+//! local res = assert(http.fetch("https://example.com/items", { headers = { accept = "application/json" } }))
+//! if res.ok then
+//!     local items = assert(res:json())
+//! end
+//!
+//! -- a body read as it arrives
+//! local log = assert(http.fetch("https://example.com/log"))
+//! for line in assert(log:lines()):items() do print(line) end
+//!
+//! -- a body sent as it is made (chunked)
+//! local upload = assert(http.request("https://example.com/upload", { method = "PUT" }))
+//! assert(upload:write("part one, "))
+//! assert(upload:write("part two"))
+//! local done = assert(upload:finish())
+//!
+//! -- server-sent events, reconnecting with Last-Event-ID
+//! local events = assert(http.events("https://example.com/stream"))
+//! for event in events:items() do print(event.event, event.data) end
+//! ```
+//!
+//! A call that waits yields the calling coroutine; other coroutines run meanwhile. A request keeps to the limits
+//! NEOC-259 decided (`vnd:hyper` documents them): 10 s to connect, 60 s without data, 16 redirects, and 64 MiB for a
+//! body read whole (`text`, `json`). A body read chunk by chunk (`read`, `lines`) has no cap: the script decides what
+//! it keeps. Nothing is decompressed. A response with a 4xx or 5xx status is a response (`ok` is `false`); a failure
+//! is `(nil, err)` with a typed `FetchError` whose `kind` is stable.
+//!
+//! ## Static server
 //!
 //! ```lua
 //! local http = require("lib:http")
@@ -26,6 +59,11 @@
     clippy::must_use_candidate,
     clippy::return_self_not_must_use
 )]
+
+mod client;
+#[cfg(test)]
+mod client_tests;
+mod sse;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -484,15 +522,558 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
 
 #[mlua_ir::module("lib:http")]
 pub mod http {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
+    use std::time::Duration;
 
+    use bytes::Bytes as Chunk;
     use mlua::Lua;
-    use mlua_ir::{LuaError, Options, Shape};
+    use mlua_ir::{Bytes, LuaError, Object, Options, Shape, Stream};
+    use neoc_net::{
+        DEFAULT_CONNECT, DEFAULT_IDLE, DEFAULT_MAX_BODY, DEFAULT_REDIRECTS, Prepared, RequestBody,
+    };
+    use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
     use tokio::net::TcpListener;
+    use tokio::sync::{mpsc, oneshot};
 
+    use super::client::{self, Source, client_options, spawner};
+    pub use super::client::{Event, FetchError, TimeLimit};
     use super::{GlobError, build_index, resolve_glob, serve_loop};
     use neoc_vm_core::lifecycle::Life;
+    use neoc_vm_lib_json::json::Node;
+
+    // -----------------------------------------------------------------------------------------------------------
+    // The client
+    // -----------------------------------------------------------------------------------------------------------
+
+    /// How `fetch` sends a request, and the limits it keeps to.
+    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct FetchOptions {
+        /// The method; a standard one in any case is the standard one (`post` is `POST`).
+        pub method: String,
+        /// Headers to send, by name. A `Content-Length` that is not the body's length is refused, a `Host` replaces
+        /// the built-in one, and a name given twice in any case or a `Transfer-Encoding` is refused.
+        pub headers: BTreeMap<String, String>,
+        /// The body, sent with its length. A request that carries content (`POST`, `PUT`, `PATCH`) with none says
+        /// `Content-Length: 0`.
+        pub body: Option<Body>,
+        /// PEM certificates to trust instead of the platform's, on every hop.
+        pub ca_pem: Option<String>,
+        /// Seconds the TCP connect and the TLS handshake may take.
+        pub connect_timeout: f64,
+        /// Seconds without data moving in either direction; reset whenever any does.
+        pub idle_timeout: f64,
+        /// Seconds the whole request may take, redirects and every read of the body included. No limit when not
+        /// given.
+        pub timeout: Option<f64>,
+        /// Follow 301, 302, 303, 307 and 308 (the rules of `vnd:hyper`); `false` returns the 3xx.
+        pub follow_redirects: bool,
+        /// The most redirects to follow; one more is a `too_many_redirects` error.
+        pub max_redirects: u32,
+        /// The most bytes `text()` and `json()` read, and the longest line `lines()` keeps; past it they fail with
+        /// `too_large`. `read()` is not capped.
+        pub max_body: u64,
+    }
+
+    impl Default for FetchOptions {
+        fn default() -> Self {
+            Self {
+                method: "GET".to_owned(),
+                headers: BTreeMap::new(),
+                body: None,
+                ca_pem: None,
+                connect_timeout: DEFAULT_CONNECT.as_secs_f64(),
+                idle_timeout: DEFAULT_IDLE.as_secs_f64(),
+                timeout: None,
+                follow_redirects: true,
+                max_redirects: DEFAULT_REDIRECTS,
+                max_body: DEFAULT_MAX_BODY,
+            }
+        }
+    }
+
+    /// How `request` sends a request whose body is written as it goes.
+    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct RequestOptions {
+        /// The method; `POST` when not given.
+        pub method: String,
+        /// Headers to send, by name. The body is sent chunked: a `Content-Length` or a `Transfer-Encoding` is
+        /// refused.
+        pub headers: BTreeMap<String, String>,
+        /// PEM certificates to trust instead of the platform's, on every hop.
+        pub ca_pem: Option<String>,
+        /// Seconds the TCP connect and the TLS handshake may take.
+        pub connect_timeout: f64,
+        /// Seconds without data moving in either direction; reset whenever any does. Time the script takes between
+        /// two writes counts: a server waits that long too.
+        pub idle_timeout: f64,
+        /// Seconds the whole request may take, from `request` to the end of the response's body. No limit when
+        /// not given.
+        pub timeout: Option<f64>,
+        /// Follow 301, 302 and 303 (which drop the body); a 307 or 308 asks for the body again, which was sent
+        /// once, and fails. `false` returns the 3xx.
+        pub follow_redirects: bool,
+        /// The most redirects to follow.
+        pub max_redirects: u32,
+        /// The most bytes the response's `text()` and `json()` read, and the longest line its `lines()` keeps.
+        pub max_body: u64,
+    }
+
+    impl Default for RequestOptions {
+        fn default() -> Self {
+            let fetch = FetchOptions::default();
+            Self {
+                method: "POST".to_owned(),
+                headers: fetch.headers,
+                ca_pem: fetch.ca_pem,
+                connect_timeout: fetch.connect_timeout,
+                idle_timeout: fetch.idle_timeout,
+                timeout: fetch.timeout,
+                follow_redirects: fetch.follow_redirects,
+                max_redirects: fetch.max_redirects,
+                max_body: fetch.max_body,
+            }
+        }
+    }
+
+    /// How `events` connects, and reconnects.
+    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct EventsOptions {
+        /// Headers to send, by name (`Authorization`). `Accept: text/event-stream` is sent unless given here.
+        pub headers: BTreeMap<String, String>,
+        /// PEM certificates to trust instead of the platform's.
+        pub ca_pem: Option<String>,
+        /// Seconds each connection's TCP connect and TLS handshake may take.
+        pub connect_timeout: f64,
+        /// Seconds without data before a connection is given up (and opened again). No limit when not given: a
+        /// quiet stream is not a broken one.
+        pub idle_timeout: Option<f64>,
+        /// Open the stream again when it ends or its connection fails, as the HTML standard's `EventSource` does;
+        /// `false` ends the stream with its first connection.
+        pub reconnect: bool,
+        /// Seconds to wait before a reconnection, until the server's `retry:` says otherwise.
+        pub retry: f64,
+        /// The most bytes one event may take while it is read (its lines, until the blank line that ends it); a
+        /// longer one ends the stream with `too_large`.
+        pub max_body: u64,
+    }
+
+    impl Default for EventsOptions {
+        fn default() -> Self {
+            Self {
+                headers: BTreeMap::new(),
+                ca_pem: None,
+                connect_timeout: DEFAULT_CONNECT.as_secs_f64(),
+                idle_timeout: None,
+                reconnect: true,
+                retry: 3.0,
+                max_body: DEFAULT_MAX_BODY,
+            }
+        }
+    }
+
+    /// The idle timeout of a stream that has none: 100 years.
+    const NO_IDLE_LIMIT: f64 = 100.0 * 365.0 * 24.0 * 3600.0;
+
+    /// Send a request and return its response as soon as its head has arrived: the body is read with `read`,
+    /// `lines`, `text` or `json`. A 4xx or 5xx status is a response (`ok` is `false`), not an error.
+    ///
+    /// ```luau
+    /// local res, err = http.fetch("http://127.0.0.1:1/", { connect_timeout = 2 })
+    /// if res == nil then
+    ///     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+    /// end
+    /// ```
+    #[host("Wait")]
+    pub async fn fetch(lua: Lua, url: String, opts: FetchOptions) -> Result<Response, FetchError> {
+        let max_body = opts.max_body;
+        let body = opts.body.map_or(RequestBody::Empty, |body| RequestBody::Full(Chunk::from(body.0)));
+        let options = client_options(
+            opts.headers,
+            opts.ca_pem,
+            opts.connect_timeout,
+            opts.idle_timeout,
+            opts.timeout,
+            opts.follow_redirects,
+            opts.max_redirects,
+            opts.max_body,
+        );
+        let prepared = Prepared::new(&opts.method, url, body, &options)?;
+        let response = neoc_net::send(prepared, &spawner(&lua)).await?;
+        Ok(Response::new(response, max_body))
+    }
+
+    /// Start a request whose body the script writes as it goes (`write`), sent chunked; `finish` ends the body and
+    /// returns the response. Returns at once: the connection is made meanwhile, and the first `write` waits for it.
+    ///
+    /// ```luau
+    /// local upload = assert(http.request("http://127.0.0.1:1/upload", { method = "PUT", connect_timeout = 2 }))
+    /// local wrote, err = upload:write("hello")
+    /// if not wrote then
+    ///     local _, why = upload:finish()
+    ///     assert(why ~= nil)
+    /// end
+    /// ```
+    pub fn request(lua: &Lua, url: String, opts: RequestOptions) -> Result<Request, FetchError> {
+        let max_body = opts.max_body;
+        let options = client_options(
+            opts.headers,
+            opts.ca_pem,
+            opts.connect_timeout,
+            opts.idle_timeout,
+            opts.timeout,
+            opts.follow_redirects,
+            opts.max_redirects,
+            opts.max_body,
+        );
+        let (tx, rx) = mpsc::channel(4);
+        let prepared = Prepared::new(&opts.method, url, RequestBody::Stream(rx), &options)?;
+        let (head_tx, head_rx) = oneshot::channel();
+        let spawn = spawner(lua);
+        let task = Life::of(lua).spawn(async move {
+            let _ = head_tx.send(neoc_net::send(prepared, &spawn).await);
+        });
+        Ok(Request {
+            upload: Arc::new(Upload {
+                body: Mutex::new(Some(tx)),
+                head: tokio::sync::Mutex::new(Some(head_rx)),
+                task: task.abort_handle(),
+                max_body,
+            }),
+        })
+    }
+
+    /// Connect to a stream of server-sent events (`text/event-stream`) and return its events, read with `next()`
+    /// or `items()`. The first connection is made before this returns: a refusal of it is this call's error. Later
+    /// ones reconnect on their own (`reconnect`); `close()` ends the stream.
+    ///
+    /// ```luau
+    /// local events, err = http.events("http://127.0.0.1:1/stream", { connect_timeout = 2 })
+    /// if events == nil then
+    ///     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
+    /// end
+    /// ```
+    #[host("Wait")]
+    pub async fn events(
+        lua: Lua,
+        url: String,
+        opts: EventsOptions,
+    ) -> Result<Stream<Event, FetchError>, FetchError> {
+        let retry = Duration::try_from_secs_f64(opts.retry).map_err(|_| {
+            FetchError::invalid_input(format!("retry must be a finite number of seconds, got {}", opts.retry))
+        })?;
+        let options = client_options(
+            opts.headers,
+            opts.ca_pem,
+            opts.connect_timeout,
+            opts.idle_timeout.unwrap_or(NO_IDLE_LIMIT),
+            None,
+            true,
+            DEFAULT_REDIRECTS,
+            opts.max_body,
+        );
+        let source = Source { url, options, reconnect: opts.reconnect, retry, spawn: spawner(&lua) };
+        Ok(Stream::new(source.connect().await?))
+    }
+
+    /// The bytes of a body as a field of a record: a Lua string, whatever its bytes. Declared `string`.
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct Body(pub Vec<u8>);
+
+    impl Shape for Body {
+        fn shape(_: &mut mlua_ir::Registry) -> mlua_ir::ir::Ty {
+            mlua_ir::ir::Ty::String
+        }
+    }
+
+    impl Serialize for Body {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Body {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct BodyVisitor;
+
+            impl serde::de::Visitor<'_> for BodyVisitor {
+                type Value = Body;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a string")
+                }
+
+                fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Body, E> {
+                    Ok(Body(text.as_bytes().to_vec()))
+                }
+
+                fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Body, E> {
+                    Ok(Body(bytes.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_any(BodyVisitor)
+        }
+    }
+
+    /// What a response's body is: still to read, being read as lines, or done with.
+    enum BodyState {
+        Unread(neoc_net::Body),
+        Lines,
+        Done,
+    }
+
+    /// What a response's handles share.
+    struct Head {
+        status: u16,
+        headers: Vec<(String, String)>,
+        url: String,
+        redirected: bool,
+        max_body: u64,
+        body: tokio::sync::Mutex<BodyState>,
+        /// Set by `cancel()`: every read of the body, waiting or to come, watches it.
+        cancel_tx: tokio::sync::watch::Sender<bool>,
+        cancel: client::Cancel,
+        /// Closes the body's connection, wherever the body is.
+        closer: tokio::task::AbortHandle,
+    }
+
+    /// A response: its status and headers, and its body, read once. Copies of the handle are the same response.
+    #[derive(Clone, Object)]
+    pub struct Response {
+        head: Arc<Head>,
+    }
+
+    impl Response {
+        fn new(response: neoc_net::Response, max_body: u64) -> Self {
+            let (cancel_tx, cancel) = client::Cancel::new();
+            let closer = response.body.closer();
+            Self {
+                head: Arc::new(Head {
+                    status: response.status,
+                    headers: response.headers,
+                    url: response.url,
+                    redirected: response.redirected,
+                    max_body,
+                    body: tokio::sync::Mutex::new(BodyState::Unread(response.body)),
+                    cancel_tx,
+                    cancel,
+                    closer,
+                }),
+            }
+        }
+
+        /// The rest of `body`, at most `max_body` bytes, unless the response is cancelled first.
+        async fn whole(&self, body: neoc_net::Body) -> Result<Vec<u8>, FetchError> {
+            let max_body = self.head.max_body;
+            self.head.cancel.or_cancelled(async move { Ok(body.read_all(max_body).await?) }).await
+        }
+
+        /// The body, for a read that takes the rest of it; `None` when it was read already.
+        async fn take(&self) -> Result<Option<neoc_net::Body>, FetchError> {
+            let mut state = self.head.body.lock().await;
+            if self.head.cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
+            match std::mem::replace(&mut *state, BodyState::Done) {
+                BodyState::Unread(body) => Ok(Some(body)),
+                BodyState::Lines => {
+                    *state = BodyState::Lines;
+                    Err(being_read())
+                }
+                BodyState::Done => Ok(None),
+            }
+        }
+    }
+
+    fn being_read() -> FetchError {
+        FetchError::invalid_input("the body is being read by lines()")
+    }
+
+    #[mlua_ir::object]
+    impl Response {
+        /// The status code.
+        #[get]
+        pub fn status(&self) -> u16 {
+            self.head.status
+        }
+
+        /// The status is 2xx.
+        #[get]
+        pub fn ok(&self) -> bool {
+            (200..300).contains(&self.head.status)
+        }
+
+        /// One value under each lower-case name. A header sent more than once is joined with `", "`, `set-cookie`
+        /// with `"\n"`, and bytes that are not UTF-8 become U+FFFD. Built on every read.
+        #[get]
+        pub fn headers(&self) -> BTreeMap<String, String> {
+            self.head.headers.iter().cloned().collect()
+        }
+
+        /// The URL the response came from: the last one of the redirect chain.
+        #[get]
+        pub fn url(&self) -> String {
+            self.head.url.clone()
+        }
+
+        /// A redirect was followed on the way.
+        #[get]
+        pub fn redirected(&self) -> bool {
+            self.head.redirected
+        }
+
+        /// A header by name, in any case; `nil` when the response has none.
+        pub fn header(&self, name: String) -> Option<String> {
+            self.head
+                .headers
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(&name))
+                .map(|(_, value)| value.clone())
+        }
+
+        /// The next piece of the body as it arrived: `(chunk, nil)`, `(nil, nil)` at the end, or `(nil, err)`.
+        /// A read waiting when the response is cancelled ends with `cancelled`.
+        pub async fn read(&self) -> Result<Option<Bytes>, FetchError> {
+            let cancel = &self.head.cancel;
+            // a read that waits behind this one gets the lock once a cancel ends this one
+            let mut state = self.head.body.lock().await;
+            if cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
+            let body = match &mut *state {
+                BodyState::Unread(body) => body,
+                BodyState::Lines => return Err(being_read()),
+                BodyState::Done => return Ok(None),
+            };
+            match cancel.or_cancelled(async { body.chunk().await.map_err(FetchError::from) }).await {
+                Ok(Some(chunk)) => Ok(Some(Bytes(chunk.to_vec()))),
+                Ok(None) => {
+                    *state = BodyState::Done;
+                    Ok(None)
+                }
+                Err(e) => {
+                    // the body goes, and its connection with it
+                    *state = BodyState::Done;
+                    Err(e)
+                }
+            }
+        }
+
+        /// The rest of the body, as one string (whatever its bytes), at most `max_body` bytes. `""` once read.
+        /// One waiting when the response is cancelled ends with `cancelled`.
+        pub async fn text(&self) -> Result<Bytes, FetchError> {
+            match self.take().await? {
+                Some(body) => Ok(Bytes(self.whole(body).await?)),
+                None => Ok(Bytes(Vec::new())),
+            }
+        }
+
+        /// The rest of the body parsed as JSON: a `lib:json` handle for an object or an array, a Lua value for a
+        /// string, a number or a boolean, `nil` for `null`. A body that is not JSON is `bad_response`.
+        pub async fn json(&self) -> Result<Option<Node>, FetchError> {
+            let bytes = match self.take().await? {
+                Some(body) => self.whole(body).await?,
+                None => return Err(FetchError::invalid_input("the body was read already")),
+            };
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|e| FetchError::BadResponse { reason: format!("the body is not JSON: {e}") })?;
+            Ok(Node::root(value))
+        }
+
+        /// The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
+        /// `items()`. Bytes that are not UTF-8 become U+FFFD.
+        /// Cancelled, the stream gives `cancelled` and ends. A line longer than `max_body` ends it with `too_large`,
+        /// and the connection is closed.
+        pub async fn lines(&self) -> Result<Stream<String, FetchError>, FetchError> {
+            let mut state = self.head.body.lock().await;
+            if self.head.cancel.is_cancelled() {
+                *state = BodyState::Done;
+            }
+            match std::mem::replace(&mut *state, BodyState::Lines) {
+                BodyState::Unread(body) => {
+                    Ok(Stream::new(client::lines(body, self.head.cancel.clone(), self.head.max_body)))
+                }
+                BodyState::Lines => Err(being_read()),
+                BodyState::Done => {
+                    *state = BodyState::Done;
+                    Err(FetchError::invalid_input("the body was read already"))
+                }
+            }
+        }
+
+        /// Stop reading the body: its connection is closed. A read that waits on it (`read`, `text`, `json`, a
+        /// `lines()` stream) ends with `cancelled`; a read after it gives the end. It does not wait for those reads.
+        pub fn cancel(&self) {
+            // the readers learn of it first, so that a closed connection reads as `cancelled`, not as lost
+            self.head.cancel_tx.send_replace(true);
+            self.head.closer.abort();
+            if let Ok(mut state) = self.head.body.try_lock()
+                && matches!(*state, BodyState::Unread(_))
+            {
+                *state = BodyState::Done;
+            }
+        }
+    }
+
+    /// What a request's handles share. Dropped, it stops the request.
+    struct Upload {
+        body: Mutex<Option<mpsc::Sender<Result<Chunk, std::io::Error>>>>,
+        head: tokio::sync::Mutex<Option<oneshot::Receiver<Result<neoc_net::Response, neoc_net::NetError>>>>,
+        task: tokio::task::AbortHandle,
+        max_body: u64,
+    }
+
+    impl Drop for Upload {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    /// A request whose body is being written. Copies of the handle are the same request.
+    #[derive(Clone, Object)]
+    pub struct Request {
+        upload: Arc<Upload>,
+    }
+
+    #[mlua_ir::object]
+    impl Request {
+        /// Send `chunk` as the next piece of the body. Waits while the server is not reading. `(nil, err)` when the
+        /// request has failed or ended (`finish` gives why) or was finished.
+        pub async fn write(&self, chunk: Bytes) -> Result<bool, FetchError> {
+            let Some(body) = self.upload.body.lock().clone() else {
+                return Err(FetchError::invalid_input("the body was finished"));
+            };
+            if chunk.0.is_empty() {
+                return Ok(true);
+            }
+            body.send(Ok(Chunk::from(chunk.0))).await.map_err(|_| FetchError::ConnectionLost {
+                reason: "the request ended before the body was sent; finish() says why".to_owned(),
+            })?;
+            Ok(true)
+        }
+
+        /// End the body and wait for the response: the response as `fetch` returns it, or why the request failed.
+        /// Once only.
+        pub async fn finish(&self) -> Result<Response, FetchError> {
+            drop(self.upload.body.lock().take());
+            let Some(head) = self.upload.head.lock().await.take() else {
+                return Err(FetchError::invalid_input("the request was finished already"));
+            };
+            let response = head
+                .await
+                .map_err(|_| FetchError::ConnectionLost { reason: "the request was stopped".to_owned() })??;
+            Ok(Response::new(response, self.upload.max_body))
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------------------------
+    // The static server
+    // -----------------------------------------------------------------------------------------------------------
 
     /// Where `serve_static` listens.
     #[derive(Debug, Clone, Serialize, Deserialize, Options)]

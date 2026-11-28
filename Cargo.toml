@@ -3,7 +3,7 @@ resolver = "3"
 # The runtime's `lib:*` and `vnd:*` modules are one crate each, in `crates/neoc-vm-lib/<module>` and `crates/neoc-vm-vnd/<module>`:
 # those folders hold crates and are not crates, so `crates/*` would fail on them, and the patterns name what is directly
 # under `crates/`.
-members = ["crates/neoc", "crates/neoc-vm", "crates/neoc-vm-core", "crates/neoc-vm-std", "crates/vos-*", "crates/neoc-vm-lib/*", "crates/neoc-vm-vnd/*"]
+members = ["crates/neoc", "crates/neoc-net", "crates/neoc-vm", "crates/neoc-vm-core", "crates/neoc-vm-std", "crates/vos-*", "crates/neoc-vm-lib/*", "crates/neoc-vm-vnd/*"]
 
 [workspace.package]
 # neoc's crates and vos's crates share the repository. The neoc crates are edition 2024; the vos crates
@@ -17,6 +17,7 @@ publish = false
 
 # One place for versions. Crates say `tokio = { workspace = true }` and add features only if they need more.
 [workspace.dependencies]
+neoc-net = { path = "crates/neoc-net" }
 neoc-vm = { path = "crates/neoc-vm" }
 neoc-vm-core = { path = "crates/neoc-vm-core" }
 neoc-vm-std = { path = "crates/neoc-vm-std" }
@@ -54,6 +55,7 @@ neoc-vm-lib-html = { path = "crates/neoc-vm-lib/html" }
 neoc-vm-lib-http = { path = "crates/neoc-vm-lib/http" }
 neoc-vm-lib-ini = { path = "crates/neoc-vm-lib/ini" }
 neoc-vm-lib-json = { path = "crates/neoc-vm-lib/json" }
+neoc-vm-lib-websocket = { path = "crates/neoc-vm-lib/websocket" }
 neoc-vm-lib-log = { path = "crates/neoc-vm-lib/log" }
 neoc-vm-lib-mime = { path = "crates/neoc-vm-lib/mime" }
 neoc-vm-lib-pkey = { path = "crates/neoc-vm-lib/pkey" }

@@ -22,7 +22,7 @@
 //!   that answers one byte every 59 s is never idle: `timeout` bounds the whole request, redirects and body
 //!   included, and has no default.
 //! - **It follows redirects**, 16 at most, with the rewriting and cross-origin rules of async-http-client
-//!   (`follow_redirects`, `max_redirects`; see `client::redirect`). Credentials do not follow a redirect to another
+//!   (`follow_redirects`, `max_redirects`; see `neoc-net`). Credentials do not follow a redirect to another
 //!   origin. Nothing else is checked about where a redirect goes: it may lead from `https` to `http`, to a host on
 //!   the local network or to the machine itself, because neoc has no permissions; an app that fetches a URL
 //!   someone else chose and must not reach those checks `resp.url` against its own rule, or sets
@@ -131,22 +131,9 @@ impl<'de> serde::Deserialize<'de> for Body {
     }
 }
 
-/// A request's or a response's `HeaderMap` as the Lua surface has it: one entry per name (lower case). A header
-/// sent more than once is one value, the values joined with `", "` in the order they came, as the Fetch standard's
-/// `Headers.get` does, except `set-cookie`, whose values are joined with `"\n"`: a cookie may hold a comma
-/// (`Expires`), a field value never holds a line feed, so splitting on `"\n"` gives each cookie back. A value that
-/// is not UTF-8 is decoded with replacement characters. Nothing is dropped. Shared by the server and the client.
-pub(crate) fn collect_headers(headers: &::hyper::HeaderMap) -> Vec<(String, String)> {
-    headers
-        .keys()
-        .map(|name| {
-            let values: Vec<_> =
-                headers.get_all(name).iter().map(|v| String::from_utf8_lossy(v.as_bytes())).collect();
-            let separator = if name == ::hyper::header::SET_COOKIE { "\n" } else { ", " };
-            (name.as_str().to_owned(), values.join(separator))
-        })
-        .collect()
-}
+/// A request's or a response's `HeaderMap` as the Lua surface has it: one entry per name, lower case (see
+/// `neoc_net::collect_headers`). Shared by the server and the client.
+pub(crate) use neoc_net::collect_headers;
 
 /// What a request a handler is given holds. Nothing is made a Lua value until the handler asks for it.
 struct RequestParts {

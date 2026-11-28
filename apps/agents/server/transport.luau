@@ -2,12 +2,13 @@
 -- How a chat reaches its agent, by the agent's type: a connection that speaks the Agent Client Protocol (ACP), and
 -- what goes with it. link.luau keeps it for the chat, and starts the chat's session on it.
 --
--- - `remote`: a WebSocket to the agent's address (`acp.connect`), with its bearer token.
+-- - `remote`: a WebSocket to the agent's address (`lib:websocket`), with its bearer token, as the connection's
+--   lines (`acp.Lines.new`).
 -- - `container`: the chat's container (sandbox.luau), made or started, its standard streams attached through Docker.
 -- - `program`: the agent's command, started on this machine (`std:process`) in the agent's folder, its standard
 --   streams piped.
 --
--- A container's and a program's standard streams are ACP a JSON-RPC message a line (`acp.connect_lines`): what the
+-- A container's and a program's standard streams are ACP a JSON-RPC message a line (`acp.Lines.from_functions`): what the
 -- agent writes to its output is split into lines, and what it writes to its errors is kept (the last few kilobytes)
 -- to say why it would not connect. Closing the connection stops the container, or closes the program's input and,
 -- after a short while, kills it.
@@ -18,10 +19,12 @@ local roster = require("./roster")
 local sandbox = require("./sandbox")
 local strings = require("lib:text")
 local task = require("std:task")
+local time = require("std:time")
+local websocket = require("lib:websocket")
 
 -- Who this app says it is to an agent (`initialize`): the app and its version (package.json).
-local CLIENT = { name = "vos", version = "0.7.1" }
--- Seconds a connection to a remote agent and its answer to `initialize` may take together.
+local CLIENT = { name = "vos", version = "0.7.2" }
+-- Seconds the WebSocket to a remote agent may take to open and its answer to `initialize` together.
 local CONNECT_TIMEOUT = 30
 -- Seconds the agent's answer to `initialize` may take when its program has just started.
 local START_TIMEOUT = 60
@@ -36,11 +39,13 @@ local GRACE = 3
 -- This machine, from inside a container (sandbox.luau maps it).
 local DOCKER_HOST = "host.docker.internal"
 
--- A chat's connection to its agent. `close` ends it and what goes with it (the container stops, the program ends).
--- `host` is this machine's address as the agent reaches it, for the vos MCP server (nil: the host's own default).
--- `cwd` is the folder its sessions work in. `errors` is the end of what the agent wrote to its errors.
+-- A chat's connection to its agent, initialized: `agent` is the agent's answer to `initialize`. `close` ends it and
+-- what goes with it (the socket closes, the container stops, the program ends). `host` is this machine's address as
+-- the agent reaches it, for the vos MCP server (nil: the host's own default). `cwd` is the folder its sessions work
+-- in. `errors` is the end of what the agent wrote to its errors.
 export type Opened = {
-  conn: vnd_agent_client_protocol_Connection,
+  cx: vnd_agent_client_protocol_ConnectionTo,
+  agent: vnd_agent_client_protocol_InitializeResponse,
   close: () -> (),
   host: string?,
   cwd: string,
@@ -49,13 +54,14 @@ export type Opened = {
 
 local transport = {}
 
--- the person's words for a failure of `vnd:agent_client_protocol`
-function transport.sentence(err: vnd_agent_client_protocol_AcpError?): string
+-- the person's words for a failure of the socket to a remote agent (`lib:websocket`) or of ACP
+-- (`vnd:agent_client_protocol`)
+function transport.sentence(err: (vnd_agent_client_protocol_AcpError | lib_websocket_WebSocketError)?): string
   if not err then
     return "The agent did not answer."
   end
   local kind, message = err.kind, err.message
-  if kind == "connect" then
+  if kind == "connect" or kind == "tls" or kind == "connection_lost" then
     return `The agent could not be reached: {message}`
   elseif kind == "status" then
     return `The agent's address refused the connection: {message}`
@@ -124,27 +130,74 @@ local function nothing(): string
   return ""
 end
 
+-- ACP over `lines`, initialized: the connection and the agent's answer. An agent that does not answer `initialize`
+-- within `timeout` seconds is disconnected, and the person told that it did not answer within `limit` seconds (the
+-- whole limit, of which `timeout` is what is left). Otherwise the problem, in the person's words.
+local function initialized(
+  lines: vnd_agent_client_protocol_Lines,
+  timeout: number,
+  limit: number
+): (
+  vnd_agent_client_protocol_ConnectionTo?,
+  vnd_agent_client_protocol_InitializeResponse?,
+  string?
+)
+  local cx, broken = acp.Client.v1():name(CLIENT.name):connect(lines)
+  if not cx then
+    return nil, nil, transport.sentence(broken)
+  end
+  local connection = cx
+  local answered, late = false, false
+  local deadline = task.delay(timeout, function()
+    if not answered then
+      late = true
+      connection:close()
+    end
+  end)
+  local agent, failed = connection:send_request { protocol_version = 1, client_info = CLIENT }
+  answered = true
+  task.cancel(deadline)
+  if not agent then
+    connection:close()
+    if late then
+      return nil, nil, `The agent did not answer in time: it was not ready within {limit}s.`
+    end
+    return nil, nil, transport.sentence(failed)
+  end
+  return connection, agent, nil
+end
+
 -- A remote agent: a WebSocket to its address.
 local function remote(_chat: string, agent: roster.Agent): (Opened?, string?)
   local token, problem = roster.token(agent)
   if problem then
     return nil, problem
   end
-  local conn, refused = acp.connect(agent.url, {
+  -- one deadline for the socket and `initialize` together
+  local started = time.Instant.now()
+  local ws, refused = websocket.connect(agent.url, {
     headers = if token then { Authorization = `Bearer {token}` } else nil,
-    timeout = CONNECT_TIMEOUT,
-    client_info = CLIENT,
+    connect_timeout = CONNECT_TIMEOUT,
   })
-  if not conn then
+  if not ws then
     return nil, transport.sentence(refused)
   end
-  local opened = conn
+  local socket = ws
+  local left = math.max(CONNECT_TIMEOUT - started:elapsed():as_secs_f64(), 0.001)
+  local cx, answer, failed = initialized((assert(acp.Lines.new(socket))), left, CONNECT_TIMEOUT)
+  if not cx or not answer then
+    socket:close()
+    return nil, failed
+  end
+  local opened = cx
   return {
-    conn = opened,
+    cx = opened,
+    agent = answer,
     close = function()
       opened:close()
+      socket:close()
     end,
-    host = opened.local_address,
+    host = socket.local_address,
     cwd = agent.folder,
     errors = nothing,
   },
@@ -198,17 +251,16 @@ local function container(chat: string, agent: roster.Agent): (Opened?, string?)
     task.spawn(sandbox.stop, chat)
     attach:close_input()
   end
-  local conn, refused = acp.connect_lines({ read = read, write = write }, {
-    timeout = START_TIMEOUT,
-    client_info = CLIENT,
-  })
-  if not conn then
+  local cx, answer, refused =
+    initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT, START_TIMEOUT)
+  if not cx or not answer then
     close()
-    return nil, transport.quoted(transport.sentence(refused), errors.text())
+    return nil, transport.quoted(refused or "The agent did not answer.", errors.text())
   end
-  local opened = conn
+  local opened = cx
   return {
-    conn = opened,
+    cx = opened,
+    agent = answer,
     close = function()
       opened:close()
       close()
@@ -295,17 +347,16 @@ local function program(_chat: string, agent: roster.Agent): (Opened?, string?)
       running:kill()
     end)
   end
-  local conn, failed = acp.connect_lines({ read = read, write = write }, {
-    timeout = START_TIMEOUT,
-    client_info = CLIENT,
-  })
-  if not conn then
+  local cx, answer, failed =
+    initialized(acp.Lines.from_functions { read = read, write = write }, START_TIMEOUT, START_TIMEOUT)
+  if not cx or not answer then
     close()
-    return nil, transport.quoted(transport.sentence(failed), errors.text())
+    return nil, transport.quoted(failed or "The agent did not answer.", errors.text())
   end
-  local opened = conn
+  local opened = cx
   return {
-    conn = opened,
+    cx = opened,
+    agent = answer,
     close = function()
       opened:close()
       close()

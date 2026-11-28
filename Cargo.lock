@@ -3410,6 +3410,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-net"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite 0.30.0",
+ "tower-service",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "neoc-vm"
 version = "0.1.0"
 dependencies = [
@@ -3449,6 +3470,7 @@ dependencies = [
  "neoc-vm-lib-unicode",
  "neoc-vm-lib-url",
  "neoc-vm-lib-vcr",
+ "neoc-vm-lib-websocket",
  "neoc-vm-std",
  "neoc-vm-vnd-agent_client_protocol",
  "neoc-vm-vnd-bollard",
@@ -3702,13 +3724,22 @@ dependencies = [
 name = "neoc-vm-lib-http"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "futures-util",
  "globset",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "mlua",
  "mlua-ir",
+ "neoc-net",
  "neoc-vm-core",
  "neoc-vm-lib-glob",
+ "neoc-vm-lib-json",
  "neoc-vm-std",
+ "parking_lot 0.12.5",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -3943,6 +3974,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoc-vm-lib-websocket"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mlua",
+ "mlua-ir",
+ "neoc-net",
+ "neoc-vm-core",
+ "neoc-vm-std",
+ "parking_lot 0.12.5",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
 name = "neoc-vm-std"
 version = "0.1.0"
 dependencies = [
@@ -3972,13 +4020,13 @@ dependencies = [
  "mlua",
  "mlua-ir",
  "neoc-vm-core",
+ "neoc-vm-lib-websocket",
+ "neoc-vm-std",
  "parking_lot 0.12.5",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite 0.30.0",
 ]
 
@@ -4015,18 +4063,17 @@ dependencies = [
  "hyper-util",
  "mlua",
  "mlua-ir",
+ "neoc-net",
  "neoc-vm-core",
  "neoc-vm-lib-json",
  "neoc-vm-std",
  "parking_lot 0.13.0",
  "rcgen",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
- "tower-service",
  "tracing",
  "url",
 ]

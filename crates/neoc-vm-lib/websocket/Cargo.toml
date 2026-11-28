@@ -1,0 +1,32 @@
+[package]
+name = "neoc-vm-lib-websocket"
+description = "lib:websocket"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "neoc_vm_lib_websocket"
+path = "src/lib.rs"
+
+[dependencies]
+neoc-vm-core = { workspace = true }
+neoc-net = { workspace = true }
+mlua-ir = { workspace = true }
+# The engine is Luau.
+mlua = { version = "0.12", features = ["luau", "async", "send", "serialize", "macros"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+parking_lot = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+tokio-tungstenite = { workspace = true }
+
+[dev-dependencies]
+neoc-vm-std = { workspace = true, features = ["testing"] }
+
+[lints.cargo]
+missing_lints_inheritance = "allow"

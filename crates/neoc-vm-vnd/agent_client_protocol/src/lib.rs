@@ -1,32 +1,44 @@
-//! The Agent Client Protocol, client side: `vnd:agent_client_protocol`, over the official ACP SDK
+//! The Agent Client Protocol, client side: `vnd:agent_client_protocol`, mirroring the official ACP SDK
 //! (`agent-client-protocol`, its protocol v1 client role).
 //!
 //! ACP (<https://agentclientprotocol.com>, version 1) is how a program in front of a coding agent talks to it: the
 //! program opens a session, sends a prompt, and the agent streams what it does (`session/update`), asks before it
-//! acts (`session/request_permission`), and answers the prompt when the turn is over. This module connects to an
-//! agent over a WebSocket, one JSON-RPC message per text frame, as `acpd` serves it (`GET /acp`, `initialize` first,
-//! one agent process per socket), and hands the socket to the SDK as its `Lines` transport: the SDK does the
-//! JSON-RPC, the protocol guard and the routing of each session's messages. `connect_lines` hands the SDK the
-//! script's own `read` and `write` functions as that transport instead, one message per call (an agent on a
-//! container's standard streams, say), and everything after the transport is the same.
+//! acts (`session/request_permission`), and answers the prompt when the turn is over.
+//!
+//! The module mirrors the SDK's names: `Client.v1()` is the SDK's builder for a v1 client, `Lines` its transport of
+//! one JSON-RPC message per line, the connection a `ConnectionTo` with `send_request` and `send_notification`,
+//! `build_session` and `load_session` the SDK's session builders, and a session an `ActiveSession` whose
+//! `read_update` gives each `SessionMessage` the agent sends for it, in order. The transport comes from `lib:websocket`
+//! (one message per text frame, as `acpd` serves `GET /acp`), or from the script's own `read` and `write` functions
+//! (`Lines.from_functions`: an agent on a container's or a program's standard streams): this module dials nothing.
 //!
 //! ```lua
 //! local acp = require("vnd:agent_client_protocol")
-//! local conn = assert(acp.connect("ws://127.0.0.1:3000/acp"))
-//! local session = assert(conn:new_session({ cwd = "/home/me/project", mcp_servers = {} }))
-//! local turn = assert(conn:prompt({ session_id = session.session_id, prompt = { { type = "text", text = "hi" } } }))
+//! local websocket = require("lib:websocket")
+//! local ws = assert(websocket.connect("ws://127.0.0.1:3000/acp"))
+//! local cx = assert(acp.Client.v1():name("my-client"):connect(acp.Lines.new(ws)))
+//! local init = assert(cx:send_request({ protocol_version = 1 }))
+//! local session = assert(cx:build_session("/home/me/project"):start_session())
+//! assert(session:send_prompt("hi"))
 //! while true do
-//!     local event = assert(turn:next())     -- an error ends the turn
-//!     if event.type == "done" then break end
-//!     if event.type == "update" and event.update.type == "agent_message_chunk" then
-//!         local content = event.update.content
+//!     local message = assert(session:read_update())  -- an error the agent answers the prompt with is `(nil, err)`
+//!     if message.type == "prompt_response" then break end
+//!     if message.type == "update" and message.update.type == "agent_message_chunk" then
+//!         local content = message.update.content
 //!         if content.type == "text" then io.write(content.text) end
-//!     elseif event.type == "permission" then
-//!         turn:respond_permission(event.id, { outcome = "selected", option_id = event.options[1].option_id })
+//!     elseif message.type == "request_permission" then
+//!         session:respond_permission(message.id, { outcome = "selected", option_id = message.options[1].option_id })
 //!     end
 //! end
-//! conn:close()
+//! cx:close()
+//! ws:close()
 //! ```
+//!
+//! Where the module and the SDK differ, Luau is why. The SDK's `connect_with(transport, main_fn)` runs a closure with
+//! the connection; a script holds the connection as a value instead (`connect`), which closes with `close()` or when
+//! every handle to it is gone. A request the agent sends for a session (`session/request_permission`) is answered by
+//! its id (`respond_permission`) rather than through the SDK's `Responder`, which a record cannot hold. A loaded
+//! session's replayed history is dropped before `start_session` returns.
 //!
 //! The SDK's schema types are serde types whose tagged enums serde-reflection cannot trace, so `Foreign` cannot
 //! type them: the tables a script reads and writes are declared here, with the schema's fields under snake_case
@@ -99,23 +111,18 @@ fn lenient_items<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result
 
 #[mlua_ir::module("vnd:agent_client_protocol")]
 pub mod agent_client_protocol {
-    use std::collections::BTreeMap;
     use std::sync::Arc;
-    use std::time::Duration;
 
     use mlua::Lua;
     use mlua_ir::ir::{Field, Ty, TypeBody};
-    use mlua_ir::{
-        Callback, Definition, FromLuaArg, LuaError, Object, Options, Registry, Shape, name_params,
-    };
+    use mlua_ir::{Callback, Definition, FromLuaArg, LuaError, Object, Registry, Shape, name_params};
+    use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
 
     use super::{Data, lenient, lenient_items, list};
     use crate::link;
     use neoc_vm_core::lifecycle::Life;
-
-    /// How long `connect` may take, unless `timeout` says otherwise.
-    const DEFAULT_TIMEOUT_SECS: f64 = 30.0;
+    use neoc_vm_lib_websocket::websocket::WebSocket;
 
     // -----------------------------------------------------------------------------------------------------------
     // What the agent says of itself
@@ -714,17 +721,18 @@ pub mod agent_client_protocol {
         Cancelled,
     }
 
-    /// What a turn gives, told apart by its `type`.
+    /// What a session's `read_update` gives, told apart by its `type`: the SDK's `SessionMessage`.
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Shape)]
     #[serde(tag = "type", rename_all = "snake_case")]
-    pub enum TurnEvent {
-        /// The agent did or said something.
+    pub enum SessionMessage {
+        /// A `session/update`: the agent did or said something.
         Update {
             /// What.
             update: SessionUpdate,
         },
-        /// The agent asks before it goes on: answer with `respond_permission(id, outcome)`.
-        Permission {
+        /// A `session/request_permission`: the agent asks before it goes on. Answer it with
+        /// `respond_permission(id, outcome)`.
+        RequestPermission {
             /// The request: what `respond_permission` names.
             id: String,
             /// The tool call it is about.
@@ -732,58 +740,46 @@ pub mod agent_client_protocol {
             /// The answers the agent offers.
             options: Vec<PermissionOption>,
         },
-        /// The agent answered the prompt: the turn is over.
-        Done {
+        /// The answer to a prompt: that turn is over.
+        PromptResponse {
             /// Why it ended.
             stop_reason: StopReason,
         },
     }
 
-    /// What `prompt` is given.
+    /// What `send_request` sends: `initialize`, the first request of a connection.
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Shape)]
-    pub struct PromptRequest {
+    pub struct InitializeRequest {
+        /// The protocol version the client speaks: 1. The SDK refuses an agent that answers with another.
+        pub protocol_version: u16,
+        /// Who the client is; the builder's `name` and neoc's version when not given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub client_info: Option<Implementation>,
+    }
+
+    /// What `send_notification` sends: `session/cancel`, which asks the agent to stop the session's turn.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Shape)]
+    pub struct CancelNotification {
         /// The session.
         pub session_id: String,
-        /// What the person says.
-        pub prompt: Vec<ContentBlock>,
     }
 
     // -----------------------------------------------------------------------------------------------------------
     // Errors
     // -----------------------------------------------------------------------------------------------------------
 
-    /// The start of an error response's body, for the message: `: <text>`, or nothing.
-    fn said(body: &str) -> String {
-        if body.is_empty() { String::new() } else { format!(": {body}") }
-    }
-
     /// Why a call failed. `reason` is for a person or a log.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error, LuaError)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum AcpError {
-        /// An option, a header, the URL or an argument was refused before anything was sent.
+        /// An argument was refused before anything was sent, or a call came at the wrong time (a socket a transport
+        /// took already, a permission request that is not waiting).
         #[error("{reason}")]
         InvalidInput {
             /// What was refused, and why.
             reason: String,
         },
-        /// No connection could be made: the name did not resolve, the host refused or could not be reached, or the
-        /// TLS handshake failed.
-        #[error("{reason}")]
-        Connect {
-            /// What the transport said.
-            reason: String,
-        },
-        /// The endpoint answered the WebSocket upgrade with an HTTP status instead (`403` for an `Origin` acpd
-        /// refuses, `404` for an agent it does not have).
-        #[error("the endpoint answered {code}{}", said(.body))]
-        Status {
-            /// The status code.
-            code: u16,
-            /// The start of the response's body, as text.
-            body: String,
-        },
-        /// The endpoint is not an ACP agent: the WebSocket upgrade went wrong, or an answer is not what ACP v1 says.
+        /// The peer is not an ACP v1 agent: an answer is not what ACP v1 says.
         #[error("{reason}")]
         Protocol {
             /// What is wrong.
@@ -804,84 +800,80 @@ pub mod agent_client_protocol {
             /// Who closed it, or what broke it.
             reason: String,
         },
-        /// `connect` took longer than its `timeout`.
-        #[error("{reason}")]
-        TimedOut {
-            /// The limit.
-            reason: String,
-        },
     }
 
     // -----------------------------------------------------------------------------------------------------------
     // The connection
     // -----------------------------------------------------------------------------------------------------------
 
-    /// How `connect` connects.
-    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct ConnectOptions {
-        /// Headers to add to the WebSocket upgrade (`Authorization` for an endpoint that wants a token). No `Origin`
-        /// is sent unless given here.
-        pub headers: BTreeMap<String, String>,
-        /// Seconds the connection and the agent's answer to `initialize` may take together.
-        pub timeout: f64,
-        /// Who the client says it is in `initialize`; `neoc` and its version when not given.
-        pub client_info: Option<Implementation>,
-    }
+    /// The roles of a connection, as the SDK names them: `Client.v1()` starts a v1 client.
+    #[derive(Clone, Copy, Object)]
+    pub struct Client;
 
-    impl Default for ConnectOptions {
-        fn default() -> Self {
-            Self { headers: BTreeMap::new(), timeout: DEFAULT_TIMEOUT_SECS, client_info: None }
+    #[mlua_ir::object]
+    impl Client {
+        /// The builder of a protocol v1 client connection.
+        pub fn v1() -> Builder {
+            Builder { name: None }
         }
     }
 
-    /// Connect to the ACP agent at `url` (`ws://` or `wss://`) and initialize it: the WebSocket upgrade, then
-    /// `initialize` with protocol version 1 and no client capabilities (no file system, no terminal). Returns once
-    /// the agent has answered with protocol version 1; the SDK refuses any other version (an `rpc` error, -32600).
-    ///
-    /// The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
-    /// are collected, and when the script stops. Closing it is how an `acpd` agent process is stopped.
-    ///
-    /// ```luau
-    /// local conn, err = agent_client_protocol.connect("ws://127.0.0.1:1/acp", { timeout = 2 })
-    /// if conn == nil then
-    ///     assert(err ~= nil and (err.kind == "connect" or err.kind == "timed_out"))
-    /// end
-    /// ```
-    pub async fn connect(lua: Lua, url: String, opts: ConnectOptions) -> Result<Connection, AcpError> {
-        let limit = time_limit(opts.timeout)?;
-        let client_info = client_info_or_ours(opts.client_info);
-        let life = Life::of(&lua);
-        let opened = link::connect(&url, opts.headers, &client_info, &life);
-        let (link, agent, local_address) =
-            tokio::time::timeout(limit, opened).await.map_err(|_| AcpError::TimedOut {
-                reason: format!("{url} did not connect and initialize within {}s", opts.timeout),
-            })??;
-        Ok(Connection { link: Arc::new(link), agent: Arc::new(agent), local_address })
+    /// A client connection being set up: the SDK's `Builder`.
+    #[derive(Clone, Object)]
+    pub struct Builder {
+        name: Option<String>,
     }
 
-    /// `timeout` as the limit it sets: a positive number of seconds.
-    fn time_limit(timeout: f64) -> Result<Duration, AcpError> {
-        Duration::try_from_secs_f64(timeout).ok().filter(|limit| !limit.is_zero()).ok_or_else(|| {
-            AcpError::InvalidInput {
-                reason: format!("timeout must be a positive number of seconds, got {timeout}"),
-            }
-        })
+    #[mlua_ir::object]
+    impl Builder {
+        /// The same builder, with a name: the connection's, and the client's in `initialize` unless the request
+        /// says who it is.
+        pub fn name(&self, name: String) -> Builder {
+            Builder { name: Some(name) }
+        }
+
+        /// Start the connection over `transport`: the Luau form of the SDK's `connect_with`. The connection runs
+        /// until `close()`, until every handle to it is gone, until the agent hangs up, or until the script stops.
+        /// Nothing is sent: the first request is `send_request(InitializeRequest)`.
+        pub async fn connect(&self, lua: Lua, transport: Lines) -> Result<ConnectionTo, AcpError> {
+            let lines = transport.lines.lock().take().ok_or_else(|| AcpError::InvalidInput {
+                reason: "the transport was used already".to_owned(),
+            })?;
+            let name = self.name.clone().unwrap_or_else(|| "neoc".to_owned());
+            let link = link::Link::start(&Life::of(&lua), lines, name).ready().await?;
+            Ok(ConnectionTo { link: Arc::new(link) })
+        }
     }
 
-    /// Who the client says it is: `client_info`, or `neoc` and its version.
-    fn client_info_or_ours(client_info: Option<Implementation>) -> Implementation {
-        client_info.unwrap_or_else(|| Implementation {
-            name: "neoc".to_owned(),
-            title: None,
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-        })
+    /// A transport of one JSON-RPC message per line: the SDK's `Lines`.
+    #[derive(Clone, Object)]
+    pub struct Lines {
+        lines: Arc<Mutex<Option<neoc_vm_lib_websocket::Lines>>>,
     }
 
-    /// What `connect_lines` speaks ACP over: two functions of the script's own, one JSON-RPC message per call.
-    /// `read()` returns the agent's next message, or `nil` once the agent's side has closed; `write(line)` sends one
-    /// message to the agent. Both may wait (read a container's output, write to its input), and each is called as a
-    /// call of its own while the connection runs. An error either raises ends the connection.
+    #[mlua_ir::object]
+    impl Lines {
+        /// The lines of a `lib:websocket` socket: one per text frame, as `acpd` serves `/acp`. The socket is the
+        /// transport's from then on: the script's `receive` on it gives `closed`, and `close` still closes it.
+        pub fn new(socket: WebSocket) -> Result<Lines, AcpError> {
+            let lines = socket.take_lines().ok_or_else(|| AcpError::InvalidInput {
+                reason: "the socket is being read, or a transport has it already".to_owned(),
+            })?;
+            Ok(Lines { lines: Arc::new(Mutex::new(Some(lines))) })
+        }
+
+        /// The lines a script carries itself: `read()` gives the agent's next message (`nil` once its side closed)
+        /// and `write(line)` sends one (an agent on a container's or a program's standard streams, say). Both may
+        /// wait, and each runs as a call of its own while the connection does; an error either raises ends the
+        /// connection. Closing the connection stops calling them: the script closes what they read and write.
+        pub fn from_functions(lua: &Lua, transport: LineTransport) -> Lines {
+            let lines = link::script_lines(lua, transport.read, transport.write);
+            Lines { lines: Arc::new(Mutex::new(Some(lines))) }
+        }
+    }
+
+    /// What `Lines.from_functions` carries messages with: two functions of the script's own, one JSON-RPC message
+    /// per call.
     pub struct LineTransport {
         read: mlua::Function,
         write: mlua::Function,
@@ -906,8 +898,8 @@ pub mod agent_client_protocol {
                     };
                     Definition {
                         doc: Some(
-                            "What `connect_lines` speaks ACP over: two functions of the script's own, one JSON-RPC \
-                             message per call. Both may wait."
+                            "What `Lines.from_functions` carries messages with: two functions of the script's own, \
+                             one JSON-RPC message per call. Both may wait."
                                 .to_owned(),
                         ),
                         body: TypeBody::Record {
@@ -956,135 +948,134 @@ pub mod agent_client_protocol {
         }
     }
 
-    /// How `connect_lines` connects: `connect`'s options without the headers, which there is no upgrade for.
-    #[derive(Debug, Clone, Serialize, Deserialize, Options)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct ConnectLinesOptions {
-        /// Seconds the agent's answer to `initialize` may take.
-        pub timeout: f64,
-        /// Who the client says it is in `initialize`; `neoc` and its version when not given.
-        pub client_info: Option<Implementation>,
-    }
-
-    impl Default for ConnectLinesOptions {
-        fn default() -> Self {
-            Self { timeout: DEFAULT_TIMEOUT_SECS, client_info: None }
-        }
-    }
-
-    /// Speak ACP to an agent over the script's own lines (`transport`), and initialize it as `connect` does: the
-    /// script carries each JSON-RPC message (an agent that runs as a container's program, attached with
-    /// `vnd:bollard`, say). Returns the same connection as `connect`, whose `local_address` is `""`. The agent's side
-    /// closing before it answers `initialize` (`read` returns `nil`) is `closed`.
-    ///
-    /// The connection belongs to the script: it closes with `close()`, when the connection and every turn of it
-    /// are collected, and when the script stops. Closing it stops calling `read` and `write`; the script closes what
-    /// they read and write itself.
-    ///
-    /// ```luau
-    /// local sent = {}
-    /// local conn, err = agent_client_protocol.connect_lines({
-    ///     read = function(): string? return nil end, -- the agent's side is closed
-    ///     write = function(line: string) table.insert(sent, line) end,
-    /// })
-    /// assert(conn == nil and err ~= nil and err.kind == "closed")
-    /// ```
-    pub async fn connect_lines(
-        lua: Lua,
-        transport: LineTransport,
-        opts: ConnectLinesOptions,
-    ) -> Result<Connection, AcpError> {
-        let limit = time_limit(opts.timeout)?;
-        let client_info = client_info_or_ours(opts.client_info);
-        let life = Life::of(&lua);
-        let lines = link::script_lines(&lua, transport.read, transport.write);
-        let (link, agent) = tokio::time::timeout(limit, link::run(lines, &client_info, &life))
-            .await
-            .map_err(|_| AcpError::TimedOut {
-                reason: format!("the agent did not initialize within {}s", opts.timeout),
-            })??;
-        Ok(Connection { link: Arc::new(link), agent: Arc::new(agent), local_address: String::new() })
-    }
-
-    /// A connection to an agent. Copies of the handle are the same connection.
+    /// A connection to an agent: the SDK's `ConnectionTo<Agent>`. Copies of the handle are the same connection.
     #[derive(Clone, Object)]
-    pub struct Connection {
+    pub struct ConnectionTo {
         link: Arc<link::Link>,
-        agent: Arc<InitializeResponse>,
-        local_address: String,
     }
 
     #[mlua_ir::object]
-    impl Connection {
-        /// The agent's answer to `initialize`: its version, what it can do, its name.
-        #[get]
-        pub fn agent(&self) -> InitializeResponse {
-            (*self.agent).clone()
+    impl ConnectionTo {
+        /// Send `initialize` and wait for the agent's answer: its version, what it can do, its name. The client
+        /// offers no file system and no terminal.
+        pub async fn send_request(&self, request: InitializeRequest) -> Result<InitializeResponse, AcpError> {
+            self.link.initialize(request).await
         }
 
-        /// The IP address of this end of the connection: the address this machine has on the way to the agent
-        /// (`127.0.0.1` for an agent on this machine); `""` for a connection over the script's lines.
-        #[get]
-        pub fn local_address(&self) -> String {
-            self.local_address.clone()
+        /// Send `session/cancel`. The session's permission requests that wait are answered `cancelled` first, as
+        /// ACP asks; the agent then answers the prompt with `stop_reason = "cancelled"` when it has stopped.
+        pub fn send_notification(&self, notification: CancelNotification) -> Result<bool, AcpError> {
+            self.link.cancel(&notification.session_id).map(|()| true)
         }
 
-        /// Start a session (`session/new`) in `cwd` on the agent's machine, with the MCP servers it connects to.
-        /// What the agent sends for the session from then on is read by its turns: an update sent between two
-        /// turns (the commands a new session has, say) is given by the next one.
-        pub async fn new_session(&self, params: NewSessionRequest) -> Result<NewSessionResponse, AcpError> {
-            self.link.new_session(&params).await
+        /// A new session (`session/new`) in `cwd`, an absolute path on the agent's machine.
+        pub fn build_session(&self, cwd: String) -> SessionBuilder {
+            SessionBuilder { link: Arc::clone(&self.link), cwd, load: None, mcp_servers: Vec::new() }
         }
 
-        /// Load a session the agent had before (`session/load`), when its `agent_capabilities.load_session` says
-        /// it can. The agent replays the session's history before it answers; that history is dropped here.
-        pub async fn load_session(
-            &self,
-            params: LoadSessionRequest,
-        ) -> Result<LoadSessionResponse, AcpError> {
-            self.link.load_session(&params).await
+        /// A session the agent had before (`session/load`), when its `agent_capabilities.load_session` says it
+        /// can.
+        pub fn load_session(&self, session_id: String, cwd: String) -> SessionBuilder {
+            SessionBuilder {
+                link: Arc::clone(&self.link),
+                cwd,
+                load: Some(session_id),
+                mcp_servers: Vec::new(),
+            }
         }
 
-        /// Send a prompt (`session/prompt`) to a session this connection started or loaded, and return the turn at
-        /// once: its `next()` gives what the agent does until it answers. A session has one turn at a time: a
-        /// prompt while one is going is `invalid_input`.
-        pub fn prompt(&self, params: PromptRequest) -> Result<Turn, AcpError> {
-            Ok(Turn { turn: Arc::new(self.link.prompt(&params)?) })
-        }
-
-        /// Ask the agent to stop the session's turn (`session/cancel`). The permission requests the turn is
-        /// waiting on are answered `cancelled` first, as ACP asks; the turn then ends with a `done` event whose
-        /// `stop_reason` is `cancelled`, when the agent has stopped.
-        pub fn cancel(&self, session_id: String) -> Result<(), AcpError> {
-            self.link.cancel(&session_id)
-        }
-
-        /// Close the connection. Calls in flight and turns end with a `closed` error. Closing again does nothing.
+        /// Close the connection. Calls in flight end with a `closed` error. Closing again does nothing. The socket
+        /// closes when its own last handle goes, or with its `close()`.
         pub fn close(&self) {
             self.link.close();
         }
     }
 
-    /// A prompt's turn: what the agent does until it answers the prompt.
+    /// A session being set up: the SDK's `SessionBuilder`.
     #[derive(Clone, Object)]
-    pub struct Turn {
-        turn: Arc<link::TurnState>,
+    pub struct SessionBuilder {
+        link: Arc<link::Link>,
+        cwd: String,
+        load: Option<String>,
+        mcp_servers: Vec<McpServer>,
     }
 
     #[mlua_ir::object]
-    impl Turn {
-        /// The next event of the turn: `(event, nil)`; `(nil, nil)` once the `done` event has been given; or
-        /// `(nil, err)` when the turn failed (the agent answered the prompt with an error, or the connection
-        /// closed), after which nothing follows.
-        pub async fn next(&self) -> Result<Option<TurnEvent>, AcpError> {
-            self.turn.next().await
+    impl SessionBuilder {
+        /// The same builder, with one more MCP server for the agent to connect to in the session.
+        pub fn with_mcp_server(&self, server: McpServer) -> SessionBuilder {
+            let mut next = self.clone();
+            next.mcp_servers.push(server);
+            next
         }
 
-        /// Answer the permission request `id` (a `permission` event's `id`) with `outcome`: one of the options the
-        /// agent offered, or `cancelled`. A request is answered once; an `id` that is not waiting is
+        /// Send `session/new` (or `session/load`) and wait for the agent's answer: the session. What the agent sends
+        /// for it from then on is read with `read_update`.
+        pub async fn start_session(&self) -> Result<ActiveSession, AcpError> {
+            let session = match &self.load {
+                None => {
+                    let request =
+                        NewSessionRequest { cwd: self.cwd.clone(), mcp_servers: self.mcp_servers.clone() };
+                    link::Link::new_session(&self.link, &request).await?
+                }
+                Some(session_id) => {
+                    let request = LoadSessionRequest {
+                        session_id: session_id.clone(),
+                        cwd: self.cwd.clone(),
+                        mcp_servers: self.mcp_servers.clone(),
+                    };
+                    link::Link::load_session(&self.link, &request).await?
+                }
+            };
+            Ok(ActiveSession { session: Arc::new(session) })
+        }
+    }
+
+    /// A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session, and it keeps
+    /// its connection open while it is held, whatever became of the `ConnectionTo` it was started on; when the last
+    /// one goes, the permission requests that wait are answered `cancelled`.
+    #[derive(Clone, Object)]
+    pub struct ActiveSession {
+        session: Arc<link::Session>,
+    }
+
+    #[mlua_ir::object]
+    impl ActiveSession {
+        /// The session's id.
+        #[get]
+        pub fn session_id(&self) -> String {
+            self.session.id.clone()
+        }
+
+        /// The session's modes, when the agent has modes.
+        #[get]
+        pub fn modes(&self) -> Option<SessionModeState> {
+            self.session.modes.clone()
+        }
+
+        /// Send `text` as a prompt (`session/prompt`). What the agent does is read with `read_update`, up to the
+        /// `prompt_response` that ends the turn.
+        pub fn send_prompt(&self, text: String) -> Result<bool, AcpError> {
+            self.session.send_prompt(vec![ContentBlock::Text { text }]).map(|()| true)
+        }
+
+        /// Send a prompt made of content blocks. Content other than text and resource links needs the matching
+        /// entry of the agent's `prompt_capabilities`.
+        pub fn send_prompt_blocks(&self, prompt: Vec<ContentBlock>) -> Result<bool, AcpError> {
+            self.session.send_prompt(prompt).map(|()| true)
+        }
+
+        /// The next message the agent sent for the session, in order: `(message, nil)`, or `(nil, err)` when the
+        /// agent answered a prompt with an error (the session goes on) or the connection closed.
+        pub async fn read_update(&self) -> Result<SessionMessage, AcpError> {
+            self.session.read_update().await
+        }
+
+        /// Answer the permission request `id` (a `request_permission` message's `id`) with `outcome`: one of the
+        /// options the agent offered, or `cancelled`. A request is answered once; an `id` that is not waiting is
         /// `invalid_input`.
-        pub fn respond_permission(&self, id: String, outcome: PermissionOutcome) -> Result<(), AcpError> {
-            self.turn.respond(&id, &outcome)
+        pub fn respond_permission(&self, id: String, outcome: PermissionOutcome) -> Result<bool, AcpError> {
+            self.session.respond(&id, &outcome).map(|()| true)
         }
     }
 }

@@ -1,0 +1,18 @@
+{
+  "failures": [
+    "invalid_url",
+    "invalid_url",
+    "invalid_input",
+    "invalid_input"
+  ],
+  "forbidden": 403,
+  "status": [
+    404,
+    "no such socket",
+    "lib:websocket.connect: status: the server answered 404: no such socket"
+  ],
+  "wrong": [
+    "runtime error: lib:websocket.connect: argument #1 'url': expected a string, got nil",
+    "runtime error: lib:websocket.connect: argument #2 'opts': unknown field `origin`, expected one of headers, protocols, ca_pem, connect_timeout"
+  ]
+}

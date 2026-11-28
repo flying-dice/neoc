@@ -38,6 +38,9 @@ const INTERNAL: Record<string, string[]> = {
   // (the one place a script engine is wired to a port), so the VM stays swappable. The `neoc` CLI is its other client.
   // (The VM crates are not listed one by one: `VM_CRATE` below says which they are, and what they may depend on.)
   neoc: ['neoc-vm'],
+  // The network stack under the VM's HTTP and WebSocket modules (hyper, rustls, tungstenite): no Lua and no vos in it,
+  // so a VM crate may use it and it uses no workspace crate.
+  'neoc-net': [],
   'vos-sqlite': ['vos-domain', 'vos-application'],
   'vos-fetch': ['vos-application'],
   'vos-mcp': ['vos-domain', 'vos-application'],
@@ -61,7 +64,7 @@ const INTERNAL: Record<string, string[]> = {
  * may depend on one another, and on no vos crate. A new module crate is placed by its name.
  */
 const VM_CRATE = /^neoc-vm(-.+)?$/
-const VM_ALLOWED: string[] = []
+const VM_ALLOWED: string[] = ['neoc-net']
 
 /** Crates whose EXTERNAL dependencies are restricted too (the pure core). */
 const CORE_EXTERNAL: Record<string, Set<string>> = {
