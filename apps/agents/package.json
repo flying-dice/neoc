@@ -2,7 +2,7 @@
   "name": "@vos-apps/agents",
   "private": true,
   "type": "module",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Chat with agents over the Agent Client Protocol: one reached at its address, one run in a container of each chat's own, or one run as a program on this machine. Write to it, and watch what it answers and does.",
   "vos": {
     "title": "Agents",

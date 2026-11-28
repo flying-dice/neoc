@@ -20,7 +20,7 @@ local strings = require("lib:text")
 local task = require("std:task")
 
 -- Who this app says it is to an agent (`initialize`): the app and its version (package.json).
-local CLIENT = { name = "vos", version = "0.7.0" }
+local CLIENT = { name = "vos", version = "0.7.1" }
 -- Seconds a connection to a remote agent and its answer to `initialize` may take together.
 local CONNECT_TIMEOUT = 30
 -- Seconds the agent's answer to `initialize` may take when its program has just started.
