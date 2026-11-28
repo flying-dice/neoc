@@ -38,8 +38,8 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 6px 0;
+    gap: 8px;
+    padding: 4px 0;
   }
   .status {
     margin: 0;
@@ -59,7 +59,7 @@
   }
   pre {
     margin: 0;
-    padding: 8px 10px;
+    padding: 8px 12px;
     max-height: 220px;
     overflow: auto;
     white-space: pre-wrap;
@@ -67,7 +67,7 @@
     border-radius: var(--radius-sm);
     background: var(--fill-quaternary);
     color: var(--label);
+    font: var(--type-footnote);
     font-family: var(--font-mono);
-    font-size: 12px;
   }
 </style>

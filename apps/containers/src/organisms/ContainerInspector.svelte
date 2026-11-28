@@ -92,12 +92,14 @@
 
 <section class="inspector" aria-label={container.name}>
   <header class="bar">
-    <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <ui-button variant="plain" size="small" hit label="Back to the containers" onclick={onback} data-testid="containers-inspector-back">
-      <ui-icon slot="icon" name="chevron.left"></ui-icon>
-      Containers
-    </ui-button>
+    <div class="lead">
+      <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <ui-button variant="plain" size="small" hit label="Back to the containers" onclick={onback} data-testid="containers-inspector-back">
+        <ui-icon slot="icon" name="chevron.left"></ui-icon>
+        Containers
+      </ui-button>
+    </div>
     <div class="heading">
       <h1 data-testid="containers-inspector-name">{container.name}</h1>
       <p class="status" data-testid="containers-inspector-status">
@@ -105,6 +107,7 @@
         {container.status || stateLabel(container.state)}
       </p>
     </div>
+    <div class="trail"></div>
   </header>
   <div class="actions">
     {#if busy}
@@ -233,21 +236,26 @@
     display: flex;
     flex-direction: column;
   }
+  /* the title is centred in the bar, the way back before it */
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, 2fr) minmax(max-content, 1fr);
     align-items: center;
     gap: 8px;
     min-height: 44px;
     padding: 0 16px 8px;
   }
+  .lead {
+    display: flex;
+    justify-content: flex-start;
+  }
   .heading {
-    flex: 1;
     min-width: 0;
+    text-align: center;
   }
   h1 {
     margin: 0;
-    font: var(--type-title3);
-    font-weight: 700;
+    font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -256,7 +264,8 @@
     margin: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    gap: 8px;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }
@@ -280,7 +289,7 @@
   }
   .note {
     margin: 0;
-    padding: 0 16px 6px;
+    padding: 0 16px 8px;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }
@@ -288,7 +297,7 @@
     flex: 1;
     min-height: 0;
     margin: 0 12px 12px;
-    padding: 10px 12px;
+    padding: 12px;
     overflow: auto;
     border-radius: var(--radius-md);
     background: var(--fill-quaternary);
@@ -328,8 +337,7 @@
     gap: 8px;
   }
   .hidden {
-    color: var(--label-tertiary);
-    letter-spacing: 0.1em;
+    color: var(--label-secondary);
   }
   dd {
     margin: 2px 0 0;

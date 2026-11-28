@@ -36,6 +36,7 @@
 
 <section class="list" aria-label={title}>
   <header class="bar">
+    <div class="lead">
     {#if back}
       <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -44,18 +45,21 @@
         Stacks
       </ui-button>
     {/if}
+    </div>
     <div class="heading">
       <h1 data-testid="containers-title">{title}</h1>
       <p class="summary" data-testid="containers-summary">
         {runningSummary(containers)}{#if stack?.folder}{' · '}<span class="folder">{stack.folder}</span>{/if}
       </p>
     </div>
-    {#if onnew}
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <ui-button variant="plain" square hit label="New container" onclick={onnew} data-testid="containers-new">
-        <ui-icon slot="icon" name="plus"></ui-icon>
-      </ui-button>
-    {/if}
+    <div class="trail">
+      {#if onnew}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <ui-button variant="plain" square hit label="New container" title="New container" onclick={onnew} data-testid="containers-new">
+          <ui-icon slot="icon" name="plus"></ui-icon>
+        </ui-button>
+      {/if}
+    </div>
   </header>
   {#if stack}
     <div class="actions" data-testid="containers-stack-actions">
@@ -148,21 +152,30 @@
     display: flex;
     flex-direction: column;
   }
+  /* the title is centred in the bar, the way back before it and the new button after it */
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, 2fr) minmax(max-content, 1fr);
     align-items: center;
     gap: 8px;
     min-height: 44px;
     padding: 0 16px 8px;
   }
+  .lead {
+    display: flex;
+    justify-content: flex-start;
+  }
+  .trail {
+    display: flex;
+    justify-content: flex-end;
+  }
   .heading {
-    flex: 1;
     min-width: 0;
+    text-align: center;
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
