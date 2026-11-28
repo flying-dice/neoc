@@ -41,25 +41,47 @@ function images.list(): agents_ImageChoice
   return { images = out, problem = "" }
 end
 
+-- The name an image goes by, whichever way it is written: with its tag (`latest` when it names none), and without
+-- the registry a short name stands for. Docker lists `sysadmin:latest`, Podman lists the same image as
+-- `docker.io/library/sysadmin:latest` (and one it built itself as `localhost/...`): all three are one name here.
+function images.canonical(name: string): string
+  local full = images.tagOf(name)
+  local first, rest = string.match(full, "^([^/]+)/(.+)$")
+  if first == "localhost" and rest then
+    return rest
+  end
+  if first == "docker.io" and rest then
+    return string.match(rest, "^library/([^/]+)$") or rest
+  end
+  return full
+end
+
 -- Whether Docker has the image of that name. Nothing, and why, when Docker could not be asked.
 function images.present(name: string): (boolean?, string?)
   local api, unreachable = docker.reader()
   if not api then
     return nil, unreachable
   end
-  local found, err = api:list_images { filters = { reference = { name } } }
+  -- every image, not a `reference` filter: Podman does not match a short name against the name it lists
+  local found, err = api:list_images()
   if not found then
     return nil, docker.sentence(err)
   end
-  local wanted = images.tagOf(name)
+  local wanted = images.canonical(name)
+  local digest = string.find(name, "@", 1, true) ~= nil
   for _, image in found do
-    if wanted == name and string.find(name, "@", 1, true) then
-      return true, nil
-    end
     local tags: { string } = image.RepoTags or {}
     for _, tag in tags do
-      if tag == wanted or tag == name then
+      if images.canonical(tag) == wanted then
         return true, nil
+      end
+    end
+    if digest then
+      local digests: { string } = image.RepoDigests or {}
+      for _, known in digests do
+        if images.canonical(known) == wanted then
+          return true, nil
+        end
       end
     end
   end
