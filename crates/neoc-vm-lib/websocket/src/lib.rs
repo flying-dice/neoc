@@ -296,7 +296,8 @@ pub mod websocket {
     impl WebSocket {
         /// Take the socket over as a transport of text lines, one per text message (`vnd:agent_client_protocol`
         /// hands it to the ACP SDK this way). From then on the script's `receive` gives `closed`; `send` and
-        /// `close` still work. `None` when a transport has it already.
+        /// `close` still work, and the socket closes when the transport lets go of the lines. `None` when a
+        /// transport has it already, or the script's `receive` is waiting.
         pub fn take_lines(&self) -> Option<Lines> {
             Inner::take_lines(&self.inner)
         }

@@ -1,43 +1,32 @@
-//! The connection under `vnd:agent_client_protocol`: the WebSocket, and the SDK's v1 client running over it.
+//! The connection under `vnd:agent_client_protocol`: the SDK's v1 client running over a transport of lines.
 //!
-//! The socket is opened here (the upgrade's status, this end's address and the headers are ours to see and set)
-//! and handed to the SDK as its `Lines` transport, one text frame per JSON-RPC message. The SDK's connection runs on
-//! a task of the engine's [`Life`] until the script closes it, every handle to it is gone, or the agent hangs up.
+//! The transport is a `lib:websocket` socket's lines, one text frame per JSON-RPC message. The SDK's connection runs
+//! on a task of the engine's [`Life`] until the script closes it, every handle to it is gone, or the agent hangs up.
 //! Each session the script starts or loads is an SDK `ActiveSession`, which receives what the agent sends for that
-//! session (its updates, its permission requests, the answer to a prompt) on a stream of its own; a turn reads it.
+//! session (its updates, its permission requests, the answer to a prompt) on a stream of its own; `read_update` reads
+//! it.
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use agent_client_protocol::v1::{ActiveSession, ConnectionTo, SessionMessage, schema};
 use agent_client_protocol::{Agent, Client, Dispatch, Lines};
-use futures_util::{FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures_util::FutureExt;
 use mlua_ir::ir::{Field, Ty, TypeBody};
 use mlua_ir::{Registry, Shape};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio::sync::oneshot;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::{self, Message, http};
 
 use crate::Data;
 use crate::agent_client_protocol::{
-    AcpError, Implementation, InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PermissionOutcome, PromptRequest, SessionUpdate, StopReason,
-    ToolCallUpdate, TurnEvent,
+    AcpError, ContentBlock, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOutcome,
+    SessionMessage as Message, SessionModeState, SessionUpdate, StopReason, ToolCallUpdate,
 };
 use neoc_vm_core::lifecycle::Life;
-
-/// How much of an error response's body is quoted in the error, in characters.
-const ERROR_BODY: usize = 2048;
-
-trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
 fn invalid(reason: String) -> AcpError {
     AcpError::InvalidInput { reason }
@@ -209,154 +198,18 @@ fn cancelled() -> schema::RequestPermissionResponse {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Connecting
-// ---------------------------------------------------------------------------------------------------------------
-
-/// The TLS client settings of `vnd:hyper`: rustls over the `ring` provider, the certificate checked by the platform
-/// verifier.
-fn tls_connector() -> Result<tokio_rustls::TlsConnector, AcpError> {
-    use rustls_platform_verifier::BuilderVerifierExt;
-    use tokio_rustls::rustls::{self, ClientConfig};
-
-    let failed = |e: String| AcpError::Connect { reason: format!("TLS: {e}") };
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| failed(e.to_string()))?
-        .with_platform_verifier()
-        .map_err(|e| failed(format!("the platform certificate verifier is unavailable: {e}")))?
-        .with_no_client_auth();
-    Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
-}
-
-/// What a failed WebSocket handshake is to a script.
-fn handshake_error(e: tungstenite::Error) -> AcpError {
-    match e {
-        tungstenite::Error::Http(response) => {
-            let body = response.body().as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-            let body: String = body.chars().take(ERROR_BODY).collect();
-            AcpError::Status { code: response.status().as_u16(), body: body.trim().to_owned() }
-        }
-        tungstenite::Error::Io(e) => AcpError::Connect { reason: e.to_string() },
-        other => AcpError::Protocol { reason: format!("the WebSocket upgrade failed: {other}") },
-    }
-}
-
-/// The WebSocket to `url`, with `headers` on the upgrade, as the SDK's `Lines`; and this end's IP address.
-async fn open(
-    url: &str,
-    headers: BTreeMap<String, String>,
-) -> Result<
-    (
-        Lines<
-            impl futures_util::Sink<String, Error = std::io::Error> + Send + 'static,
-            impl futures_util::Stream<Item = std::io::Result<String>> + Send + 'static,
-        >,
-        String,
-    ),
-    AcpError,
-> {
-    let mut upgrade = url.into_client_request().map_err(|e| invalid(format!("{url}: {e}")))?;
-    let uri = upgrade.uri().clone();
-    let tls = match uri.scheme_str() {
-        Some("ws") => false,
-        Some("wss") => true,
-        _ => return Err(invalid(format!("{url}: not a ws:// or wss:// URL"))),
-    };
-    let host = uri.host().ok_or_else(|| invalid(format!("{url}: no host")))?;
-    let host = host.trim_start_matches('[').trim_end_matches(']').to_owned();
-    let port = uri.port_u16().unwrap_or(if tls { 443 } else { 80 });
-    for (name, value) in headers {
-        let header = http::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|e| invalid(format!("header `{name}`: {e}")))?;
-        let value =
-            http::HeaderValue::from_str(&value).map_err(|e| invalid(format!("header `{name}`: {e}")))?;
-        upgrade.headers_mut().insert(header, value);
-    }
-
-    let connect = |e: std::io::Error| AcpError::Connect { reason: format!("{host}:{port}: {e}") };
-    let tcp = TcpStream::connect((host.as_str(), port)).await.map_err(connect)?;
-    // small messages, one at a time: each goes out as it is written
-    tcp.set_nodelay(true).map_err(connect)?;
-    let local_address = tcp.local_addr().map_err(connect)?.ip().to_string();
-    let io: Box<dyn Io> = if tls {
-        let name = tokio_rustls::rustls::pki_types::ServerName::try_from(host.clone())
-            .map_err(|e| invalid(format!("{url}: {e}")))?;
-        let stream = tls_connector()?
-            .connect(name, tcp)
-            .await
-            .map_err(|e| AcpError::Connect { reason: format!("TLS handshake with {host}: {e}") })?;
-        Box::new(stream)
-    } else {
-        Box::new(tcp)
-    };
-    let (socket, _) = tokio_tungstenite::client_async(upgrade, io).await.map_err(handshake_error)?;
-
-    let (sink, stream) = socket.split();
-    let outgoing = sink
-        .sink_map_err(std::io::Error::other)
-        .with(|line: String| std::future::ready(Ok::<_, std::io::Error>(Message::text(line))));
-    // a text frame is one message; the agent's close frame is the end, binary frames are ignored, and tungstenite
-    // answers pings itself
-    let incoming = stream
-        .map_err(std::io::Error::other)
-        .try_take_while(|message| std::future::ready(Ok(!message.is_close())))
-        .try_filter_map(|message| {
-            std::future::ready(Ok(match message {
-                Message::Text(text) => Some(text.as_str().to_owned()),
-                _ => None,
-            }))
-        });
-    Ok((Lines::new(outgoing, incoming), local_address))
-}
-
-/// Connect to `url` and initialize the agent: the connection, the agent's answer and this end's address.
-pub(crate) async fn connect(
-    url: &str,
-    headers: BTreeMap<String, String>,
-    client_info: &Implementation,
-    life: &Life,
-) -> Result<(Link, InitializeResponse, String), AcpError> {
-    let (transport, local_address) = open(url, headers).await?;
-    let (connection_tx, connection_rx) = oneshot::channel();
-    let (close_tx, close_rx) = oneshot::channel::<()>();
-    life.spawn(Client.v1().connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-        let _ = connection_tx.send(cx.clone());
-        // until the script closes the connection (or lets go of every handle to it), or the agent hangs up
-        futures_util::future::select(close_rx, std::pin::pin!(cx.incoming_closed())).await;
-        Ok(())
-    }));
-    let cx = connection_rx
-        .await
-        .map_err(|_| AcpError::Closed { reason: "the connection is closed".to_owned() })?;
-    let link = Link { cx, close: Mutex::new(Some(close_tx)), sessions: Mutex::new(HashMap::new()) };
-
-    let initialize: schema::InitializeRequest = to_sdk(&json!({
-        "protocol_version": 1,
-        "client_capabilities": { "fs": { "read_text_file": false, "write_text_file": false }, "terminal": false },
-        "client_info": client_info,
-    }))?;
-    let answer = link.cx.send_request(initialize).block_task().await.map_err(|e| failure(&link.cx, &e))?;
-    // another version is refused by the SDK's protocol guard (-32600)
-    let agent: InitializeResponse = from_sdk(&answer, "the answer to initialize")?;
-    Ok((link, agent, local_address))
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // The connection and its sessions
 // ---------------------------------------------------------------------------------------------------------------
 
 /// A session this connection started or loaded.
-struct Session {
+pub(crate) struct Session {
+    pub(crate) id: String,
+    pub(crate) modes: Option<SessionModeState>,
+    connection: ConnectionTo<Agent>,
     /// The SDK's session: what the agent sends for it, in order.
     active: tokio::sync::Mutex<ActiveSession<'static, Agent>>,
-    /// A turn is going.
-    busy: AtomicBool,
-    /// Turns the script let go of before their answer came: what is read until that many answers have been is
-    /// theirs, and dropped.
-    abandoned: AtomicU32,
-    /// The permission requests the turn has been given and not answered.
-    permissions: Permissions,
+    /// The permission requests given to the script and not answered.
+    permissions: Arc<Permissions>,
 }
 
 /// Permission requests given to the script and not answered yet, by the id the script names them by.
@@ -371,30 +224,22 @@ fn cancel_all(permissions: &Permissions) {
     }
 }
 
-impl Session {
-    fn new(active: ActiveSession<'static, Agent>) -> Self {
-        Self {
-            active: tokio::sync::Mutex::new(active),
-            busy: AtomicBool::new(false),
-            abandoned: AtomicU32::new(0),
-            permissions: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn cancel_permissions(&self) {
+impl Drop for Session {
+    fn drop(&mut self) {
         cancel_all(&self.permissions);
     }
 }
 
-/// What a message the agent sent for a session is to a turn: an event, or nothing (it was answered, or ignored).
-fn event_of(permissions: &Permissions, message: Dispatch) -> Option<TurnEvent> {
+/// What a message the agent sent for a session is to the script: a message, or nothing (it was answered, or
+/// ignored).
+fn message_of(permissions: &Permissions, message: Dispatch) -> Option<Message> {
     let message = match message {
         Dispatch::Notification(notification) => {
             // read from the wire's JSON, not the SDK's type: an update of a kind the SDK's stable schema lacks is
             // still given, as `other`
             if notification.method() == "session/update" {
                 let update = notification.params().get("update").cloned().unwrap_or(Value::Null);
-                return Some(TurnEvent::Update { update: session_update(update) });
+                return Some(Message::Update { update: session_update(update) });
             }
             return None;
         }
@@ -412,7 +257,7 @@ fn event_of(permissions: &Permissions, message: Dispatch) -> Option<TurnEvent> {
                 return None;
             };
             permissions.lock().insert(id.clone(), responder);
-            Some(TurnEvent::Permission { id, tool_call, options })
+            Some(Message::RequestPermission { id, tool_call, options })
         }
         // fs/*, terminal/* and anything else: this client offers none of it
         Ok(Err(Dispatch::Request(_, responder))) => {
@@ -424,15 +269,102 @@ fn event_of(permissions: &Permissions, message: Dispatch) -> Option<TurnEvent> {
     }
 }
 
+impl Session {
+    pub(crate) fn send_prompt(&self, prompt: Vec<ContentBlock>) -> Result<(), AcpError> {
+        if self.connection.termination().is_some() {
+            return Err(AcpError::Closed { reason: "the connection is closed".to_owned() });
+        }
+        let prompt: Vec<schema::ContentBlock> = to_sdk(&prompt)?;
+        match self.active.try_lock() {
+            Ok(mut active) => active.send_prompt_blocks(prompt).map_err(|e| failure(&self.connection, &e)),
+            Err(_) => Err(invalid(format!("session {} is being read; send the prompt first", self.id))),
+        }
+    }
+
+    pub(crate) async fn read_update(&self) -> Result<Message, AcpError> {
+        let mut active = self.active.lock().await;
+        let connection = self.connection.clone();
+        let lost = || AcpError::Closed { reason: "the connection is closed".to_owned() };
+        loop {
+            // the session's stream stays open after the connection ends (the session holds a sender of its own):
+            // what was queued is read first, then the end of the connection ends the read
+            let message = tokio::select! {
+                biased;
+                message = active.read_update() => message,
+                () = async { connection.terminated().await; } => Err(agent_client_protocol::Error::internal_error()),
+            };
+            let Ok(message) = message else { return Err(lost()) };
+            match message {
+                SessionMessage::PromptResponse(Ok(response)) => {
+                    // the turn is over: what it asked and was not answered is answered `cancelled`
+                    cancel_all(&self.permissions);
+                    let stop_reason: StopReason = from_sdk(&response.stop_reason, "the answer to session/prompt")?;
+                    return Ok(Message::PromptResponse { stop_reason });
+                }
+                SessionMessage::PromptResponse(Err(e)) => {
+                    cancel_all(&self.permissions);
+                    return Err(failure(&connection, &e));
+                }
+                SessionMessage::Message(message) => {
+                    if let Some(message) = message_of(&self.permissions, message.into_raw()) {
+                        return Ok(message);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn respond(&self, id: &str, outcome: &PermissionOutcome) -> Result<(), AcpError> {
+        let responder = self.permissions.lock().remove(id);
+        let responder =
+            responder.ok_or_else(|| invalid(format!("no permission request `{id}` is waiting")))?;
+        let answer: schema::RequestPermissionResponse = to_sdk(&json!({ "outcome": outcome }))?;
+        responder
+            .respond(answer)
+            .map_err(|_| AcpError::Closed { reason: "the connection is closed".to_owned() })
+    }
+}
+
 /// A connection, as the script's handles hold it. When the last one is dropped the connection closes.
 pub(crate) struct Link {
     cx: ConnectionTo<Agent>,
-    /// Ends the SDK's connection, which closes the socket.
+    name: String,
+    /// Ends the SDK's connection, which drops the transport.
     close: Mutex<Option<oneshot::Sender<()>>>,
-    sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// The permissions of the sessions started on it, by session: what a cancel answers.
+    sessions: Mutex<HashMap<String, Weak<Permissions>>>,
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// A connection that is starting: the SDK hands over its `ConnectionTo` once the transport is up.
+async fn connection(
+    rx: oneshot::Receiver<ConnectionTo<Agent>>,
+) -> Result<ConnectionTo<Agent>, AcpError> {
+    rx.await.map_err(|_| AcpError::Closed { reason: "the connection is closed".to_owned() })
 }
 
 impl Link {
+    /// Start the SDK's v1 client over `lines` on a task of `life`.
+    pub(crate) fn start(life: &Life, lines: neoc_vm_lib_websocket::Lines, name: String) -> LinkStart {
+        let neoc_vm_lib_websocket::Lines { outgoing, incoming } = lines;
+        let transport = Lines::new(outgoing, incoming);
+        let (connection_tx, connection_rx) = oneshot::channel();
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+        life.spawn(Client.v1().name(name.clone()).connect_with(transport, async move |cx: ConnectionTo<Agent>| {
+            let _ = connection_tx.send(cx.clone());
+            // until the script closes the connection (or lets go of every handle to it), or the agent hangs up
+            futures_util::future::select(close_rx, std::pin::pin!(cx.incoming_closed())).await;
+            Ok(())
+        }));
+        LinkStart { connection: connection_rx, close: close_tx, name }
+    }
+
     fn closed(&self) -> Option<AcpError> {
         self.close
             .lock()
@@ -440,10 +372,41 @@ impl Link {
             .then(|| AcpError::Closed { reason: "the connection was closed".to_owned() })
     }
 
-    pub(crate) async fn new_session(
-        &self,
-        params: &NewSessionRequest,
-    ) -> Result<NewSessionResponse, AcpError> {
+    pub(crate) async fn initialize(&self, request: InitializeRequest) -> Result<InitializeResponse, AcpError> {
+        if let Some(closed) = self.closed() {
+            return Err(closed);
+        }
+        let client_info = request.client_info.unwrap_or_else(|| Implementation {
+            name: self.name.clone(),
+            title: None,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        });
+        let initialize: schema::InitializeRequest = to_sdk(&json!({
+            "protocol_version": request.protocol_version,
+            "client_capabilities": { "fs": { "read_text_file": false, "write_text_file": false }, "terminal": false },
+            "client_info": client_info,
+        }))?;
+        let answer = self.cx.send_request(initialize).block_task().await.map_err(|e| failure(&self.cx, &e))?;
+        // another version is refused by the SDK's protocol guard (-32600)
+        from_sdk(&answer, "the answer to initialize")
+    }
+
+    fn session(&self, active: ActiveSession<'static, Agent>, modes: Option<SessionModeState>) -> Session {
+        let id = active.session_id().to_string();
+        let permissions = Arc::new(Permissions::default());
+        let mut sessions = self.sessions.lock();
+        sessions.retain(|_, permissions| permissions.strong_count() > 0);
+        sessions.insert(id.clone(), Arc::downgrade(&permissions));
+        Session {
+            id,
+            modes,
+            connection: self.cx.clone(),
+            active: tokio::sync::Mutex::new(active),
+            permissions,
+        }
+    }
+
+    pub(crate) async fn new_session(&self, params: &NewSessionRequest) -> Result<Session, AcpError> {
         if let Some(closed) = self.closed() {
             return Err(closed);
         }
@@ -456,16 +419,10 @@ impl Link {
             .await
             .map_err(|e| failure(&self.cx, &e))?;
         let response: NewSessionResponse = from_sdk(&setup.response, "the answer to session/new")?;
-        self.sessions
-            .lock()
-            .insert(setup.session.session_id().to_string(), Arc::new(Session::new(setup.session)));
-        Ok(response)
+        Ok(self.session(setup.session, response.modes))
     }
 
-    pub(crate) async fn load_session(
-        &self,
-        params: &LoadSessionRequest,
-    ) -> Result<LoadSessionResponse, AcpError> {
+    pub(crate) async fn load_session(&self, params: &LoadSessionRequest) -> Result<Session, AcpError> {
         if let Some(closed) = self.closed() {
             return Err(closed);
         }
@@ -480,46 +437,23 @@ impl Link {
         let response: LoadSessionResponse = from_sdk(&setup.response, "the answer to session/load")?;
         let mut active = setup.session;
         // the history the agent replayed came before its answer, so it is all queued now: drop it (a request in it
-        // is answered as a turn would answer it)
+        // is answered `cancelled`)
         let permissions = Permissions::default();
         while let Some(Ok(message)) = active.read_update().now_or_never() {
             if let SessionMessage::Message(message) = message {
-                let _ = event_of(&permissions, message.into_raw());
+                let _ = message_of(&permissions, message.into_raw());
                 cancel_all(&permissions);
             }
         }
-        self.sessions.lock().insert(params.session_id.clone(), Arc::new(Session::new(active)));
-        Ok(response)
-    }
-
-    pub(crate) fn prompt(&self, params: &PromptRequest) -> Result<TurnState, AcpError> {
-        if let Some(closed) = self.closed() {
-            return Err(closed);
-        }
-        let session = self.sessions.lock().get(&params.session_id).cloned().ok_or_else(|| {
-            invalid(format!("session {} was not started or loaded on this connection", params.session_id))
-        })?;
-        let prompt: Vec<schema::ContentBlock> = to_sdk(&params.prompt)?;
-        if session.busy.swap(true, Ordering::SeqCst) {
-            return Err(invalid(format!("session {} already has a turn going", params.session_id)));
-        }
-        let sent = match session.active.try_lock() {
-            Ok(mut active) => active.send_prompt_blocks(prompt).map_err(|e| failure(&self.cx, &e)),
-            Err(_) => Err(invalid(format!("session {} is being read", params.session_id))),
-        };
-        if let Err(e) = sent {
-            session.busy.store(false, Ordering::SeqCst);
-            return Err(e);
-        }
-        Ok(TurnState { session, finished: AtomicBool::new(false) })
+        Ok(self.session(active, response.modes))
     }
 
     pub(crate) fn cancel(&self, session_id: &str) -> Result<(), AcpError> {
         if let Some(closed) = self.closed() {
             return Err(closed);
         }
-        if let Some(session) = self.sessions.lock().get(session_id) {
-            session.cancel_permissions();
+        if let Some(permissions) = self.sessions.lock().get(session_id).and_then(Weak::upgrade) {
+            cancel_all(&permissions);
         }
         let cancel: schema::CancelNotification = to_sdk(&json!({ "session_id": session_id }))?;
         self.cx.send_notification(cancel).map_err(|e| failure(&self.cx, &e))
@@ -532,80 +466,22 @@ impl Link {
     }
 }
 
-/// A turn, as the script's handle holds it.
-pub(crate) struct TurnState {
-    session: Arc<Session>,
-    /// The turn gave its `done` event or its error: nothing follows.
-    finished: AtomicBool,
+/// A connection the SDK has not handed over yet.
+pub(crate) struct LinkStart {
+    connection: oneshot::Receiver<ConnectionTo<Agent>>,
+    close: oneshot::Sender<()>,
+    name: String,
 }
 
-impl TurnState {
-    pub(crate) async fn next(&self) -> Result<Option<TurnEvent>, AcpError> {
-        let mut active = self.session.active.lock().await;
-        if self.finished.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        let end = |outcome: Result<Option<TurnEvent>, AcpError>| {
-            self.finished.store(true, Ordering::SeqCst);
-            self.session.cancel_permissions();
-            self.session.busy.store(false, Ordering::SeqCst);
-            outcome
-        };
-        let connection = active.connection().clone();
-        let lost = || AcpError::Closed { reason: "the connection is closed".to_owned() };
-        loop {
-            // the session's stream stays open after the connection ends (the session holds a sender of its own):
-            // what was queued is read first, then the end of the connection ends the turn
-            let message = tokio::select! {
-                biased;
-                message = active.read_update() => message,
-                () = async { connection.terminated().await; } => Err(agent_client_protocol::Error::internal_error()),
-            };
-            let Ok(message) = message else { return end(Err(lost())) };
-            let abandoned = self.session.abandoned.load(Ordering::SeqCst) > 0;
-            match message {
-                SessionMessage::PromptResponse(_) if abandoned => {
-                    self.session.abandoned.fetch_sub(1, Ordering::SeqCst);
-                }
-                SessionMessage::PromptResponse(Ok(response)) => {
-                    let stop_reason: Result<StopReason, _> =
-                        from_sdk(&response.stop_reason, "the answer to session/prompt");
-                    return end(stop_reason.map(|stop_reason| Some(TurnEvent::Done { stop_reason })));
-                }
-                SessionMessage::PromptResponse(Err(e)) => return end(Err(failure(&connection, &e))),
-                SessionMessage::Message(message) => {
-                    let event = event_of(&self.session.permissions, message.into_raw());
-                    if abandoned {
-                        self.session.cancel_permissions();
-                    } else if let Some(event) = event {
-                        return Ok(Some(event));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    pub(crate) fn respond(&self, id: &str, outcome: &PermissionOutcome) -> Result<(), AcpError> {
-        let responder = self.session.permissions.lock().remove(id);
-        let responder =
-            responder.ok_or_else(|| invalid(format!("no permission request `{id}` is waiting")))?;
-        let answer: schema::RequestPermissionResponse = to_sdk(&json!({ "outcome": outcome }))?;
-        responder
-            .respond(answer)
-            .map_err(|_| AcpError::Closed { reason: "the connection is closed".to_owned() })
-    }
-}
-
-impl Drop for TurnState {
-    /// A turn the script let go of before it ended: what is left of it is dropped by the session's next turn, the
-    /// permission requests it was given are answered `cancelled`, and the session can have another turn.
-    fn drop(&mut self) {
-        if self.finished.load(Ordering::SeqCst) {
-            return;
-        }
-        self.session.abandoned.fetch_add(1, Ordering::SeqCst);
-        self.session.cancel_permissions();
-        self.session.busy.store(false, Ordering::SeqCst);
+impl LinkStart {
+    /// The connection, once the SDK runs it.
+    pub(crate) async fn ready(self) -> Result<Link, AcpError> {
+        let cx = connection(self.connection).await?;
+        Ok(Link {
+            cx,
+            name: self.name,
+            close: Mutex::new(Some(self.close)),
+            sessions: Mutex::new(HashMap::new()),
+        })
     }
 }

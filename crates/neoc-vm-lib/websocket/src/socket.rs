@@ -30,12 +30,28 @@ const MAX_REASON: usize = 123;
 
 type Queue = mpsc::Receiver<Result<Message, WebSocketError>>;
 
-/// A socket taken over as a transport of text lines: what to send them with, and the lines that come.
+/// A socket taken over as a transport of text lines: what to send them with, and the lines that come. When the
+/// lines are dropped (the connection on them ended), the socket is closed.
 pub struct Lines {
     /// One text message per line.
     pub outgoing: std::pin::Pin<Box<dyn futures_util::Sink<String, Error = io::Error> + Send>>,
     /// The text messages, until the socket closes. Binary messages are skipped.
     pub incoming: std::pin::Pin<Box<dyn futures_util::Stream<Item = io::Result<String>> + Send>>,
+}
+
+/// Closes the socket when the transport that took it over lets go of it (the connection on it ended).
+struct CloseOnDrop(Arc<Inner>);
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        let inner = Arc::clone(&self.0);
+        // no runtime: the engine is going, and the socket with it
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = inner.close(1000, String::new()).await;
+            });
+        }
+    }
 }
 
 pub(crate) struct Inner {
@@ -206,15 +222,16 @@ impl Inner {
         let queue = this.queue.try_lock().ok().and_then(|mut queue| queue.take())?;
         *taken = true;
         drop(taken);
-        let incoming = futures_util::stream::unfold(queue, |mut queue| async move {
+        let guard = CloseOnDrop(Arc::clone(this));
+        let incoming = futures_util::stream::unfold((queue, guard), |(mut queue, guard)| async move {
             loop {
                 match queue.recv().await? {
                     Ok(Message { kind: MessageKind::Text, data }) => {
                         let line = String::from_utf8_lossy(&data.0).into_owned();
-                        return Some((Ok(line), queue));
+                        return Some((Ok(line), (queue, guard)));
                     }
                     Ok(Message { kind: MessageKind::Binary, .. }) => {}
-                    Err(e) => return Some((Err(io::Error::other(e.to_string())), queue)),
+                    Err(e) => return Some((Err(io::Error::other(e.to_string())), (queue, guard))),
                 }
             }
         });

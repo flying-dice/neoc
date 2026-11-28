@@ -137,10 +137,25 @@ async fn answers(response: &'static str) -> u16 {
 
 const PRELUDE: &str = r#"
 local acp = require("vnd:agent_client_protocol")
+local websocket = require("lib:websocket")
 -- the call must have failed: its kind
 local function failed(r, e)
   assert(r == nil, "expected an error")
   return e.kind
+end
+-- a connection to `url` over a socket of `lib:websocket`, and the socket
+local function connect(url, opts)
+  local ws = assert(websocket.connect(url, opts))
+  return assert(acp.Client.v1():name("vos"):connect((assert(acp.Lines.new(ws))))), ws
+end
+-- the messages of `session` up to the answer to its prompt: (messages, stop reason)
+local function turn(session)
+  local out = {}
+  while true do
+    local message = assert(session:read_update())
+    if message.type == "prompt_response" then return out, message.stop_reason end
+    table.insert(out, message)
+  end
 end
 "#;
 
@@ -260,31 +275,28 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
     let got = run(
         &lua,
         r#"
-        local conn = assert(acp.connect(URL, { headers = { Authorization = "Bearer t" }, client_info = { name = "vos", version = "2" } }))
-        local agent = conn.agent
+        local cx, ws = connect(URL, { headers = { Authorization = "Bearer t" } })
+        local agent = assert(cx:send_request({ protocol_version = 1, client_info = { name = "vos", version = "2" } }))
         assert(agent.protocol_version == 1 and agent.agent_info.name == "fake" and agent.agent_info.title == "Fake")
         local caps = agent.agent_capabilities
         assert(caps.load_session and caps.prompt_capabilities.image and not caps.prompt_capabilities.audio)
         assert(caps.mcp_capabilities.http and not caps.mcp_capabilities.sse)
         assert(#agent.auth_methods == 1 and agent.auth_methods[1].id == "login")
-        assert(conn.local_address == "127.0.0.1", conn.local_address)
+        assert(ws.local_address == "127.0.0.1", ws.local_address)
+        -- the socket is the transport's
+        assert(failed(ws:receive()) == "closed")
+        assert(failed(acp.Lines.new(ws)) == "invalid_input")
 
-        local session = assert(conn:new_session({
-          cwd = "/w",
-          mcp_servers = {
-            { type = "http", name = "vos", url = "http://10.0.0.1:1/mcp", headers = { { name = "Authorization", value = "Bearer k" } } },
-            { type = "stdio", name = "local", command = "run", args = { "a" }, env = { { name = "K", value = "v" } } },
-          },
-        }))
+        local session = assert(cx:build_session("/w")
+          :with_mcp_server({ type = "http", name = "vos", url = "http://10.0.0.1:1/mcp", headers = { { name = "Authorization", value = "Bearer k" } } })
+          :with_mcp_server({ type = "stdio", name = "local", command = "run", args = { "a" }, env = { { name = "K", value = "v" } } })
+          :start_session())
         assert(session.session_id == "s1" and session.modes == nil)
-        -- a session this connection did not start or load
-        assert(failed(conn:prompt({ session_id = "s9", prompt = {} })) == "invalid_input")
-        local turn = assert(conn:prompt({ session_id = "s1", prompt = { { type = "text", text = "hi" } } }))
+        assert(session:send_prompt("hi"))
         local out, text = {}, ""
         while true do
-          local event, err = turn:next()
+          local event, err = session:read_update()
           assert(err == nil, tostring(err))
-          if not event then break end
           if event.type == "update" then
             local u = event.update
             table.insert(out, u.type)
@@ -310,20 +322,19 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
               table.insert(out, u.session_update)
               assert(u.update.sessionUpdate == u.session_update)
             end
-          elseif event.type == "permission" then
+          elseif event.type == "request_permission" then
             table.insert(out, "permission " .. event.id)
             assert(event.tool_call.tool_call_id == "c1" and event.tool_call.title == "Edit a")
             assert(#event.options == 2 and event.options[2].kind == "reject_once")
-            assert(turn:respond_permission(event.id, { outcome = "selected", option_id = event.options[1].option_id }))
+            assert(session:respond_permission(event.id, { outcome = "selected", option_id = event.options[1].option_id }))
             -- answered once
-            assert(failed(turn:respond_permission(event.id, { outcome = "cancelled" })) == "invalid_input")
+            assert(failed(session:respond_permission(event.id, { outcome = "cancelled" })) == "invalid_input")
           else
             table.insert(out, "done " .. event.stop_reason)
+            break
           end
         end
-        local again, err = turn:next()
-        assert(again == nil and err == nil)
-        conn:close()
+        cx:close()
         return table.concat(out, " ") .. " | " .. text
         "#,
     )
@@ -403,18 +414,18 @@ async fn a_loaded_sessions_history_is_dropped_and_a_cancel_answers_the_waiting_p
     let got = run(
         &lua,
         r#"
-        local conn = assert(acp.connect(URL))
-        local loaded = assert(conn:load_session({ session_id = "s1", cwd = "/w" }))
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        local loaded = assert(cx:load_session("s1", "/w"):start_session())
+        assert(loaded.session_id == "s1")
         assert(loaded.modes.current_mode_id == "ask" and loaded.modes.available_modes[1].name == "Ask")
-        local turn = assert(conn:prompt({ session_id = "s1", prompt = { { type = "text", text = "go" } } }))
-        -- one turn at a time
-        assert(failed(conn:prompt({ session_id = "s1", prompt = {} })) == "invalid_input")
-        local first = assert(turn:next())
-        assert(first.type == "permission" and first.id == "7", first.type)
-        assert(conn:cancel("s1"))
-        local last = assert(turn:next())
-        assert(last.type == "done")
-        assert(failed(turn:respond_permission("7", { outcome = "cancelled" })) == "invalid_input")
+        assert(loaded:send_prompt_blocks({ { type = "text", text = "go" } }))
+        local first = assert(loaded:read_update())
+        assert(first.type == "request_permission" and first.id == "7", first.type)
+        assert(cx:send_notification({ session_id = "s1" }))
+        local last = assert(loaded:read_update())
+        assert(last.type == "prompt_response")
+        assert(failed(loaded:respond_permission("7", { outcome = "cancelled" })) == "invalid_input")
         return last.stop_reason
         "#,
     )
@@ -435,7 +446,7 @@ async fn a_loaded_sessions_history_is_dropped_and_a_cancel_answers_the_waiting_p
 }
 
 #[tokio::test]
-async fn what_a_turn_the_script_let_go_of_leaves_is_not_the_next_turns() {
+async fn a_sessions_messages_are_read_in_order_across_prompts() {
     let port = agents(|mut agent| async move {
         agent.initialize().await;
         agent.new_session("s1").await;
@@ -451,38 +462,29 @@ async fn what_a_turn_the_script_let_go_of_leaves_is_not_the_next_turns() {
     })
     .await;
     let lua = engine(&format!("ws://127.0.0.1:{port}/acp"));
-    run(
-        &lua,
-        r#"
-        conn = assert(acp.connect(URL))
-        assert(conn:new_session({ cwd = "/w" }))
-        do
-          local _ = assert(conn:prompt({ session_id = "s1", prompt = { { type = "text", text = "1" } } }))
-        end
-        return ""
-        "#,
-    )
-    .await;
-    // the first turn is collected unread
-    lua.gc_collect().expect("collect");
-    lua.gc_collect().expect("collect");
     let got = run(
         &lua,
         r#"
-        local turn = assert(conn:prompt({ session_id = "s1", prompt = { { type = "text", text = "2" } } }))
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        local session = assert(cx:build_session("/w"):start_session())
+        assert(session:send_prompt("1"))
+        assert(session:send_prompt("2"))
         local out = {}
-        while true do
-          local event = assert(turn:next())
-          if event.type == "done" then table.insert(out, event.stop_reason) break end
-          if event.type == "update" and event.update.type == "agent_message_chunk" and event.update.content.type == "text" then
-            table.insert(out, event.update.content.text)
+        for _ = 1, 2 do
+          local messages, stop = turn(session)
+          for _, m in messages do
+            if m.type == "update" and m.update.type == "agent_message_chunk" and m.update.content.type == "text" then
+              table.insert(out, m.update.content.text)
+            end
           end
+          table.insert(out, stop)
         end
         return table.concat(out, " ")
         "#,
     )
     .await;
-    assert_eq!(got, "second max_tokens");
+    assert_eq!(got, "first end_turn second max_tokens");
 }
 
 #[tokio::test]
@@ -519,36 +521,35 @@ async fn what_is_not_an_acp_v1_agent_is_an_error_with_a_kind() {
         &format!(
             r#"
             local out = {{}}
-            local function try(...) table.insert(out, failed(acp.connect(...))) end
-            local none, e = acp.connect("ws://127.0.0.1:{forbidden}/acp")
+            local function initialize(url)
+              local ws = assert(websocket.connect(url))
+              local cx = assert(acp.Client.v1():connect((assert(acp.Lines.new(ws)))))
+              return cx:send_request({{ protocol_version = 1 }})
+            end
+            local none, e = websocket.connect("ws://127.0.0.1:{forbidden}/acp")
             assert(none == nil and e.kind == "status" and e.code == 403 and e.body == '{{"error":"forbidden"}}')
-            assert(tostring(e) == 'vnd:agent_client_protocol.connect: status: the endpoint answered 403: {{"error":"forbidden"}}', tostring(e))
-            local none, e = acp.connect("ws://127.0.0.1:{refuses}/acp")
+            local none, e = initialize("ws://127.0.0.1:{refuses}/acp")
             assert(none == nil and e.kind == "rpc" and e.code == -32000 and e.reason == "sign in first", tostring(e))
-            try("ws://127.0.0.1:{garbage}/acp")
+            assert(tostring(e) == "vnd:agent_client_protocol.ConnectionTo:send_request: rpc: -32000: sign in first", tostring(e))
+            table.insert(out, failed(websocket.connect("ws://127.0.0.1:{garbage}/acp")))
             -- the SDK's protocol guard refuses another version
-            local _, v2 = acp.connect("ws://127.0.0.1:{version_two}/acp")
+            local _, v2 = initialize("ws://127.0.0.1:{version_two}/acp")
             assert(v2 ~= nil and v2.kind == "rpc" and v2.code == -32600 and v2.reason:find("protocol version 1"), tostring(v2))
-            try("ws://127.0.0.1:{silent}/acp", {{ timeout = 0.2 }})
-            try("ws://127.0.0.1:{closed}/acp")
-            -- TLS to an endpoint that does not speak it
-            try("wss://127.0.0.1:{silent}/acp")
-            try("http://127.0.0.1:{silent}/acp")
-            try("not a url")
-            try("ws://127.0.0.1:{silent}/acp", {{ timeout = 0 }})
-            try("ws://127.0.0.1:{silent}/acp", {{ headers = {{ ["bad name"] = "x" }} }})
+            table.insert(out, failed(websocket.connect("ws://127.0.0.1:{closed}/acp")))
+            -- a transport is used once
+            local ws = assert(websocket.connect("ws://127.0.0.1:{silent}/acp"))
+            local lines = assert(acp.Lines.new(ws))
+            assert(acp.Client.v1():connect(lines))
+            table.insert(out, failed(acp.Client.v1():connect(lines)))
             -- what the types say is checked before the call runs: a wrong argument is raised
-            local ok = pcall(acp.connect :: any, "ws://127.0.0.1:{silent}/acp", {{ origin = "x" }})
+            local ok = pcall(acp.Lines.new :: any, "ws://127.0.0.1:{silent}/acp")
             table.insert(out, if ok then "accepted" else "raised")
             return table.concat(out, " ")
             "#
         ),
     )
     .await;
-    assert_eq!(
-        got,
-        "protocol timed_out connect connect invalid_input invalid_input invalid_input invalid_input raised"
-    );
+    assert_eq!(got, "protocol connect invalid_input raised");
 }
 
 #[tokio::test]
@@ -570,22 +571,20 @@ async fn an_agent_error_and_a_lost_connection_end_what_waits_on_them() {
     let got = run(
         &lua,
         r#"
-        local conn = assert(acp.connect(URL))
-        local none, e = conn:new_session({ cwd = "w" })
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        local none, e = cx:build_session("w"):start_session()
         assert(none == nil and e.kind == "rpc" and e.code == -32602 and e.reason == "cwd must be absolute", tostring(e))
-        local session = assert(conn:new_session({ cwd = "/w" }))
-        local turn = assert(conn:prompt({ session_id = session.session_id, prompt = { { type = "text", text = "a" } } }))
-        local none, e = turn:next()
+        local session = assert(cx:build_session("/w"):start_session())
+        assert(session:send_prompt("a"))
+        local none, e = session:read_update()
         assert(none == nil and e.kind == "rpc" and e.code == -32603, tostring(e))
-        local after, err = turn:next()
-        assert(after == nil and err == nil)
 
-        turn = assert(conn:prompt({ session_id = session.session_id, prompt = { { type = "text", text = "b" } } }))
-        assert(assert(turn:next()).type == "update")
-        local lost = failed(turn:next())
-        local after, err = turn:next()
-        assert(after == nil and err == nil)
-        return lost .. " " .. failed(conn:new_session({ cwd = "/w" }))
+        -- the session goes on after an error
+        assert(session:send_prompt("b"))
+        assert(assert(session:read_update()).type == "update")
+        local lost = failed(session:read_update())
+        return lost .. " " .. failed(cx:build_session("/w"):start_session())
         "#,
     )
     .await;
@@ -609,12 +608,14 @@ async fn closing_the_connection_closes_the_socket_and_so_does_shutting_the_engin
     let got = run(
         &lua,
         r#"
-        local conn = assert(acp.connect(URL))
-        conn:close()
-        conn:close()
-        local _, e = conn:new_session({ cwd = "/w" })
-        local _, c = conn:cancel("s1")
-        held = assert(acp.connect(URL))
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        cx:close()
+        cx:close()
+        local _, e = cx:build_session("/w"):start_session()
+        local _, c = cx:send_notification({ session_id = "s1" })
+        held = connect(URL)
+        assert(held:send_request({ protocol_version = 1 }))
         return e.kind .. " " .. c.kind
         "#,
     )
@@ -639,10 +640,11 @@ async fn an_agent_that_drops_the_socket_mid_turn_ends_the_turn() {
     let got = run(
         &lua,
         r#"
-        local conn = assert(acp.connect(URL))
-        assert(conn:new_session({ cwd = "/w" }))
-        local turn = assert(conn:prompt({ session_id = "s1", prompt = { { type = "text", text = "a" } } }))
-        return failed(turn:next()) .. " " .. failed(conn:new_session({ cwd = "/w" }))
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        local session = assert(cx:build_session("/w"):start_session())
+        assert(session:send_prompt("a"))
+        return failed(session:read_update()) .. " " .. failed(cx:build_session("/w"):start_session())
         "#,
     )
     .await;

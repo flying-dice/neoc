@@ -4032,13 +4032,13 @@ dependencies = [
  "mlua",
  "mlua-ir",
  "neoc-vm-core",
+ "neoc-vm-lib-websocket",
+ "neoc-vm-std",
  "parking_lot 0.12.5",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite 0.30.0",
 ]
 
