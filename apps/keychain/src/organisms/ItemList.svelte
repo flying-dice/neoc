@@ -37,7 +37,7 @@
   <p class="summary" data-testid="keychain-items-summary">{itemsSummary(items.length)}</p>
   <div class="list-box">
     {#if items.length > 0}
-      <ul class="list" data-testid="keychain-items">
+      <ui-list variant="inset" label="Items" class="list" data-testid="keychain-items"><ui-section>
         {#each items as item (item.id)}
           <ItemRow
             {item}
@@ -49,7 +49,7 @@
             onremove={() => onremove(item)}
           />
         {/each}
-      </ul>
+      </ui-section></ui-list>
     {:else}
       <ui-empty-state
         icon="lock"
@@ -76,12 +76,7 @@
     color: var(--label-secondary);
   }
   .list-box {
-    padding: 0 16px 16px;
-  }
-  .list {
-    margin: 0;
-    padding: 0;
-    border-radius: var(--radius-lg);
-    background: var(--bg-secondary);
+    --list-inset: 16px;
+    padding-bottom: 16px;
   }
 </style>

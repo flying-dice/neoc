@@ -21,7 +21,7 @@
   const shown = $derived(password !== null)
 </script>
 
-<li class="row" data-testid={id}>
+<ui-row data-testid={id}>
   <span class="text">
     <span class="service" data-testid="{id}-service">{item.service}</span>
     <span class="account" data-testid="{id}-account">{item.account}</span>
@@ -31,7 +31,7 @@
       <span class="problem" role="alert" data-testid="{id}-problem">{problem}</span>
     {/if}
   </span>
-  <span class="act">
+  <span class="act" slot="trailing">
     {#if busy}
       <ui-spinner label="Asking the keychain for {item.service}" data-testid="{id}-busy"></ui-spinner>
     {:else}
@@ -52,6 +52,7 @@
         square
         destructive
         hit
+        title="Delete {item.account} for {item.service}"
         label="Delete {item.account} for {item.service}"
         onclick={onremove}
         data-testid="{id}-remove"
@@ -60,27 +61,16 @@
       </ui-button>
     {/if}
   </span>
-</li>
+</ui-row>
 
 <style>
-  .row {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-inline-start: 12px;
-    border-bottom: 1px solid var(--separator);
-  }
-  .row:last-child {
-    border-bottom: 0;
-  }
   .text {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 6px 0;
+    padding: 8px 0;
   }
   .service,
   .account {
