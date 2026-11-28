@@ -549,14 +549,17 @@ describe('an item too large to be sent', () => {
   })
 
   /** A window whose reads each wait for the test to answer them, one by one. */
-  async function held(): Promise<{ agents: Agents; backend: FakeBackend; reads: { give(text: string, done: boolean): void }[] }> {
+  async function held(): Promise<{ agents: Agents; backend: FakeBackend; reads: { give(text: string, done: boolean): void; fail(message: string): void }[] }> {
     const backend = createFakeBackend({ pace: 1, chats: [conversation('big', 'Big', [['user', 'Go'], ['assistant', 'a']])] })
-    const reads: { give(text: string, done: boolean): void }[] = []
+    const reads: { give(text: string, done: boolean): void; fail(message: string): void }[] = []
     const rpc = {
       ...backend.rpc,
       readItem: ({ item }: { chat: string; item: number }) =>
-        new Promise<VosApp.Agents.Item>((resolve) =>
-          reads.push({ give: (text, done) => resolve({ id: item, chat: 'big', kind: 'assistant', text, name: '', data: '', done }) })
+        new Promise<VosApp.Agents.Item>((resolve, reject) =>
+          reads.push({
+            give: (text, done) => resolve({ id: item, chat: 'big', kind: 'assistant', text, name: '', data: '', done }),
+            fail: (message) => reject(new Error(message))
+          })
         )
     }
     const agents = new Agents(rpc, backend.events)
@@ -592,6 +595,29 @@ describe('an item too large to be sent', () => {
     expect(said(agents).at(-1)).toBe('assistant: newer')
     reads[1]!.give('newest', true)
     await until(() => said(agents).at(-1) === 'assistant: newest')
+  })
+
+  test('a read that fails while a change waits is read again, and the failure older than the change is not said', async () => {
+    const { agents, backend, reads } = await held()
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    // the item changes again, and is too large to send again: it has to be read once more
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    expect(reads).toHaveLength(1)
+    reads[0]!.fail('The host went away')
+    await until(() => reads.length === 2)
+    expect(agents.failure).toBeNull()
+    reads[1]!.give('current', true)
+    await until(() => said(agents).at(-1) === 'assistant: current')
+    expect(agents.failure).toBeNull()
+  })
+
+  test('a read that fails with no change waiting is said', async () => {
+    const { agents, backend, reads } = await held()
+    backend.emit('item_changed', { chat: 'big', item: 2 })
+    reads[0]!.fail('The host went away')
+    await until(() => agents.failure !== null)
+    expect(agents.failure).toBe('The host went away')
+    expect(reads).toHaveLength(1)
   })
 
   test('a failure older than a whole chat installed since is not said', async () => {

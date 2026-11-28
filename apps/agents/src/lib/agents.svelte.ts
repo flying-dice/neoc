@@ -286,7 +286,8 @@ export class Agents {
    * Read an item the backend did not send: it was more than a notification may hold. An item is read one at a time. What
    * a read gives is shown only if nothing newer has come while it was out: a whole conversation installed since is newer
    * than it (the item is read again), and so is a change that came of an item already shown (read again too, so what is
-   * shown is never older than the last change). An item not shown yet is shown even then, and read again.
+   * shown is never older than the last change). An item not shown yet is shown even then, and read again. A read that
+   * fails while a change is waiting is read again, and says nothing: the failure is older than the change.
    */
   #read({ chat, item }: Reference): void {
     if (this.#open?.chat.id !== chat) return
@@ -315,6 +316,8 @@ export class Agents {
           // a whole conversation was installed since the read began: what came (or failed) is older than it
           if (installed !== this.#installed) continue
           if ('failure' in read) {
+            // a change that came during the read has the item read again: that is newer than this failure
+            if (state.again) continue
             this.#failure = messageOf(read.failure)
             return
           }

@@ -63,14 +63,25 @@ test.describe('Telemetry journeys', () => {
     await expect(failing.first()).toBeVisible({ timeout: 30_000 })
     await failing.first().click()
     await expect(part(page, 'log-copy-status')).toHaveText('')
-    await part(page, 'log-copy').click()
-    await expect(part(page, 'log-copy-status')).toContainText('on the clipboard')
-    const log = JSON.parse(await clipboard(page)) as {
+    type Copied = {
       kind: string
       log: { message: string; severity: string; traceId: string; spanId: string; app: string; attributes: Record<string, unknown> }
       span: { name: string; source: string } | null
       trace: { traceId: string; spans: { name: string; source: string }[]; logs: { message: string }[] }
     }
+    let log!: Copied
+    // the log is written while its call is still running: copy again until the host has the call's own span too
+    await expect
+      .poll(
+        async () => {
+          await part(page, 'log-copy').click()
+          await expect(part(page, 'log-copy-status')).toContainText('on the clipboard')
+          log = JSON.parse(await clipboard(page)) as Copied
+          return log.trace.spans.map((s) => s.source)
+        },
+        { timeout: 20_000 }
+      )
+      .toEqual(expect.arrayContaining(['host', 'backend']))
     expect(log.kind).toBe('log')
     expect(log.log.message).toBe('probe failing on purpose')
     expect(log.log.severity).toBe('error')
@@ -78,7 +89,6 @@ test.describe('Telemetry journeys', () => {
     // the span it was written in, and the whole trace as the host has it (the page sends its own spans every 2 s)
     expect(log.span?.name).toBe('count units')
     expect(log.trace.traceId).toBe(log.log.traceId)
-    expect(log.trace.spans.map((s) => s.source)).toEqual(expect.arrayContaining(['host', 'backend']))
     expect(log.trace.logs.map((l) => l.message)).toContain('probe failing on purpose')
 
     // from the log to its trace, and the trace's own copy

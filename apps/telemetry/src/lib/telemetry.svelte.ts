@@ -109,7 +109,11 @@ export class Telemetry {
   #probing = $state<Probe | null>(null)
   #copied = $state<Copied>('idle')
   #copies = 0
+  // what is on show changes (a trace opened, a view or a level shown) => a new scope; a poll does not
+  #scope = 0
   #refreshes = 0
+  // the latest-started read whose answer is kept
+  #applied = 0
 
   readonly #reader: TelemetryReader
   readonly #rpc: ProbeRpc
@@ -213,29 +217,35 @@ export class Telemetry {
   }
 
   /**
-   * Read what the view shows again. Never rejects: a failure is kept, to be shown. A read that is overtaken by a later one
-   * (a trace opened, a view shown, a poll) gives nothing: what it read may be of what is no longer on show, and the later
-   * read is at least as new.
+   * Read what the view shows again. Never rejects: a failure is kept, to be shown. What a read gives is kept only if it
+   * is still of what is on show (not if another trace was opened, another view or level shown, while it was out) and no
+   * read that began after it has already answered. A poll that overlaps another of the same view is not overtaken by it:
+   * a slow reader still shows each answer that is the newest so far.
    */
   async refresh(): Promise<void> {
     const run = ++this.#refreshes
+    const scope = this.#scope
+    const current = (): boolean => scope === this.#scope && run > this.#applied
     try {
       if (this.#view === 'traces') {
         const traces = await this.#reader.traces()
         const selected = this.#selected
         const trace = selected ? await this.#reader.query({ traceId: selected, limit: 1000 }) : null
-        if (run !== this.#refreshes) return
+        if (!current()) return
+        this.#applied = run
         this.#traces = traces
         if (trace) this.#trace = trace
       } else {
         const found = await this.#reader.query({ severity: this.#level, limit: 300 })
-        if (run !== this.#refreshes) return
+        if (!current()) return
+        this.#applied = run
         this.#logs = [...found.logs].reverse()
       }
       this.#failure = null
       this.#unavailable = null
     } catch (e) {
-      if (run !== this.#refreshes) return
+      if (!current()) return
+      this.#applied = run
       // a poll that fails again, the same way, is the same failure: it is warned of when it starts or changes, not on each tick
       if (codeOf(e) === NOT_OFFERED) {
         const said = 'This host page does not offer telemetry to this app.'
@@ -247,14 +257,15 @@ export class Telemetry {
         this.#failure = said
       }
     } finally {
-      // an overtaken read has told nothing: the page is loaded when the latest read has answered
-      if (run === this.#refreshes) this.#loaded = true
+      // the page is loaded when what is on show has been read; a read of what is not on show tells nothing
+      if (scope === this.#scope) this.#loaded = true
     }
   }
 
   show(view: View): void {
     if (view !== this.#view) this.#query = ''
     this.#forgetCopy()
+    this.#scope++
     this.#view = view
     this.#pane = 'content'
     void this.refresh()
@@ -264,6 +275,7 @@ export class Telemetry {
   async open(traceId: string): Promise<void> {
     this.#view = 'traces'
     this.#forgetCopy()
+    this.#scope++
     this.#selected = traceId
     this.#choice = null
     this.#trace = null
@@ -369,6 +381,7 @@ export class Telemetry {
   }
 
   filter(level: Level): void {
+    this.#scope++
     this.#level = level
     void this.refresh()
   }

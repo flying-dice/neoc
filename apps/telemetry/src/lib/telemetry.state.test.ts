@@ -310,6 +310,30 @@ describe('copying what is known of a trace or a log', () => {
     expect(telemetry.loaded).toBe(true)
   })
 
+  test('polls that overlap, because the reader is slow, still publish each answer that is the newest so far', async () => {
+    const { backend, telemetry } = copying()
+    const base = await backend.reader.traces()
+    const answers: ((names: string[]) => void)[] = []
+    backend.reader.traces = () =>
+      new Promise((resolve) => answers.push((names) => resolve(names.map((name, i) => ({ ...base[i % base.length]!, traceId: `t-${name}`, name })))))
+    const polls = [telemetry.refresh(), telemetry.refresh(), telemetry.refresh()]
+    await Bun.sleep(5)
+    expect(telemetry.loaded).toBe(false)
+    // the first poll answers while the others are still out: it is shown, not thrown away
+    answers[0]!(['one'])
+    await polls[0]
+    expect(telemetry.loaded).toBe(true)
+    expect(telemetry.traces.map((t) => t.name)).toEqual(['one'])
+    // the third answers before the second: shown; the second is older than it and does not replace it
+    answers[2]!(['three'])
+    await polls[2]
+    expect(telemetry.traces.map((t) => t.name)).toEqual(['three'])
+    answers[1]!(['two'])
+    await polls[1]
+    expect(telemetry.traces.map((t) => t.name)).toEqual(['three'])
+    // and a trace opened or a view shown meanwhile still makes an earlier read give nothing (the other tests)
+  })
+
   test('a read that is overtaken by a later one gives nothing, not a failure either', async () => {
     const { backend, telemetry } = copying()
     await telemetry.refresh()
