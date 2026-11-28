@@ -128,7 +128,8 @@ async fn a_closed_port_is_a_connect_error() {
         &lua,
         port,
         r#"
-        local _, err = websocket.connect(base, { connect_timeout = 2 })
+        -- the default connect_timeout (10 s): Windows retries a refused connect for about 2 s before it gives up
+        local _, err = websocket.connect(base)
         assert(err ~= nil and err.kind == "connect" and err.op == "lib:websocket.connect", tostring(err))
         return "ok"
         "#,

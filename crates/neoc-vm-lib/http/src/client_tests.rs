@@ -234,19 +234,20 @@ async fn events_reconnect_with_the_last_event_id_and_a_refusal_is_an_error() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failure_is_a_typed_error() {
     let lua = neoc_vm_core::make_engine().unwrap();
-    // a port nothing listens on
+    // a port nothing listens on; the default connect_timeout (10 s), since Windows retries a refused connect for
+    // about 2 s before it gives up
     let closed = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
     let got = run(
         &lua,
         closed,
         r#"
-        local _, refused = http.fetch(base .. "/", { connect_timeout = 2 })
+        local _, refused = http.fetch(base .. "/")
         assert(refused ~= nil and refused.kind == "connect" and refused.op == "lib:http.fetch", tostring(refused))
         local _, url = http.fetch("ftp://example.com/")
         assert(url ~= nil and url.kind == "invalid_url")
         local _, method = http.fetch(base .. "/", { method = "GE T" })
         assert(method ~= nil and method.kind == "invalid_input")
-        local upload = assert(http.request(base .. "/", { connect_timeout = 2 }))
+        local upload = assert(http.request(base .. "/"))
         local wrote, lost = upload:write("x")
         if not wrote then assert(lost ~= nil and lost.kind == "connection_lost") end
         local _, why = upload:finish()
