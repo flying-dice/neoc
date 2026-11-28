@@ -2,9 +2,10 @@
  * A fake ACP agent for the journeys of an app that talks to one: the part of the Agent Client Protocol (v1) the apps
  * speak, on either of the two connections they make. The Agents app reaches it over a WebSocket as `acpd` serves one
  * (one JSON-RPC message per text frame, `initialize` first, one agent per socket); the WebSocket is the few lines of
- * RFC 6455 a test needs, on `node:http`, so the specs need no package for it. The Copilot app runs its agent as a
- * container's program and speaks to it on the container's standard streams, a JSON-RPC message a line (`serve`, given
- * the fake Docker's attached client). Both are one agent: the same sessions, scripts and record of what it was sent.
+ * RFC 6455 a test needs, on `node:http`, so the specs need no package for it. A container agent is a container's
+ * program, spoken to on the container's standard streams, a JSON-RPC message a line (`serve`, given the fake Docker's
+ * attached client); a program agent is e2e/acp-relay.ts, which relays its standard streams to the WebSocket. Both are
+ * one agent: the same sessions, scripts and record of what it was sent.
  *
  * What the person says picks what the agent does (the scripts a spec gives it). Its sessions outlive a connection, as
  * an agent that keeps them on disk does: a new connection can load one. `?load=no` in the URL makes an agent that

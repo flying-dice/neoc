@@ -339,6 +339,24 @@ describe('the types of agent', () => {
     expect(agents.images.items).toEqual(IMAGES)
   })
 
+  test('Docker being away is never shown to one with no container agent open: no agents, the type picker, a remote or a program form', async () => {
+    const agents = await opened(createFakeBackend({ agents: [], engine: UNREACHABLE }))
+    expect(agents.engine?.reachable).toBe(false)
+    expect(agents.dockerDown).toBe(false)
+    agents.add()
+    expect(agents.pane).toBe('types')
+    expect(agents.dockerDown).toBe(false)
+    await agents.edit(null, 'remote')
+    expect(agents.dockerDown).toBe(false)
+    await agents.edit(null, 'program')
+    expect(agents.dockerDown).toBe(false)
+    // a container agent's form needs it, and leaving it for the list does not
+    await agents.edit(null, 'container')
+    expect(agents.dockerDown).toBe(true)
+    agents.back()
+    expect(agents.dockerDown).toBe(false)
+  })
+
   test("removing a container agent takes its chats with it; a program agent's chats stay", async () => {
     const agents = await opened(
       createFakeBackend({

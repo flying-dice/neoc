@@ -142,6 +142,22 @@
   }}
 />
 
+<!-- Docker cannot be reached, and nothing open needs it: no agents yet, the type picker, and a remote agent's form say nothing of it. -->
+<Story
+  name="Docker cannot be reached, and no container agent is open"
+  args={{ backend: () => createFakeBackend({ agents: [], engine: UNREACHABLE }) }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-add-first')
+    await expect(canvas.queryByTestId('agents-down')).toBeNull()
+    await userEvent.click(canvas.getByTestId('agents-add-first'))
+    await appears(canvas, 'agents-types')
+    await expect(canvas.queryByTestId('agents-down')).toBeNull()
+    await userEvent.click(canvas.getByTestId('agents-type-remote'))
+    await appears(canvas, 'agents-form')
+    await expect(canvas.queryByTestId('agents-down')).toBeNull()
+  }}
+/>
+
 <!-- An agent's row has the way to change it: its name, address, folder and token, or to remove it. -->
 <Story
   name="Changing an agent"
