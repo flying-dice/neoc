@@ -202,11 +202,12 @@ export class UiRow extends LitElement {
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      :host([destructive]) .title {
-        color: var(--ios-red);
-      }
       :host([action]) .title {
         color: var(--tint);
+      }
+      /* what destroys is red, even on an action row: declared after the action rule so that it wins */
+      :host([destructive]) .title {
+        color: var(--ios-red);
       }
       :host([selected]:not([multi])) .title {
         color: #fff;
@@ -229,6 +230,7 @@ export class UiRow extends LitElement {
       .accessory {
         flex: none;
         display: flex;
+        font-variant-numeric: tabular-nums;
         align-items: center;
         gap: 8px;
         position: relative;
@@ -257,9 +259,10 @@ export class UiRow extends LitElement {
       ::slotted(:is(ui-text-field, ui-picker)) {
         margin-block: -4px;
       }
-      /* a bare field has no box to take back: its text sits on the row's own line, level with the label before it */
+      /* a bare field has no box: its 44 pt is the row's whole padding, and its text sits on the row's own line, level
+         with the label before it */
       ::slotted(ui-text-field[variant='bare']) {
-        margin-block: 0;
+        margin-block: -11px;
         align-self: center;
       }
       /* a bare picker has no box either: it takes the row's whole padding, so the row keeps its height and all of it
@@ -304,8 +307,10 @@ export class UiRow extends LitElement {
       ::slotted(ui-button[square][size='small']:last-child) {
         margin-inline-end: -8px;
       }
+      /* digits of a value, or of a number in the trailing slot, are one width so that a column of them lines up */
       .value {
         color: var(--label-secondary);
+        font-variant-numeric: tabular-nums;
       }
       .chevron {
         display: flex;
