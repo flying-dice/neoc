@@ -113,7 +113,7 @@
   .controls {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     padding: 0 16px 8px;
   }
 </style>

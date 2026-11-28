@@ -27,10 +27,10 @@
 >
   <!-- only the name is set in: every bar is on the same time line, the width of the row -->
   <div class="span">
-    <span class="name ios-body" class:ios-red={failed} style:padding-left="{bar.depth * 14}px">
+    <span class="name ios-body" class:ios-red={failed} style:padding-left="{bar.depth * 16}px">
       <span class="dot" style:background={SOURCE_TINT[span.source]}></span>{span.name}
     </span>
-    {#if why}<span class="why ios-footnote ios-red" style:padding-left="{bar.depth * 14 + 14}px">{why}</span>{/if}
+    {#if why}<span class="why ios-footnote ios-red" style:padding-left="{bar.depth * 16 + 16}px">{why}</span>{/if}
     <SpanBar left={bar.left} width={bar.width} tint={SOURCE_TINT[span.source]} {failed} />
   </div>
 </ui-row>
@@ -41,7 +41,7 @@
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
     padding-block: 2px;
   }
@@ -51,7 +51,7 @@
   .name {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

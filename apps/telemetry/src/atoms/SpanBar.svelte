@@ -23,7 +23,7 @@
     position: relative;
     display: block;
     height: 6px;
-    border-radius: 3px;
+    border-radius: var(--radius-pill);
     background: var(--fill-tertiary);
   }
   .bar {
@@ -31,6 +31,6 @@
     top: 0;
     bottom: 0;
     min-width: 3px;
-    border-radius: 3px;
+    border-radius: var(--radius-pill);
   }
 </style>
