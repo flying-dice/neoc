@@ -127,7 +127,7 @@
     {@attach trapFocus()}
     in:fade|global={{ duration: motion(180) }}
   >
-    <Material thickness="thick" radius="20px">
+    <Material thickness="thick" radius="var(--radius-xl)">
       <label class="field">
         <Icon name="magnifyingglass" size={22} weight={2.2} />
         <TextInput
@@ -222,10 +222,8 @@
     max-height: 100%;
     display: flex;
     flex-direction: column;
-    border-radius: 20px;
-    box-shadow:
-      0 0 0 0.5px rgb(0 0 0 / 0.12),
-      var(--shadow-popover);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-popover);
     color: var(--label);
     overflow: hidden;
   }
@@ -243,7 +241,6 @@
     padding: 0 16px;
     color: var(--label-secondary);
     cursor: text;
-    --placeholder: var(--label-secondary);
   }
   .field :global(.ios-spotlight-input) {
     font: var(--type-title3);
@@ -281,7 +278,7 @@
   .results {
     list-style: none;
     margin: 0;
-    padding: 6px;
+    padding: 6px 0;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -299,8 +296,7 @@
     align-items: center;
     gap: 12px;
     min-height: 48px;
-    padding: 0 10px;
-    border-radius: var(--radius-md);
+    padding: 0 var(--row-inset);
     cursor: pointer;
   }
   .title {

@@ -100,6 +100,13 @@
   .interactive:active {
     background: var(--fill-secondary);
   }
+  /* The ring goes inside the row: a list clips what is outside its rows (an inset-grouped list's rounded block). */
+  .ios-row:focus-visible {
+    outline-offset: -3px;
+  }
+  .selected:focus-visible {
+    outline-color: var(--label);
+  }
   .selected,
   .selected:active {
     background: light-dark(var(--tint), color-mix(in oklab, var(--tint) 70%, black));

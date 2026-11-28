@@ -57,7 +57,6 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    --placeholder: var(--label-secondary);
   }
   .field {
     flex: 1;
@@ -70,6 +69,11 @@
     background: var(--fill-tertiary);
     color: var(--label-secondary);
     cursor: text;
+  }
+  /* the input draws no ring of its own: the field is what has the focus */
+  .field:has(:global(.ios-text-input:focus-visible)) {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
   }
   .clear {
     display: grid;
