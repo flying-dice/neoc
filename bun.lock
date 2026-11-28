@@ -15,7 +15,7 @@
     },
     "apps/agents": {
       "name": "@vos-apps/agents",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -25,6 +25,7 @@
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "1.4.4",
         "@vos/chat": "workspace:*",
+        "@vos/docker": "workspace:*",
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",

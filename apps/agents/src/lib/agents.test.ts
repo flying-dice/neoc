@@ -1,6 +1,22 @@
 import { describe, expect, test } from 'bun:test'
 import { Agents } from './agents.svelte'
-import { PICTURE, PICTURED, SCRIPTED, conversation, createFailingBackend, createFakeBackend, type FakeBackend } from './fakeApi'
+import {
+  CODER,
+  ECHO,
+  IMAGES,
+  NO_KEYCHAIN,
+  NO_SKILLS,
+  PICTURE,
+  PICTURED,
+  SCRIPTED,
+  SECRETS,
+  SKILLS,
+  UNREACHABLE,
+  conversation,
+  createFailingBackend,
+  createFakeBackend,
+  type FakeBackend
+} from './fakeApi'
 
 /** A window on a fake backend, loaded and listening. */
 async function opened(backend: FakeBackend = createFakeBackend({ pace: 1 })): Promise<Agents> {
@@ -249,6 +265,108 @@ describe('the agents', () => {
     await agents.remove()
     expect(agents.agents).toEqual([])
     expect(agents.form).toBeNull()
+  })
+})
+
+describe('the types of agent', () => {
+  test('adding one starts with its type; the form for that type opens, and Cancel leaves the picker', async () => {
+    const agents = await opened()
+    agents.add()
+    expect(agents.pane).toBe('types')
+    expect(agents.form).toBeNull()
+    agents.back()
+    expect(agents.pane).toBeNull()
+    agents.add()
+    await agents.edit(null, 'program')
+    expect(agents.picking).toBe(false)
+    expect(agents.pane).toBe('agent')
+    expect(agents.form).toMatchObject({ kind: 'program', folder: '' })
+  })
+
+  test('a program agent is added with its command and a folder of this machine', async () => {
+    const agents = await opened(createFakeBackend({ agents: [] }))
+    await agents.edit(null, 'program')
+    Object.assign(agents.form!, { name: 'Echo', command: 'python3 -u echo.py' })
+    expect(agents.savable).toBe(false)
+    agents.form!.folder = '/nowhere'
+    await agents.save()
+    expect(agents.failure).toBe('There is no folder /nowhere on this machine.')
+    agents.form!.folder = '/home/ada'
+    await agents.save()
+    expect(agents.form).toBeNull()
+    expect(agents.agents).toMatchObject([{ name: 'Echo', kind: 'program', command: ['python3', '-u', 'echo.py'], folder: '/home/ada', url: '', token: false }])
+  })
+
+  test("a container agent's form offers Docker's images, the Skills app's skills and the keychain's items", async () => {
+    const agents = await opened(createFakeBackend({ agents: [] }))
+    await agents.edit(null, 'container')
+    expect(agents.images).toEqual({ items: IMAGES, problem: null })
+    expect(agents.skills).toEqual({ items: SKILLS, problem: null })
+    expect(agents.secrets).toEqual({ items: SECRETS, problem: null })
+    Object.assign(agents.form!, { name: 'Coder', image: IMAGES[0], command: 'claude-code-acp', skills: ['review'] })
+    await agents.save()
+    expect(agents.agents).toMatchObject([{ kind: 'container', image: IMAGES[0], folder: '/workspace', skills: ['review'], skills_dir: '/root/.claude/skills' }])
+  })
+
+  test('without the Skills app or the Keychain app, the form says why and still takes what is typed', async () => {
+    const agents = await opened(createFakeBackend({ agents: [], skills: null, secrets: null }))
+    await agents.edit(null, 'container')
+    expect(agents.skills).toEqual({ items: [], problem: NO_SKILLS })
+    expect(agents.secrets).toEqual({ items: [], problem: NO_KEYCHAIN })
+    expect(agents.failure).toBeNull()
+    Object.assign(agents.form!, { name: 'Coder', image: 'mine:1', command: 'agent' })
+    await agents.save()
+    expect(agents.agents).toMatchObject([{ image: 'mine:1' }])
+  })
+
+  test("a container agent's form and chats need Docker; the other types never do", async () => {
+    const agents = await opened(createFakeBackend({ agents: [CODER, ECHO, SCRIPTED], engine: UNREACHABLE }))
+    expect(agents.engine?.reachable).toBe(false)
+    agents.startChat(SCRIPTED)
+    expect(agents.dockerDown).toBe(false)
+    agents.startChat(ECHO)
+    expect(agents.dockerDown).toBe(false)
+    agents.startChat(CODER)
+    expect(agents.dockerDown).toBe(true)
+    await agents.edit(null, 'container')
+    expect(agents.dockerDown).toBe(true)
+    expect(agents.images.problem).toBe(UNREACHABLE.problem)
+    // another Docker, which can be reached: the images are read again
+    agents.hostDraft = 'tcp://docker:2375'
+    await agents.connect()
+    expect(agents.dockerDown).toBe(false)
+    expect(agents.engine?.host).toBe('tcp://docker:2375')
+    expect(agents.images.items).toEqual(IMAGES)
+  })
+
+  test("removing a container agent takes its chats with it; a program agent's chats stay", async () => {
+    const agents = await opened(
+      createFakeBackend({
+        agents: [CODER, ECHO],
+        chats: [conversation('c', 'In a container', [['user', 'hi']], CODER), conversation('p', 'A program', [['user', 'hi']], ECHO)]
+      })
+    )
+    await agents.edit(agents.agentOf(CODER.id))
+    await agents.remove()
+    expect(agents.chats.map((c) => c.id)).toEqual(['p'])
+    await agents.edit(agents.agentOf(ECHO.id))
+    await agents.remove()
+    expect(agents.agents).toEqual([])
+    expect(agents.chats.map((c) => c.id)).toEqual(['p'])
+  })
+
+  test('the type stays: a change sends what the agent is, and nothing of another type', async () => {
+    const backend = createFakeBackend({ agents: [ECHO] })
+    const sent: VosApp.Agents.UpdateAgentParams[] = []
+    const { updateAgent } = backend.rpc
+    backend.rpc.updateAgent = (params) => (sent.push(params), updateAgent(params))
+    const agents = await opened(backend)
+    await agents.edit(agents.agents[0]!, 'remote')
+    expect(agents.form?.kind).toBe('program')
+    agents.form!.name = 'Echo two'
+    await agents.save()
+    expect(sent[0]).not.toHaveProperty('url')
+    expect(agents.agents[0]).toMatchObject({ name: 'Echo two', kind: 'program' })
   })
 })
 

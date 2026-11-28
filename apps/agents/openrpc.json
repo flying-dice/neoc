@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Agents",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "methods": [
     {
@@ -21,8 +21,15 @@
     },
     {
       "name": "_add_agent",
-      "summary": "Add an agent. Its token, when it has one, is kept in this machine's keychain; its picture, when it has one, in the app's database.",
+      "summary": "Add an agent of one of the three types: `remote` (an address it is reached at), `container` (an image each chat gets a container of) or `program` (a command run on this machine). A token, when a remote agent has one, is kept in this machine's keychain; its picture, when it has one, in the app's database.",
       "params": [
+        {
+          "name": "kind",
+          "description": "Its type; fixed once it is added. Absent: `remote`.",
+          "schema": {
+            "$ref": "#/components/schemas/Kind"
+          }
+        },
         {
           "name": "name",
           "required": true,
@@ -34,8 +41,8 @@
         },
         {
           "name": "url",
-          "required": true,
-          "description": "The agent's address: a `ws` or `wss` URL where it speaks the Agent Client Protocol over a WebSocket (`acpd`'s `/acp`).",
+          "required": false,
+          "description": "`remote`: the agent's address, a `ws` or `wss` URL where it speaks the Agent Client Protocol over a WebSocket (`acpd`'s `/acp`). Required for that type; left out for the others.",
           "schema": {
             "type": "string",
             "maxLength": 2000
@@ -43,7 +50,7 @@
         },
         {
           "name": "token",
-          "description": "A bearer token the agent's address wants, sent as `Authorization: Bearer <token>` when the app connects. Blank or absent: none.",
+          "description": "`remote`: a bearer token the agent's address wants, sent as `Authorization: Bearer <token>` when the app connects. Blank or absent: none.",
           "schema": {
             "type": "string",
             "maxLength": 4000
@@ -51,7 +58,7 @@
         },
         {
           "name": "folder",
-          "description": "The folder the agent's sessions work in: an absolute path on the agent's machine. Blank or absent: `/`.",
+          "description": "The folder the agent's sessions work in: an absolute path. `remote`: on the agent's machine (blank: `/`). `container`: in the container, where each chat's own volume is mounted (blank: `/workspace`). `program`: a folder of this machine that is there, which the program starts in (required).",
           "schema": {
             "type": "string",
             "maxLength": 4000
@@ -63,6 +70,64 @@
           "schema": {
             "type": "string",
             "maxLength": 200000
+          }
+        },
+        {
+          "name": "command",
+          "description": "`program` and `container`: the agent's command, the program then its arguments (`[\"claude-code-acp\"]`), which speaks the Agent Client Protocol on its standard input and output. A program is looked up in this machine's `PATH`; a container's runs in the container. Required for those types; left out for `remote`.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        {
+          "name": "image",
+          "description": "`container`: the image each chat's container is made from, by name and tag (`agent-sysadmin:1`). It is built or pulled in the Containers app; this app only uses it. Required for that type.",
+          "schema": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        {
+          "name": "skills_dir",
+          "description": "`container`: the folder its skills are copied into, in the container, each skill a folder of its own named after it. An absolute path. Blank or absent: `/root/.claude/skills`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        {
+          "name": "skills",
+          "description": "`container`: the names of the skills of the Skills app (`_skills`) it uses, copied into each new chat's container. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "name": "env",
+          "description": "`program` and `container`: the environment variables its program is started with, each with its value written out or taken from a keychain item. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            }
+          }
+        },
+        {
+          "name": "mcp",
+          "description": "The MCP servers its sessions are given, besides this machine's own tools. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Server"
+            }
           }
         }
       ],
@@ -78,13 +143,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "The name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, the picture is not a PNG, JPEG or WebP data: URL or is too big, or the keychain did not take the token."
+          "message": "The name is blank, what its type needs is missing or not one (a remote's ws or wss URL, a program's or a container's command, a container's image, a folder that is not an absolute path or, for a program, not a folder of this machine), a variable or an MCP server is not one (a name that cannot be one, two of the same name, a value and a keychain item both, a keychain item without its service or account, a stdio server without a command, an HTTP server without an http or https URL), a skill's name cannot be a folder's, the picture is not a PNG, JPEG or WebP data: URL or is too big, or the keychain did not take the token."
         }
       ]
     },
     {
       "name": "_update_agent",
-      "summary": "Change an agent's name, address, token, folder or picture. A chat's next turn connects to it as it is now.",
+      "summary": "Change an agent; its type stays. A chat's next connection reaches it as it is now. A container chat keeps the container it has: a change of the image, the command, the folders, the environment or the skills reaches the chats started after it.",
       "params": [
         {
           "name": "agent",
@@ -106,8 +171,8 @@
         },
         {
           "name": "url",
-          "required": true,
-          "description": "The agent's address: a `ws` or `wss` URL where it speaks the Agent Client Protocol over a WebSocket (`acpd`'s `/acp`).",
+          "required": false,
+          "description": "`remote`: the agent's address, a `ws` or `wss` URL. Required for that type.",
           "schema": {
             "type": "string",
             "maxLength": 2000
@@ -115,7 +180,7 @@
         },
         {
           "name": "token",
-          "description": "A new bearer token. Absent: the token stays as it is.",
+          "description": "`remote`: a new bearer token. Absent: the token stays as it is.",
           "schema": {
             "type": "string",
             "maxLength": 4000
@@ -123,14 +188,14 @@
         },
         {
           "name": "forget",
-          "description": "Forget the token the agent has.",
+          "description": "`remote`: forget the token the agent has.",
           "schema": {
             "type": "boolean"
           }
         },
         {
           "name": "folder",
-          "description": "The folder the agent's sessions work in: an absolute path on the agent's machine. Blank or absent: `/`.",
+          "description": "The folder the agent's sessions work in: an absolute path. `remote`: on the agent's machine (blank: `/`). `container`: in the container, where each chat's own volume is mounted (blank: `/workspace`). `program`: a folder of this machine that is there, which the program starts in (required).",
           "schema": {
             "type": "string",
             "maxLength": 4000
@@ -150,6 +215,64 @@
           "schema": {
             "type": "boolean"
           }
+        },
+        {
+          "name": "command",
+          "description": "`program` and `container`: the agent's command, the program then its arguments (`[\"claude-code-acp\"]`), which speaks the Agent Client Protocol on its standard input and output. A program is looked up in this machine's `PATH`; a container's runs in the container. Required for those types; left out for `remote`.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        {
+          "name": "image",
+          "description": "`container`: the image each chat's container is made from, by name and tag (`agent-sysadmin:1`). It is built or pulled in the Containers app; this app only uses it. Required for that type.",
+          "schema": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        {
+          "name": "skills_dir",
+          "description": "`container`: the folder its skills are copied into, in the container, each skill a folder of its own named after it. An absolute path. Blank or absent: `/root/.claude/skills`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        {
+          "name": "skills",
+          "description": "`container`: the names of the skills of the Skills app (`_skills`) it uses, copied into each new chat's container. In place of the ones it has. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "name": "env",
+          "description": "`program` and `container`: the environment variables its program is started with, each with its value written out or taken from a keychain item. In place of the ones it has. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            }
+          }
+        },
+        {
+          "name": "mcp",
+          "description": "The MCP servers its sessions are given, besides this machine's own tools. In place of the ones it has. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Server"
+            }
+          }
         }
       ],
       "result": {
@@ -164,13 +287,13 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such agent, the name is blank, the URL is not a ws or wss URL, the folder is not an absolute path, the picture is not a PNG, JPEG or WebP data: URL or is too big, or the keychain refused."
+          "message": "There is no such agent, or what is given is refused as `_add_agent` refuses it, or the keychain refused."
         }
       ]
     },
     {
       "name": "_remove_agent",
-      "summary": "Remove an agent and its token; a turn it is taking ends. Its chats stay, and can be read.",
+      "summary": "Remove an agent; a turn it is taking ends. A remote agent's token goes with it. The chats of a remote or a program agent stay, and can be read; a container agent's chats go with it, with their containers and volumes (its image stays: it is the Containers app's).",
       "params": [
         {
           "name": "agent",
@@ -194,9 +317,89 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such agent."
+          "message": "There is no such agent, or Docker did not remove a container or a volume of its chats (Docker cannot be reached, say). What was removed before that stays removed."
         }
       ]
+    },
+    {
+      "name": "_engine",
+      "summary": "Whether Docker can be reached. A Docker that cannot be reached is an answer (`reachable` is false and says why), not an error.",
+      "params": [],
+      "result": {
+        "name": "engine",
+        "schema": {
+          "$ref": "#/components/schemas/Engine"
+        }
+      }
+    },
+    {
+      "name": "_connect",
+      "summary": "Choose the Docker container agents' chats run in, and answer whether it can be reached. The containers of the Docker chosen before are not touched: a chat whose container is not in the new one gets a new container on its next turn.",
+      "params": [
+        {
+          "name": "host",
+          "required": true,
+          "description": "Where Docker listens: `unix:///path/docker.sock`, `tcp://host:2375` or `http://host:2375`. Empty for this machine's own Docker.",
+          "schema": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      ],
+      "result": {
+        "name": "engine",
+        "schema": {
+          "$ref": "#/components/schemas/Engine"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The address is not one Docker can be reached at."
+        }
+      ]
+    },
+    {
+      "name": "_secrets",
+      "summary": "The items of the keychain the Keychain app keeps, by service and account, for a variable or a header to take its value from. No password is given: it is read when a program or a container is started, or a session is given its MCP servers.",
+      "params": [],
+      "result": {
+        "name": "secrets",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Secret"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The Keychain app is not there (not installed, or not running), or it did not list its items."
+        }
+      ]
+    },
+    {
+      "name": "_skills",
+      "summary": "The skills of the Skills app a container agent can use, by name. When the Skills app is not there or does not answer, the list is empty and `problem` says why: it is an answer, not an error.",
+      "params": [],
+      "result": {
+        "name": "skills",
+        "schema": {
+          "$ref": "#/components/schemas/SkillChoice"
+        }
+      }
+    },
+    {
+      "name": "_images",
+      "summary": "The images Docker has, by name and tag, for a container agent's image to be chosen from. When Docker cannot be reached the list is empty and `problem` says why: it is an answer, not an error.",
+      "params": [],
+      "result": {
+        "name": "images",
+        "schema": {
+          "$ref": "#/components/schemas/ImageChoice"
+        }
+      }
     },
     {
       "name": "_chats",
@@ -240,7 +443,7 @@
     },
     {
       "name": "_send",
-      "summary": "Say something in a chat, or start one with an agent by saying the first thing in it (`agent` instead of `chat`): a chat is only made when something is said. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event.",
+      "summary": "Say something in a chat, or start one with an agent by saying the first thing in it (`agent` instead of `chat`): a chat is only made when something is said. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event. A container chat's first turn makes its container, and a program chat's turn starts its program when it is not running.",
       "params": [
         {
           "name": "chat",
@@ -354,7 +557,7 @@
     },
     {
       "name": "_remove_chat",
-      "summary": "Delete a chat and everything in it.",
+      "summary": "Delete a chat and everything in it: a container chat's container and volume too, and a program chat's program ends.",
       "params": [
         {
           "name": "chat",
@@ -377,7 +580,7 @@
       "errors": [
         {
           "code": -32010,
-          "message": "There is no such chat."
+          "message": "There is no such chat, or Docker did not remove the chat's container or volume (Docker cannot be reached, say): the chat stays, and can be deleted again."
         }
       ]
     },
@@ -446,6 +649,136 @@
   ],
   "components": {
     "schemas": {
+      "Kind": {
+        "type": "string",
+        "description": "How a chat reaches the agent. `remote`: over a WebSocket, at its address. `container`: each chat runs the agent in a container of its own, made from an image, and speaks to it on the container's standard streams. `program`: each chat runs the agent's command on this machine, and speaks to it on the program's standard streams.",
+        "enum": [
+          "remote",
+          "container",
+          "program"
+        ]
+      },
+      "Engine": {
+        "type": "object",
+        "properties": {
+          "reachable": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string",
+            "description": "Docker's version, empty when it cannot be reached."
+          },
+          "host": {
+            "type": "string",
+            "description": "Where Docker is looked for, as given to `_connect`. Empty for this machine's own Docker."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why Docker cannot be reached, as a sentence. Empty when it can."
+          }
+        },
+        "required": [
+          "reachable",
+          "version",
+          "host",
+          "problem"
+        ]
+      },
+      "Secret": {
+        "type": "object",
+        "description": "An item of the keychain the Keychain app keeps: what its password is for and whose it is there.",
+        "properties": {
+          "service": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "account": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "service",
+          "account"
+        ]
+      },
+      "Variable": {
+        "type": "object",
+        "description": "A name and its value: an environment variable, or a header sent to an MCP server. The value is written out (`value`) or is the password of a keychain item (`secret`), read when it is needed and never kept by the app.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "An environment variable's name: letters, digits and `_`, not starting with a digit. A header's: no spaces and no `:`."
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 20000,
+            "description": "The value, written out. Absent with `secret`; absent without it is empty."
+          },
+          "secret": {
+            "$ref": "#/components/schemas/Secret",
+            "description": "The keychain item whose password is the value."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Server": {
+        "type": "object",
+        "description": "An MCP server an agent's sessions are given. `stdio`: a program the agent starts where it runs (on its machine, in the container, or on this machine). `http`: a server at a URL, given only to an agent that takes MCP servers over HTTP.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "stdio",
+              "http"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "What the agent calls it."
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "`stdio`: the program, where the agent runs."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "description": "`stdio`: its arguments."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            },
+            "description": "`stdio`: its environment variables."
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "`http`: its address, an `http` or `https` URL. In a container, this machine is `host.docker.internal`."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            },
+            "description": "`http`: headers sent to it (`Authorization`, say)."
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -455,30 +788,131 @@
           "name": {
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
           "url": {
             "type": "string",
-            "description": "Its address: a `ws` or `wss` URL."
+            "description": "`remote`: its address, a `ws` or `wss` URL. Empty for the other types."
           },
           "token": {
             "type": "boolean",
-            "description": "Whether a bearer token is kept for it. The token itself never leaves the keychain."
+            "description": "`remote`: whether a bearer token is kept for it. The token itself never leaves the keychain."
           },
           "folder": {
             "type": "string",
-            "description": "The folder its sessions work in, on its machine."
+            "description": "The folder its sessions work in: on its machine, in the container, or on this machine."
           },
           "avatar": {
             "type": "string",
             "description": "Its picture, a PNG, JPEG or WebP `data:` URL; empty when it has none."
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`program` and `container`: the agent's command, the program then its arguments. Empty for `remote`."
+          },
+          "image": {
+            "type": "string",
+            "description": "`container`: the image its chats' containers are made from. Empty for the other types."
+          },
+          "skills_dir": {
+            "type": "string",
+            "description": "`container`: the folder its skills are copied into, in the container. Empty for the other types."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`container`: the names of the Skills app's skills it uses."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Variable"
+            },
+            "description": "`program` and `container`: the environment variables its program is started with. A keychain item is named, never its password."
+          },
+          "mcp": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Server"
+            },
+            "description": "The MCP servers its sessions are given."
           }
         },
         "required": [
           "id",
           "name",
+          "kind",
           "url",
           "token",
           "folder",
-          "avatar"
+          "avatar",
+          "command",
+          "image",
+          "skills_dir",
+          "skills",
+          "env",
+          "mcp"
+        ]
+      },
+      "SkillSummary": {
+        "type": "object",
+        "description": "A skill of the Skills app: what it is called, which is the name of its folder, and what it is for.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ]
+      },
+      "SkillChoice": {
+        "type": "object",
+        "properties": {
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSummary"
+            }
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why the Skills app gave no skills, as a sentence. Empty when it answered."
+          }
+        },
+        "required": [
+          "skills",
+          "problem"
+        ]
+      },
+      "ImageChoice": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each image by name and tag (`debian:stable`), in name order."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why Docker gave no images, as a sentence. Empty when it answered."
+          }
+        },
+        "required": [
+          "images",
+          "problem"
         ]
       },
       "Chat": {

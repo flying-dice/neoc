@@ -2,13 +2,19 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { expect, fn } from 'storybook/test'
   import AgentForm from './AgentForm.svelte'
-  import type { AgentForm as Form } from '../lib/agents.svelte'
-  import { PICTURE, PICTURED, SCRIPTED } from '../lib/fakeApi'
+  import type { AgentForm as Form, Choices } from '../lib/agents.svelte'
+  import { CODER, ECHO, IMAGES, NO_SKILLS, PICTURE, PICTURED, SCRIPTED, SECRETS, SKILLS } from '../lib/fakeApi'
+  import { agentDraftOf } from '../lib/form'
+  type Secret = VosApp.Agents.Secret
+  type SkillSummary = VosApp.Agents.SkillSummary
 
   interface Args {
     form: Form
     failure?: string | null
     savable: boolean
+    secrets?: Choices<Secret>
+    skills?: Choices<SkillSummary>
+    images?: Choices<string>
     onsave: () => void
     oncancel: () => void
     onremove: () => void
@@ -19,9 +25,14 @@
   const oncancel = fn<() => void>()
   const onremove = fn<() => void>()
 
-  const EMPTY: Form = { agent: null, name: '', url: '', folder: '/', token: '', forget: false, avatar: '' }
-  const KNOWN: Form = { agent: { ...SCRIPTED, token: true }, name: SCRIPTED.name, url: SCRIPTED.url, folder: SCRIPTED.folder, token: '', forget: false, avatar: '' }
-  const formOf = (agent: typeof PICTURED): Form => ({ agent, name: agent.name, url: agent.url, folder: agent.folder, token: '', forget: false, avatar: agent.avatar })
+  const EMPTY: Form = agentDraftOf(null, 'remote')
+  const KNOWN: Form = agentDraftOf({ ...SCRIPTED, token: true })
+  const formOf = (agent: typeof PICTURED): Form => agentDraftOf(agent)
+  const CHOICES = {
+    secrets: { items: SECRETS, problem: null },
+    skills: { items: SKILLS, problem: null },
+    images: { items: IMAGES, problem: null }
+  }
 
   /** The form an agent is added or changed in. It keeps nothing: what is typed goes into the form it was given. */
   const { Story } = defineMeta({
@@ -94,3 +105,48 @@
     await expect(canvas.getByTestId('agents-form-agent')).toHaveProperty('footer', REFUSED)
   }}
 />
+
+<!-- A container agent: its image (typed, or one of Docker's), command and skills folder, its environment with a Keychain item, an MCP server, and the Skills app's skills it uses. -->
+<Story
+  name="A container agent"
+  args={{ form: formOf(CODER), savable: true, ...CHOICES }}
+  play={async ({ canvas, userEvent }) => {
+    await expect(canvas.getByTestId('agents-form-kind')).toHaveProperty('value', 'Container')
+    await expect(canvas.queryByTestId('agents-form-url')).toBeNull()
+    await expect(canvas.queryByTestId('agents-form-token')).toBeNull()
+    await expect(canvas.getByTestId('agents-form-image').shadowRoot!.querySelector('input')).toHaveValue(CODER.image)
+    await expect(canvas.getByTestId('agents-form-image-choice')).toBeVisible()
+    await expect(canvas.getByTestId('agents-form-skill-review')).toHaveProperty('checked', true)
+    await expect(canvas.getByTestId('agents-form-skill-triage')).toHaveProperty('checked', false)
+    await expect(canvas.getByTestId('agents-form-server-0')).toBeVisible()
+    await userEvent.click(canvas.getByTestId('agents-form-add-env'))
+    await expect(canvas.getByTestId('agents-form-env-1')).toBeVisible()
+  }}
+/>
+
+<!-- A container agent while the Skills app is not there: why there are none to choose, and the skill it uses stays. -->
+<Story
+  name="A container agent without the Skills app"
+  args={{ form: formOf(CODER), savable: true, ...CHOICES, skills: { items: [], problem: NO_SKILLS } }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-form-skills')).toHaveProperty('footer', NO_SKILLS)
+    await expect(canvas.getByTestId('agents-form-skill-review')).toHaveProperty('checked', true)
+  }}
+/>
+
+<!-- A program agent: its command and the folder of this machine it works in, its environment and MCP servers. -->
+<Story
+  name="A program agent"
+  args={{ form: formOf(ECHO), savable: true, ...CHOICES }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-form-kind')).toHaveProperty('value', 'Program')
+    await expect(canvas.getByTestId('agents-form-command').shadowRoot!.querySelector('input')).toHaveValue('python3 -u echo_agent.py')
+    await expect(canvas.getByTestId('agents-form-folder').shadowRoot!.querySelector('input')).toHaveValue(ECHO.folder)
+    await expect(canvas.queryByTestId('agents-form-image')).toBeNull()
+    await expect(canvas.queryByTestId('agents-form-skills')).toBeNull()
+    await expect(canvas.getByTestId('agents-form-env-0')).toBeVisible()
+  }}
+/>
+
+<!-- A new program agent: nothing to add until it has a name, a command and a folder. -->
+<Story name="A new program agent" args={{ form: agentDraftOf(null, 'program'), savable: false, ...CHOICES }} />

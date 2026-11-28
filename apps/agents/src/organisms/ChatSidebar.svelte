@@ -1,6 +1,7 @@
-<!-- @organism ChatSidebar — who can be chatted with, and the chats so far; a tap on an agent starts a chat, on a chat opens it -->
+<!-- @organism ChatSidebar — who can be chatted with (each with its address, Container, or its command under its name), and the chats so far; a tap on an agent starts a chat, on a chat opens it -->
 <script lang="ts">
   import Avatar from '../atoms/Avatar.svelte'
+  import { subheadingOf } from '../lib/kinds'
   type Agent = VosApp.Agents.Agent
   type Chat = VosApp.Agents.Chat
 
@@ -11,12 +12,14 @@
     /** The id of the chat that is open. */
     selected?: string
     onstart: (agent: Agent) => void
-    /** Open the form: to change the agent given, or to add one (null). */
-    onedit: (agent: Agent | null) => void
+    /** Open the form to change the agent given. */
+    onedit: (agent: Agent) => void
+    /** Add an agent: its type is chosen first. */
+    onadd: () => void
     onopen: (chat: Chat) => void
   }
 
-  let { agents, chats, selected, onstart, onedit, onopen }: Props = $props()
+  let { agents, chats, selected, onstart, onedit, onadd, onopen }: Props = $props()
 
   // each agent's picture, by its id: a chat shows its agent's
   const pictures = $derived(new Map(agents.map((a) => [a.id, a.avatar])))
@@ -28,7 +31,7 @@
       {#each agents as agent (agent.id)}
         <ui-row
           heading={agent.name}
-          subheading={agent.url}
+          subheading={subheadingOf(agent)}
           tappable
           label="Start a chat with {agent.name}"
           onpress={() => onstart(agent)}
@@ -53,7 +56,7 @@
           >
         </ui-row>
       {/each}
-      <ui-row heading="Add an agent" action tappable onpress={() => onedit(null)} data-testid="agents-add"></ui-row>
+      <ui-row heading="Add an agent" action tappable onpress={onadd} data-testid="agents-add"></ui-row>
     </ui-section>
   </ui-list>
   <!-- an empty selectable list is not valid ARIA: the list is there once there is a chat -->

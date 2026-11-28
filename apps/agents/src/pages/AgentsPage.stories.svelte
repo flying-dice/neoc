@@ -6,7 +6,7 @@
   import pkg from '../../package.json'
   import AgentsPage from './AgentsPage.svelte'
   import { Agents } from '../lib/agents.svelte'
-  import { conversation, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
+  import { CODER, ECHO, SCRIPTED, UNREACHABLE, conversation, createFailingBackend, createFakeBackend, type FakeBackend } from '../lib/fakeApi'
 
   // the window the app asks for (package.json), and the smallest it allows
   const app = pkg.vos
@@ -84,7 +84,7 @@
   }}
 />
 
-<!-- Nobody to chat with: an agent is added by its name and its ACP address, and can be chatted with at once. -->
+<!-- Nobody to chat with: an agent's type is chosen first, then a remote one is added by its name and its ACP address, and can be chatted with at once. -->
 <Story
   name="Adding the first agent"
   args={{ backend: () => createFakeBackend({ agents: [] }) }}
@@ -92,6 +92,8 @@
     // the sidebar's own way to add one is there in a window of any width
     await appears(canvas, 'agents-add')
     await userEvent.click(canvas.getByTestId('agents-add'))
+    await appears(canvas, 'agents-types')
+    await userEvent.click(canvas.getByTestId('agents-type-remote'))
     await appears(canvas, 'agents-form')
     await expect(canvas.getByTestId('agents-form-save')).toHaveProperty('disabled', true)
     await userEvent.type(field(canvas, 'agents-form-name'), 'Ada')
@@ -104,6 +106,39 @@
     await userEvent.click(canvas.getByTestId('agents-form-save'))
     await appears(canvas, 'agents-agent-agent-1')
     await expect(canvas.queryByTestId('agents-form')).toBeNull()
+  }}
+/>
+
+<!-- A container agent is added with its image, chosen from Docker's, and its command; its chats run in containers of their own. -->
+<Story
+  name="Adding a container agent"
+  args={{ backend: () => createFakeBackend({ agents: [SCRIPTED] }) }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-add')
+    await userEvent.click(canvas.getByTestId('agents-add'))
+    await appears(canvas, 'agents-type-container')
+    await userEvent.click(canvas.getByTestId('agents-type-container'))
+    await appears(canvas, 'agents-form-image')
+    await expect(field(canvas, 'agents-form-folder')).toHaveValue('/workspace')
+    await userEvent.type(field(canvas, 'agents-form-name'), 'Coder')
+    await userEvent.type(field(canvas, 'agents-form-image'), 'agent-coder:1')
+    await userEvent.type(field(canvas, 'agents-form-command'), 'claude-code-acp')
+    await userEvent.click(canvas.getByTestId('agents-form-save'))
+    await appears(canvas, 'agents-agent-agent-1')
+    await expect(canvas.getByTestId('agents-agent-agent-1')).toHaveProperty('subheading', 'Container')
+  }}
+/>
+
+<!-- Docker cannot be reached: a container agent's chat says so, and another Docker can be chosen; a remote agent's chat never asks. -->
+<Story
+  name="Docker cannot be reached"
+  args={{ backend: () => createFakeBackend({ agents: [CODER, ECHO, SCRIPTED], engine: UNREACHABLE }) }}
+  play={async ({ canvas, userEvent }) => {
+    await appears(canvas, 'agents-agent-scripted')
+    await userEvent.click(canvas.getByTestId('agents-agent-scripted'))
+    await appears(canvas, 'agents-composer-input')
+    await userEvent.click(canvas.getByTestId('agents-agent-coder'))
+    await appears(canvas, 'agents-down')
   }}
 />
 

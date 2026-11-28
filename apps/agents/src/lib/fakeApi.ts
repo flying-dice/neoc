@@ -3,23 +3,86 @@
  * host, and an agent that answers by a small script instead of an ACP agent. What the person says picks what it does:
  * `hello` is answered `Hi there`, `slow` says one piece and then goes on until it is stopped (so a story can show an
  * answer on its way without racing it), `tool` thinks, plans and changes a file, `ask` asks for a permission and goes
- * on with the answer, and anything else is echoed, a piece at a time.
+ * on with the answer, and anything else is echoed, a piece at a time. Agents of every type answer the same way; Docker,
+ * its images, the Skills app's skills and the keychain's items are lists the backend is given.
  */
 type Agent = VosApp.Agents.Agent
 type Chat = VosApp.Agents.Chat
 type Conversation = VosApp.Agents.Conversation
+type Engine = VosApp.Agents.Engine
 type Item = VosApp.Agents.Item
+type Kind = VosApp.Agents.Kind
+type Secret = VosApp.Agents.Secret
+type SkillSummary = VosApp.Agents.SkillSummary
 import { ASKING, OPTIONS, PLAN, TOOL, itemOf, type Said } from '@vos/chat/samples'
 import type { AgentsEvents, AgentsRpc } from './agents.svelte'
 
-export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'ws://localhost:5424/acp', token: false, folder: '/home/ada/project', avatar: '' }
+/** What an agent of a type that does not take them has of the other types' fields: nothing. */
+const BLANK = { url: '', token: false, command: [], image: '', skills_dir: '', skills: [], env: [], mcp: [] } satisfies Partial<Agent>
+
+/** A remote agent. */
+export const SCRIPTED: Agent = { ...BLANK, id: 'scripted', name: 'Scripted agent', kind: 'remote', url: 'ws://localhost:5424/acp', folder: '/home/ada/project', avatar: '' }
 
 /** A picture an agent can have: a sun over the sea, 24 pixels across. */
 export const PICTURE =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAARUlEQVR42mOIOvGLKohh1CDqGPT/DANFBgH1YyKSDcJqCh6zhopBeEzBZdaICyNy0hFD1X+CCKifsDJiDCIKjRo0kg0CANYoHLfSsIESAAAAAElFTkSuQmCC'
 
 /** An agent with a picture. */
-export const PICTURED: Agent = { id: 'writer', name: 'Writer', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing', avatar: PICTURE }
+export const PICTURED: Agent = { ...BLANK, id: 'writer', name: 'Writer', kind: 'remote', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing', avatar: PICTURE }
+
+/** A container agent: an image, an ACP agent in it, a key from the keychain, a server and a skill. */
+export const CODER: Agent = {
+  ...BLANK,
+  id: 'coder',
+  name: 'Coder',
+  kind: 'container',
+  folder: '/workspace',
+  avatar: '',
+  command: ['claude-code-acp'],
+  image: 'agent-coder:1',
+  skills_dir: '/root/.claude/skills',
+  skills: ['review'],
+  env: [{ name: 'ANTHROPIC_API_KEY', secret: { service: 'anthropic', account: 'ada' } }],
+  mcp: [{ type: 'stdio', name: 'files', command: 'mcp-files', args: ['--root', '/workspace'], env: [] }]
+}
+
+/** A program agent: a command run on this machine, in a folder of it. */
+export const ECHO: Agent = {
+  ...BLANK,
+  id: 'echo',
+  name: 'Echo',
+  kind: 'program',
+  folder: '/home/ada/project',
+  avatar: '',
+  command: ['python3', '-u', 'echo_agent.py'],
+  env: [{ name: 'LANG', value: 'en_GB.UTF-8' }]
+}
+
+/** The keychain's items. */
+export const SECRETS: Secret[] = [
+  { service: 'anthropic', account: 'ada' },
+  { service: 'github', account: 'ada' }
+]
+
+/** The Skills app's skills. */
+export const SKILLS: SkillSummary[] = [
+  { name: 'review', description: 'Review a change before it is merged.' },
+  { name: 'triage', description: 'Sort new issues by what they need.' }
+]
+
+/** Docker's images. */
+export const IMAGES: string[] = ['agent-coder:1', 'debian:stable']
+
+export const REACHABLE: Engine = { reachable: true, version: '27.3.1', host: '', problem: '' }
+export const UNREACHABLE: Engine = { reachable: false, version: '', host: '', problem: 'Docker is not running on this machine, or cannot be reached.' }
+
+/** What the Keychain app's absence is answered with. */
+export const NO_KEYCHAIN = 'The Keychain app is not there: install it, or open it, to choose one of its items.'
+/** What the Skills app's absence is answered with. */
+export const NO_SKILLS = 'The Skills app is not there: install it, or open it, to use its skills.'
+
+/** The folders of this machine a program agent can work in. */
+const FOLDERS = ['/', '/home/ada', '/home/ada/project', '/srv/writing']
 
 export interface FakeBackend {
   readonly rpc: AgentsRpc
@@ -34,6 +97,12 @@ export interface FakeOptions {
   chats?: readonly Conversation[]
   /** Milliseconds before each thing the agent does. */
   pace?: number
+  /** Docker as it is when the window opens. A `connect` to an empty address or `tcp://docker:2375` reaches one. */
+  engine?: Engine
+  /** The keychain's items; null for a Keychain app that is not there. */
+  secrets?: readonly Secret[] | null
+  /** The Skills app's skills; null for a Skills app that is not there. */
+  skills?: readonly SkillSummary[] | null
 }
 
 /** A failure the backend answers a call with (`ctx:fail`). */
@@ -58,11 +127,16 @@ function script(text: string): Step[] {
   return ['echo:', ...text.trim().split(/\s+/).map((word) => ` ${word}`)]
 }
 
-/** A chat with what was said and done in it, for a story's or a test's starting point. */
-export function conversation(id: string, title: string, said: readonly (Said | readonly [kind: 'user' | 'assistant', text: string])[]): Conversation {
+/** A chat with what was said and done in it, for a story's or a test's starting point; with `agent`, or the scripted one. */
+export function conversation(
+  id: string,
+  title: string,
+  said: readonly (Said | readonly [kind: 'user' | 'assistant', text: string])[],
+  agent: Agent = SCRIPTED
+): Conversation {
   const items = said.map((entry, i) => itemOf(id, i + 1, Array.isArray(entry) ? { kind: entry[0], text: entry[1] } : (entry as Said)))
   return {
-    chat: { id, title, agent: SCRIPTED.name, agent_id: SCRIPTED.id, updated: '2026-06-09T08:41:00.000Z' },
+    chat: { id, title, agent: agent.name, agent_id: agent.id, updated: '2026-06-09T08:41:00.000Z' },
     items,
     busy: false,
     waiting: items.some((item) => item.kind === 'permission' && !item.done)
@@ -101,10 +175,37 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
       waiting: found.items.some((item) => item.kind === 'permission' && !item.done)
     }
   }
-  const check = (name: string, url: string, folder: string, avatar: string): void => {
-    if (name.trim() === '') throw new Refused('Give the agent a name.')
-    if (!/^wss?:\/\/[^/]/.test(url.trim())) throw new Refused('The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
-    if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(folder.trim() || '/')) throw new Refused("The folder must be an absolute path on the agent's machine, like /home/me/project.")
+  let engine: Engine = structuredClone(options.engine ?? REACHABLE)
+  const secrets = options.secrets === undefined ? SECRETS : options.secrets
+  const skills = options.skills === undefined ? SKILLS : options.skills
+
+  /** What an agent of `kind` keeps of what is given, as the backend checks it: refused with its reason. */
+  const fieldsOf = (kind: Kind, given: VosApp.Agents.AddAgentParams | VosApp.Agents.UpdateAgentParams): Omit<Agent, 'id' | 'token' | 'avatar'> => {
+    const name = given.name.trim()
+    if (name === '') throw new Refused('Give the agent a name.')
+    const folder = given.folder?.trim() ?? ''
+    const kept = { ...BLANK, name, kind, folder, mcp: structuredClone(given.mcp ?? []) }
+    if (kind === 'remote') {
+      const url = given.url?.trim() ?? ''
+      if (!/^wss?:\/\/[^/]/.test(url)) throw new Refused('The address must be a ws:// or wss:// URL, like ws://example.com:5424/acp.')
+      if (!/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(folder || '/')) throw new Refused("The folder must be an absolute path on the agent's machine, like /home/me/project.")
+      return { ...kept, url, folder: folder || '/' }
+    }
+    const command = [...(given.command ?? [])]
+    if ((command[0] ?? '').trim() === '') throw new Refused("Give the agent's command.")
+    for (const v of given.env ?? []) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.name)) throw new Refused(`${v.name || 'A blank name'} cannot be the name of an environment variable.`)
+    const env = structuredClone(given.env ?? [])
+    if (kind === 'program') {
+      if (folder === '') throw new Refused('Give the folder the program works in, on this machine, like /home/me/project.')
+      if (!FOLDERS.includes(folder)) throw new Refused(`There is no folder ${folder} on this machine.`)
+      return { ...kept, command, env }
+    }
+    const image = given.image?.trim() ?? ''
+    if (image === '') throw new Refused("Choose the image each chat's container is made from: build or pull it in Containers.")
+    if (folder !== '' && !folder.startsWith('/')) throw new Refused('The work folder must be an absolute path in the container, like /workspace.')
+    return { ...kept, command, env, image, folder: folder || '/workspace', skills_dir: given.skills_dir?.trim() || '/root/.claude/skills', skills: [...(given.skills ?? [])] }
+  }
+  const checkAvatar = (avatar: string): void => {
     if (avatar.length > 200_000) throw new Refused('The picture is too big. Choose a smaller one.')
     if (avatar !== '' && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar)) throw new Refused('The picture must be a PNG, JPEG or WebP image.')
   }
@@ -152,32 +253,49 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
 
   const rpc: AgentsRpc = {
     agents: async () => agents.map((a) => ({ ...a })),
-    addAgent: async ({ name, url, token, folder, avatar }) => {
-      check(name, url, folder ?? '', avatar ?? '')
-      agents = [
-        ...agents,
-        { id: `agent-${nextAgent++}`, name: name.trim(), url: url.trim(), token: (token ?? '') !== '', folder: folder?.trim() || '/', avatar: avatar ?? '' }
-      ]
-      return agents.map((a) => ({ ...a }))
+    addAgent: async (params) => {
+      const kind = params.kind ?? 'remote'
+      const kept = fieldsOf(kind, params)
+      checkAvatar(params.avatar ?? '')
+      agents = [...agents, { ...kept, id: `agent-${nextAgent++}`, token: kind === 'remote' && (params.token ?? '') !== '', avatar: params.avatar ?? '' }]
+      return structuredClone(agents)
     },
-    updateAgent: async ({ agent, name, url, token, forget, folder, avatar, remove_avatar }) => {
-      const who = agents.find((a) => a.id === agent)
+    updateAgent: async (params) => {
+      const who = agents.find((a) => a.id === params.agent)
       if (!who) throw new Refused('There is no such agent.')
-      check(name, url, folder ?? '', avatar ?? '')
-      Object.assign(who, {
-        name: name.trim(),
-        url: url.trim(),
-        folder: folder?.trim() || '/',
-        token: (token ?? '') !== '' ? true : forget === true ? false : who.token,
-        avatar: (avatar ?? '') !== '' ? avatar : remove_avatar === true ? '' : who.avatar
+      const kept = fieldsOf(who.kind, params)
+      checkAvatar(params.avatar ?? '')
+      Object.assign(who, kept, {
+        token: who.kind === 'remote' && (params.token ?? '') !== '' ? true : params.forget === true ? false : who.token,
+        avatar: (params.avatar ?? '') !== '' ? params.avatar : params.remove_avatar === true ? '' : who.avatar
       })
       for (const c of chats) if (c.chat.agent_id === who.id) c.chat.agent = who.name
-      return agents.map((a) => ({ ...a }))
+      return structuredClone(agents)
     },
     removeAgent: async ({ agent }) => {
+      const who = agents.find((a) => a.id === agent)
+      if (!who) throw new Refused('There is no such agent.')
+      // a container agent's chats go with it; the others' stay, and can be read
+      if (who.kind === 'container') {
+        for (const c of chats) if (c.chat.agent_id === agent) running.get(c.chat.id)?.stop()
+        chats = chats.filter((c) => c.chat.agent_id !== agent)
+      }
       agents = agents.filter((a) => a.id !== agent)
-      return agents.map((a) => ({ ...a }))
+      return structuredClone(agents)
     },
+    engine: async () => structuredClone(engine),
+    connect: async ({ host }) => {
+      if (host !== '' && !/^(unix|tcp|http):\/\//.test(host)) throw new Refused('The address is not one Docker can be reached at.')
+      engine =
+        host === '' || host === 'tcp://docker:2375' ? { ...REACHABLE, host } : { reachable: false, version: '', host, problem: `Docker cannot be reached at ${host}.` }
+      return structuredClone(engine)
+    },
+    secrets: async () => {
+      if (secrets === null) throw new Refused(NO_KEYCHAIN)
+      return structuredClone([...secrets])
+    },
+    skills: async () => (skills === null ? { skills: [], problem: NO_SKILLS } : { skills: structuredClone([...skills]), problem: '' }),
+    images: async () => (engine.reachable ? { images: [...IMAGES], problem: '' } : { images: [], problem: engine.problem }),
     chats: async () => chats.map((c) => ({ ...c.chat })),
     open: async ({ chat }) => view(chat),
     send: async ({ chat: given, agent, text }) => {
@@ -250,6 +368,11 @@ export function createFailingBackend(message: string): FakeBackend {
       addAgent: refuse,
       updateAgent: refuse,
       removeAgent: refuse,
+      engine: refuse,
+      connect: refuse,
+      secrets: refuse,
+      skills: refuse,
+      images: refuse,
       chats: refuse,
       open: refuse,
       send: refuse,
