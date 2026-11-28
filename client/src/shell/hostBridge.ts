@@ -12,6 +12,8 @@
  *   `vos/request`                   a request to another app's backend (`{ app, method, params }`): forwarded as
  *                                   `app.call` for that app, held to the same limits as the frame's own calls
  *   `vos/failed`                    the page could not start
+ *   `vos/error`                     an error the page did not handle once it had started (`{ message }`): the window
+ *                                   says so, so a person is not left with a page that stopped working without a word
  *   `vos/shortcut`                  the shell's search chord was pressed in the frame
  *   `vos/telemetry`                 what the frame recorded (its calls' spans, its errors): passed on as `host.telemetry.ingest`
  *   `vos/telemetry/query`           the Telemetry app reads what was recorded (that app's frame only; `vos.tracing.query`)
@@ -122,6 +124,8 @@ export interface HostBridgeOptions {
   onReady?(): void
   /** The page could not start. */
   onFailed?(message: string): void
+  /** The page, once started, had an error it did not handle (`vos/error`). */
+  onProblem?(message: string): void
   /** A chord of the shell's own was pressed while the keys were in the frame (`vos/shortcut`). */
   onShortcut?(chord: { key: string; metaKey: boolean; ctrlKey: boolean }): void
 }
@@ -463,6 +467,16 @@ export function createHostBridge(options: HostBridgeOptions): HostBridge {
           : null
       options.onFailed?.(
         typeof text === 'string' ? text.slice(0, 1000) : 'The app could not start.'
+      )
+    } else if (name === 'vos/error') {
+      const text =
+        typeof params === 'object' && params !== null
+          ? (params as { message?: unknown }).message
+          : null
+      options.onProblem?.(
+        typeof text === 'string' && text.trim() !== ''
+          ? text.slice(0, 500)
+          : 'Something went wrong.'
       )
     } else if (name === 'vos/telemetry') {
       // what the frame recorded: passed on for this frame's app; a batch that is not one, or too heavy, is dropped

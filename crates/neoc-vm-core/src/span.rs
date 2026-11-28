@@ -24,7 +24,7 @@ fn shared_callsite() -> &'static DefaultCallsite {
         Some(file!()),
         Some(line!()),
         Some(module_path!()),
-        FieldSet::new(&[], Identifier(&SHARED)),
+        FieldSet::new(&CALL_SPAN_FIELDS, Identifier(&SHARED)),
         Kind::SPAN,
     );
     static SHARED: DefaultCallsite = DefaultCallsite::new(&META);
@@ -38,14 +38,18 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// An unentered `INFO` span named `name` at `target`, with no fields.
+/// The fields a module call's span ([`dyn_span`]) may record: how the call ended (`outcome`: `ok` or `error`) and,
+/// when it raised, what (`error`).
+pub const CALL_SPAN_FIELDS: [&str; 2] = ["outcome", "error"];
+
+/// An unentered `INFO` span named `name` at `target`, with nothing recorded yet ([`CALL_SPAN_FIELDS`]).
 pub fn dyn_span(target: &str, name: &str) -> tracing::Span {
     let meta = {
         let mut cache = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *cache.entry((target.to_owned(), name.to_owned())).or_insert_with(|| {
             let name: &'static str = Box::leak(name.to_owned().into_boxed_str());
             let target: &'static str = Box::leak(target.to_owned().into_boxed_str());
-            let fields = FieldSet::new(&[], shared_callsite().metadata().callsite());
+            let fields = FieldSet::new(&CALL_SPAN_FIELDS, shared_callsite().metadata().callsite());
             Box::leak(Box::new(Metadata::new(
                 name,
                 target,

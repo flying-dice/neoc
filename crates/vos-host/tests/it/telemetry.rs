@@ -2,7 +2,7 @@
 //! Telemetry (NEOC-521 POC): a page's call, the host's `app.call` span and the backend's `lib:log` line share the
 //! page's trace, and what the frame recorded joins it, all read back by one trace id.
 
-use crate::common::{browser, built_backend, publish_package, rpc, start, temp};
+use crate::common::{browser, built_backend, publish_package, rpc, start, temp, Ws};
 use serde_json::json;
 use tracing_subscriber::layer::SubscriberExt;
 use vos_host::startup::prepare_data_dir;
@@ -47,7 +47,7 @@ async fn the_page_the_host_and_the_backend_share_one_trace() {
     let spans = found["result"]["spans"].as_array().unwrap();
     let logs = found["result"]["logs"].as_array().unwrap();
     let by_name = |name: &str| spans.iter().find(|s| s["name"] == name).unwrap_or_else(|| panic!("{found}"));
-    let host = by_name("app.call");
+    let host = by_name("app.call _overview");
     assert_eq!(
         (&host["parentSpanId"], &host["source"], &host["status"], &host["app"]),
         (&json!(PAGE_SPAN), &json!("host"), &json!("ok"), &json!("traced")),
@@ -89,5 +89,48 @@ async fn the_page_the_host_and_the_backend_share_one_trace() {
             .any(|t| t["traceId"] == TRACE && t["name"] == "rpc overview"),
         "the page's span is the trace's root: {listed}"
     );
+
+    failures_are_said(&mut ws).await;
     r.stop().await;
+}
+
+/// A call that fails is a line in the logs, in its trace, that says what went wrong, though the app logged nothing.
+async fn failures_are_said(ws: &mut Ws) {
+    // a call that fails is a line in the logs, in its trace, that says what went wrong, though the app logged nothing:
+    // a refusal is a warning, a bug an error (with where it happened), and so is background work that failed later
+    let failures = [
+        (
+            "_refuse",
+            "4bf92f3577b34da6a3ce929d0e0e47ab",
+            "warn",
+            "the app refused the call: Docker cannot be reached",
+        ),
+        ("_crash", "4bf92f3577b34da6a3ce929d0e0e47ac", "error", "app code failed: traced/app.luau:"),
+        ("_background", "4bf92f3577b34da6a3ce929d0e0e47ad", "error", "a background task failed: "),
+    ];
+    for (n, (method, trace, severity, says)) in failures.into_iter().enumerate() {
+        let id = 10 + i64::try_from(n).unwrap() * 2;
+        let call =
+            json!({"app": "traced", "method": method, "traceparent": format!("00-{trace}-{PAGE_SPAN}-01")});
+        let _ = rpc(ws, id, "app.call", call).await;
+        let mut found = json!(null);
+        for _ in 0..50 {
+            found = rpc(ws, id + 1, "host.telemetry.query", json!({"traceId": trace})).await;
+            if found["result"]["logs"].as_array().is_some_and(|l| !l.is_empty()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let logs = found["result"]["logs"].as_array().unwrap();
+        assert!(
+            logs.iter().any(|l| l["severity"] == severity
+                && l["app"] == "traced"
+                && l["body"].as_str().is_some_and(|b| b.starts_with(says))),
+            "{method}: {found}"
+        );
+        assert!(
+            !logs.iter().any(|l| l["body"].as_str().is_some_and(|b| b.contains("stack traceback"))),
+            "{found}"
+        );
+    }
 }

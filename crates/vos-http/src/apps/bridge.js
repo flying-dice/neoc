@@ -4,7 +4,8 @@
 // wrapper) over postMessage, as JSON-RPC 2.0 in a dialect of MCP Apps (SEP-1865, 2026-01-26):
 //
 //   app  -> host   ui/initialize (request), ui/notifications/initialized, ui/request-display-mode, ui/open-link,
-//                  ping, vos/failed (the page could not start), and the bus and tracing (`vos/...`)
+//                  ping, vos/failed (the page could not start), vos/error (an error the page did not handle, once it
+//                  started), and the bus and tracing (`vos/...`)
 //   host -> app    ui/notifications/host-context-changed, ui/resource-teardown (request), and vos/event
 //
 // `ui/` names are the specification's; what is vos's own is under `vos/`; a page reaches its backend (and another
@@ -38,7 +39,13 @@
 // the root of a trace of its own), and its W3C `traceparent` goes with the call (`_meta`, next to `params`) so the
 // host's and the backend's spans join it. A page opens spans of its own (`span(name, fields).in_scope(fn)`) and writes
 // events (`info(message, fields)`); errors after the start, unhandled rejections and a failed start are error events.
+// What the page writes to its console is recorded too, at its level (`console.log` and `console.debug` as debug), and
+// still written: a framework's warning or a library's error is in the logs without the app doing anything for it.
 // Records are sent to the host page in batches (`vos/telemetry`): every 2 s, at 50 records, and when the page goes.
+//
+// An error the page did not handle once it has started (a throw outside every handler, a rejection nobody caught, a
+// listener that threw) is told to the host page as well (`vos/error`), so the window can say so: nobody is left looking
+// at a page that stopped working without a word because its developer did not catch everything.
 //
 // The span the page is in: the page has no async context (a JavaScript engine does not carry one across `await`), so
 // `in_scope` makes its span current for what its function does before it first waits, and, while its promise is
@@ -152,6 +159,58 @@
       attributes: Object.assign(plainFields(fields), call ? { 'vos.correlated': 'last-call' } : {})
     })
   }
+  // ---- the page's console ------------------------------------------------------------------------------------------
+  // Each level is written as before and recorded; the bridge's own lines are written only (`said`), never recorded.
+  var CONSOLE_LEVELS = { error: 'error', warn: 'warn', info: 'info', log: 'debug', debug: 'debug' }
+  var said = {}
+  var pageConsole = window.console
+  Object.keys(CONSOLE_LEVELS).forEach(function (name) {
+    var original = pageConsole && typeof pageConsole[name] === 'function' ? pageConsole[name] : null
+    said[name] = function () {
+      if (original) original.apply(pageConsole, arguments)
+    }
+    if (!original) return
+    pageConsole[name] = function () {
+      original.apply(pageConsole, arguments)
+      try {
+        recordConsole(CONSOLE_LEVELS[name], Array.prototype.slice.call(arguments))
+      } catch (error) {
+        // a value that cannot be read: tracing is never the app's problem
+      }
+    }
+  })
+  function consoleText(value) {
+    if (typeof value === 'string') return value
+    if (value instanceof Error) return value.message || String(value)
+    try {
+      var json = JSON.stringify(value)
+      return json === undefined ? String(value) : json
+    } catch (error) {
+      return String(value)
+    }
+  }
+  function recordConsole(level, args) {
+    var error = null
+    for (var i = 0; i < args.length && !error; i++) if (args[i] instanceof Error) error = args[i]
+    var fields = { 'vos.console': true }
+    if (error) {
+      fields['exception.type'] = error.name
+      if (error.stack) fields['exception.stacktrace'] = String(error.stack).slice(0, 2000)
+    }
+    recordEvent(level, args.map(consoleText).join(' '), fields)
+  }
+
+  /** An error the page did not handle, once it started: recorded, and told to the host page (see the header). */
+  function problem(error, fields) {
+    recordError(error, fields)
+    var message = error instanceof Error ? error.message || String(error) : (error && error.message) || String(error)
+    try {
+      post({ method: 'vos/error', params: { message: String(message).slice(0, 500) } })
+    } catch (e) {
+      // the host is gone: nothing to tell
+    }
+  }
+
   function recordError(error, fields) {
     var e = error instanceof Error ? error : null
     recordEvent(
@@ -500,7 +559,8 @@
       try {
         fn(arg)
       } catch (error) {
-        console.error('vos: a listener failed', error)
+        said.error('vos: a listener failed', error)
+        problem(error, { 'vos.unhandled': 'listener' })
       }
     })
   }
@@ -581,7 +641,7 @@
   var failed = false
   function fail(message) {
     failed = true
-    console.error('vos: ' + message)
+    said.error('vos: ' + message)
     recordEvent('error', 'the app could not start: ' + message, { 'vos.phase': 'startup' })
     flush()
     show('This app could not start: ' + message)
@@ -619,10 +679,10 @@
   // after the load: an error or a rejection nobody handled is recorded (before it, `fail` says the page could not start)
   window.addEventListener('error', function (e) {
     if (!loaded) return
-    recordError(e.error || e.message, { filename: e.filename, lineno: e.lineno, colno: e.colno })
+    problem(e.error || e.message, { filename: e.filename, lineno: e.lineno, colno: e.colno })
   })
   window.addEventListener('unhandledrejection', function (e) {
-    recordError(e.reason, { 'vos.unhandled': 'rejection' })
+    problem(e.reason, { 'vos.unhandled': 'rejection' })
   })
 
   window.addEventListener('error', function (e) {

@@ -300,12 +300,18 @@ async fn until_unloaded<T>(
 fn port_error(app: &AppId, e: VmError) -> PortError {
     match e {
         VmError::Script(ref script) | VmError::Load { error: ref script, .. } => {
-            tracing::warn!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
+            // a bug in the app: an error, said with what it raised and where (the message carries the error)
+            tracing::error!(%app, error = %script, traceback = script.traceback.as_deref().unwrap_or(""), "app code failed");
             PortError::Rejected(e.to_string())
         }
-        VmError::Rpc { code, message, data } => PortError::Rpc { code, message, data },
+        // the app failed the call on purpose (`error("RPC-32602 ...")`): said, as a warning, with what it said
+        VmError::Rpc { code, message, data } => {
+            tracing::warn!(%app, code, error = %message, "the app answered with an error");
+            PortError::Rpc { code, message, data }
+        }
         // JSON-RPC's "method not found": the page called something the backend does not implement
         VmError::NoSuchHandler(name) => {
+            tracing::warn!(%app, method = %name, "the app has no handler for {name}");
             PortError::Rpc { code: -32601, message: format!("Method not found: {name}"), data: None }
         }
         // a bug in Rust code, not the app's: the caller is told, the app stays loaded, and the host's log says so
@@ -313,7 +319,11 @@ fn port_error(app: &AppId, e: VmError) -> PortError {
             tracing::error!(%app, %message, "a host function panicked in a call into the app");
             PortError::Internal(e.to_string())
         }
-        other => PortError::Rejected(other.to_string()), // ctx:fail, invalid input, bad data
+        // ctx:fail, invalid input, bad data: the app refused, for a reason it gave
+        other => {
+            tracing::warn!(%app, error = %other, "the app refused the call");
+            PortError::Rejected(other.to_string())
+        }
     }
 }
 

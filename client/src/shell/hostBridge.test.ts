@@ -34,6 +34,7 @@ interface Rig {
   events: {
     ready: number
     failed: string[]
+    problems: string[]
     chords: { key: string; metaKey: boolean; ctrlKey: boolean }[]
   }
   opened: string[]
@@ -49,6 +50,7 @@ function rig(
   const events = {
     ready: 0,
     failed: [] as string[],
+    problems: [] as string[],
     chords: [] as { key: string; metaKey: boolean; ctrlKey: boolean }[]
   }
   const opened: string[] = []
@@ -73,6 +75,7 @@ function rig(
     context: () => current,
     onReady: () => events.ready++,
     onFailed: (m) => events.failed.push(m),
+    onProblem: (m) => events.problems.push(m),
     onShortcut: (chord) => events.chords.push(chord)
   })
   const flush = (): Promise<unknown> => new Promise((r) => setTimeout(r, 0))
@@ -143,6 +146,23 @@ describe('the handshake', () => {
     bridge.receive({ source: FRAME, data: { jsonrpc: '2.0', method: 'vos/failed' } })
     expect(events.ready).toBe(1)
     expect(events.failed).toEqual(['it threw', 'The app could not start.'])
+  })
+
+  test('an error the page did not handle reaches the window, said plainly when the page said nothing', () => {
+    const { bridge, events } = rig()
+    bridge.receive({
+      source: FRAME,
+      data: { jsonrpc: '2.0', method: 'vos/error', params: { message: 'Method not found: _save' } }
+    })
+    bridge.receive({
+      source: FRAME,
+      data: { jsonrpc: '2.0', method: 'vos/error', params: { message: ' ' } }
+    })
+    bridge.receive({
+      source: { other: true },
+      data: { jsonrpc: '2.0', method: 'vos/error', params: { message: 'x' } }
+    })
+    expect(events.problems).toEqual(['Method not found: _save', 'Something went wrong.'])
   })
 
   test('a ping is answered', () => {
@@ -419,7 +439,7 @@ describe('what comes from the page and what goes into the frame', () => {
     await flush()
     expect(calls).toEqual([])
     expect(posted).toEqual([])
-    expect(events).toEqual({ ready: 0, failed: [], chords: [] })
+    expect(events).toEqual({ ready: 0, failed: [], problems: [], chords: [] })
   })
 
   test('a call that cannot be read is answered, so the page’s promise settles', async () => {

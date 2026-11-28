@@ -13,6 +13,10 @@
 //!
 //! A host function that panics inside a task fails that task like an error does ([`Outcome::Failed`] with
 //! "a host function panicked: ..."): nobody else is above a task to hand the panic to (see [`crate::panics`]).
+//!
+//! A task that fails while nothing is waiting for it is said at once where the engine's log lines go, when the
+//! embedder took them ([`crate::log_sink`]): a program that runs for good (an app's backend) never reaches
+//! [`Scheduler::wait_all`], so its background work would otherwise fail without a word.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +29,7 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use crate::lifecycle::{Life, Pruned, entrance, first_slice, inherited};
+use crate::log_sink::{LogFn, log_sink};
 use crate::panics;
 
 /// How a task ended.
@@ -44,15 +49,21 @@ struct TaskInner {
     notify: Notify,
     abort: Mutex<Option<tokio::task::AbortHandle>>,
     awaited: AtomicBool,
+    /// Where the engine's log lines go, if the embedder took them: a failure nothing waits for is said there.
+    sink: Option<LogFn>,
+    /// The failure was said there already: [`Scheduler::wait_all`] does not say it again.
+    reported: AtomicBool,
 }
 
 impl TaskInner {
-    fn new() -> Self {
+    fn new(sink: Option<LogFn>) -> Self {
         Self {
             outcome: Mutex::new(None),
             notify: Notify::new(),
             abort: Mutex::new(None),
             awaited: AtomicBool::new(false),
+            sink,
+            reported: AtomicBool::new(false),
         }
     }
 
@@ -60,6 +71,12 @@ impl TaskInner {
     fn complete(&self, outcome: Outcome) {
         let mut guard = self.outcome.lock();
         if guard.is_none() {
+            if let (Outcome::Failed(error), Some(sink)) = (&outcome, &self.sink)
+                && !self.awaited.load(Ordering::Relaxed)
+            {
+                self.reported.store(true, Ordering::Relaxed);
+                sink("error", &failed_task_line(error));
+            }
             *guard = Some(outcome);
             drop(guard);
             self.notify.notify_waiters();
@@ -100,7 +117,7 @@ impl TaskInner {
 
     /// The error of a task that failed and that nobody has awaited.
     fn unobserved_error(&self) -> Option<String> {
-        if self.awaited.load(Ordering::Relaxed) {
+        if self.awaited.load(Ordering::Relaxed) || self.reported.load(Ordering::Relaxed) {
             return None;
         }
         match &*self.outcome.lock() {
@@ -108,6 +125,19 @@ impl TaskInner {
             _ => None,
         }
     }
+}
+
+/// The log line of a task that failed while nothing waited for it, as `lib:log` writes one (JSON: `level`, `msg`,
+/// then the fields).
+fn failed_task_line(error: &str) -> String {
+    let error = error
+        .split_once(
+            "
+stack traceback:",
+        )
+        .map_or(error, |(message, _)| message)
+        .trim();
+    serde_json::json!({ "level": "error", "msg": "a background task failed", "error": error }).to_string()
 }
 
 /// A task a script started. Clones are the same task.
@@ -254,7 +284,7 @@ struct Admitted<'lua> {
 fn admit(lua: &Lua, body: Function) -> mlua::Result<Result<Admitted<'_>, TaskHandle>> {
     // the task runs in a thread of the host's, which the script holds no handle to
     let thread = lua.create_thread(body)?;
-    let inner = Arc::new(TaskInner::new());
+    let inner = Arc::new(TaskInner::new(log_sink(lua)));
     let scheduler = lua
         .app_data_ref::<Scheduler>()
         .ok_or_else(|| mlua::Error::runtime("this engine has no task scheduler (`install_runtime_state`)"))?;

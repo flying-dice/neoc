@@ -2,21 +2,31 @@
 <script lang="ts">
   import LogRow from '../molecules/LogRow.svelte'
   import { logKey, type Level, type Log } from '../lib/telemetry'
+  import type { SourceFilter } from '../lib/telemetry.svelte'
 
   interface Props {
     logs: readonly Log[]
     query: string
     level: Level
+    /** Whose logs are shown: every source's, or one source's. */
+    source?: SourceFilter
     /** The log open beside the list (its `logKey`); nothing is marked when left out. */
     selected?: string | null
     back?: boolean
     onsearch: (text: string) => void
     onlevel: (level: Level) => void
+    onsource?: (source: SourceFilter) => void
     onopen: (log: Log) => void
     onback?: () => void
   }
 
-  let { logs, query, level, selected = null, back = false, onsearch, onlevel, onopen, onback }: Props = $props()
+  let { logs, query, level, source = 'all', selected = null, back = false, onsearch, onlevel, onsource, onopen, onback }: Props = $props()
+  const SOURCES = [
+    { value: 'all', label: 'Everywhere' },
+    { value: 'browser', label: 'Page' },
+    { value: 'backend', label: 'Backend' },
+    { value: 'host', label: 'Host' }
+  ]
 
   const LEVELS = [
     { value: 'debug', label: 'All' },
@@ -54,6 +64,8 @@
         data-testid="telemetry-logs-search"
       ></ui-text-field>
       <ui-segmented block label="Show" value={level} options={LEVELS} onchange={(e) => onlevel(e.detail.value as Level)} data-testid="telemetry-logs-level"
+      ></ui-segmented>
+      <ui-segmented block label="Written by" value={source} options={SOURCES} onchange={(e) => onsource?.(e.detail.value as SourceFilter)} data-testid="telemetry-logs-source"
       ></ui-segmented>
     </div>
     {#if logs.length > 0}

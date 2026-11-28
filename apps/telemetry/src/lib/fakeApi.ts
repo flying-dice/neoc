@@ -51,7 +51,9 @@ export const LOGS: readonly Log[] = [
     'vos.correlated': 'last-call'
   }),
   log(FAILED_TRACE, '6666666666666666', 5008, 'error', 'backend', 'systemctl refused the restart', { unit: 'nginx.service' }),
-  log(FAILED_TRACE, '6666666666666666', 5008.5, 'warn', 'host', 'app code failed')
+  log(FAILED_TRACE, '6666666666666666', 5008.5, 'error', 'backend', 'app code failed: services/main.luau:40: nginx.service: access denied', {
+    error: 'services/main.luau:40: nginx.service: access denied'
+  })
 ]
 
 function summaries(spans: readonly Span[], logs: readonly Log[]): TraceSummary[] {
