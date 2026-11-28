@@ -7,6 +7,7 @@ local app = require("vos:app")
 local bollard = require("vnd:bollard")
 local task = require("std:task")
 local text = require("./text")
+local tracing = require("lib:tracing")
 
 local engine = {}
 
@@ -43,6 +44,11 @@ local clients: Clients? = nil
 local watched: { [Events]: true } = {}
 -- counts the choices of a Docker: a watcher that sees it move looks for the new one at once
 local chosen = 0
+-- Whether Docker could be reached when it was last looked for, and what it said when it could not (its own words, for
+-- whoever reads the logs; the person is told `engine.sentence`). The app's logs say when that changes, once, not at
+-- every look: a window that polls a Docker that is away would otherwise bury everything else.
+local was_reachable: boolean? = nil
+local last_error = ""
 
 function engine.host(): string
   local host = app.kv:get(HOST)
@@ -75,6 +81,7 @@ local function connected(): (Clients?, string?)
   for _, timeout in { READ_TIMEOUT, ACT_TIMEOUT, PULL_TIMEOUT } do
     local client, err = bollard.connect { host = host, timeout = timeout }
     if not client then
+      last_error = if err then err.message else ""
       return nil, engine.sentence(err)
     end
     table.insert(made, client)
@@ -101,22 +108,36 @@ function engine.puller(): (Client?, string?)
   return if all then all.pulling else nil, problem
 end
 
+-- Say in the app's logs that Docker went away, or came back, when it did.
+local function noted(status: Status): Status
+  if status.reachable ~= was_reachable then
+    if not status.reachable then
+      tracing.warn(status.problem, { host = status.host, error = last_error })
+    elseif was_reachable == false then
+      tracing.info("Docker can be reached again", { host = status.host, version = status.version })
+    end
+    was_reachable = status.reachable
+  end
+  return status
+end
+
 -- Whether Docker can be reached. Never fails: a Docker that is away is an answer.
 function engine.status(): Status
   local status: Status = { reachable = false, version = "", host = engine.host(), problem = "" }
   local api, problem = engine.reader()
   if not api then
     status.problem = problem or ""
-    return status
+    return noted(status)
   end
   local version, err = api:version()
   if not version then
+    last_error = if err then err.message else ""
     status.problem = engine.sentence(err)
-    return status
+    return noted(status)
   end
   status.reachable = true
   status.version = version.Version or ""
-  return status
+  return noted(status)
 end
 
 -- Choose the Docker the app uses: an address, or empty for this machine's own. The address is only checked for
@@ -145,6 +166,8 @@ function engine.use(host: string): string?
     app.kv:set(HOST, host)
   end
   clients = nil
+  -- another Docker: whether it can be reached is said again, whatever the last one was
+  was_reachable = nil
   -- the watchers read the events of the Docker that was chosen before: end them, and they look for the new one
   chosen += 1
   for events in watched do

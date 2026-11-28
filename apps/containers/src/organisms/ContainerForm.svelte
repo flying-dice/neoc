@@ -371,22 +371,27 @@
     background: var(--bg-secondary);
   }
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, 2fr) minmax(max-content, 1fr);
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
-    padding: 0 8px 6px;
+    padding: 0 8px 8px;
     border-bottom: 1px solid var(--separator);
   }
   h1 {
     min-width: 0;
     margin: 0;
+    text-align: center;
     font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .bar > ui-button {
+    justify-self: start;
+  }
   .save {
+    justify-self: end;
     display: flex;
     align-items: center;
     gap: 4px;

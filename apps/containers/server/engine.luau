@@ -8,6 +8,7 @@ local docker = require("vos:docker")
 local spec = require("./spec")
 local stacks = require("./stacks")
 local time = require("std:time")
+local tracing = require("lib:tracing")
 
 local engine = {}
 
@@ -347,7 +348,13 @@ local function make(api: vnd_bollard_Client, asked: spec.Spec, name: string?): (
   if asked.start then
     local _, start_err = api:start_container(made.Id)
     if start_err then
-      api:remove_container(made.Id, { force = true, volumes = true })
+      local _, left_err = api:remove_container(made.Id, { force = true, volumes = true })
+      if left_err then
+        tracing.warn(
+          "could not remove the container that failed to start",
+          { error = sentence(left_err), container = made.Id }
+        )
+      end
       return nil, sentence(start_err)
     end
   end
@@ -412,7 +419,10 @@ function engine.recreate(container: string, asked: spec.Spec, progress: Progress
   local _, rename_err = api:rename_container(id, aside)
   if rename_err then
     if ran then
-      api:start_container(id)
+      local _, again_err = api:start_container(id)
+      if again_err then
+        tracing.warn("could not start the old container again", { error = sentence(again_err), container = id })
+      end
     end
     return nil, sentence(rename_err)
   end
@@ -425,13 +435,22 @@ function engine.recreate(container: string, asked: spec.Spec, progress: Progress
         `{failure} The old container is stopped as {aside}: it could not have its name back ({sentence(back_err)}).`
     end
     if ran then
-      api:start_container(id)
+      local _, again_err = api:start_container(id)
+      if again_err then
+        tracing.warn("could not start the old container again", { error = sentence(again_err), container = id })
+      end
     end
     return nil, failure
   end
   -- its named volumes stay; what was only in the old container goes with it. Should Docker refuse, the new one runs all
   -- the same, and the old one is left stopped as `aside`, in the list, for the person to remove
-  api:remove_container(id, { force = true })
+  local _, old_err = api:remove_container(id, { force = true })
+  if old_err then
+    tracing.warn(
+      "could not remove the old container, left stopped",
+      { error = sentence(old_err), container = id, aside = aside }
+    )
+  end
   return made, nil
 end
 

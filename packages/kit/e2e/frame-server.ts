@@ -62,10 +62,18 @@ export async function startFrameServer(): Promise<FrameServer> {
         .end(framed ? PAGE : STANDALONE)
     } else if (url.pathname === '/page.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' }).end(PAGE_JS)
-    } else if (url.pathname === '/kit/kit.js' || url.pathname === '/kit/tokens.css') {
-      const type = url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css'
+    } else if (
+      url.pathname === '/kit/kit.js' ||
+      url.pathname === '/kit/tokens.css' ||
+      url.pathname === '/kit/fonts/InterVariable.woff2'
+    ) {
+      const type = url.pathname.endsWith('.js')
+        ? 'text/javascript'
+        : url.pathname.endsWith('.css')
+          ? 'text/css'
+          : 'font/woff2'
       res
-        .writeHead(200, { 'content-type': type })
+        .writeHead(200, { 'content-type': type, 'access-control-allow-origin': '*' })
         .end(readFileSync(join(KIT, url.pathname.slice(5))))
     } else res.writeHead(404).end()
   })

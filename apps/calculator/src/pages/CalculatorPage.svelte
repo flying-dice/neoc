@@ -37,7 +37,7 @@
     align-items: center;
     height: 100%;
     /* the top clears the window's grabber, which the shell draws over the frame */
-    padding: 28px 12px 12px;
+    padding: 28px 16px 16px;
     background: var(--bg);
     color: var(--label);
     color-scheme: dark;

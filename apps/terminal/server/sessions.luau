@@ -2,13 +2,13 @@
 -- The sessions: each a pseudo-terminal with the person's shell on it (`vnd:portable_pty`), the output it has sent, and
 -- when its page was last heard. The handlers (main.luau) are thin over this; the decisions are written at the top of
 -- main.luau, and the numbers are here.
-local app = require("vos:app")
 local base64 = require("lib:base64")
 local env = require("std:env")
 local portable_pty = require("vnd:portable_pty")
 local random = require("lib:random")
 local task = require("std:task")
 local time = require("std:time")
+local tracing = require("lib:tracing")
 
 local sessions = {}
 
@@ -96,7 +96,7 @@ local function pump(session: Session)
     local data, err = session.pty:read(CHUNK)
     if not data then
       if err then
-        app.log(`terminal: reading failed: {err.message}`)
+        tracing.warn("could not read the terminal's output", { error = err.message, session = session.id })
       end
       break
     end
@@ -122,6 +122,12 @@ local function watch(session: Session)
     waited += task.wait(WINDOW_POLL)
   end
   session.pty:close()
+  if not status then
+    tracing.warn(
+      "could not tell how the shell ended",
+      { error = if err then err.message else "unknown", session = session.id }
+    )
+  end
   local exit: terminal_Exit = if status
     then { code = status.exit_code, signal = status.signal }
     else { code = 1, signal = if err then err.message else "unknown" }
@@ -136,7 +142,7 @@ task.spawn(function()
     task.wait(SWEEP)
     for _, session in open do
       if silentFor(session) > IDLE then
-        app.log(`terminal: a session was not heard for {IDLE} seconds and is ended`)
+        tracing.info("ended a terminal session that was not heard from", { session = session.id, seconds = IDLE })
         finish(session)
       end
     end
@@ -179,7 +185,7 @@ function sessions.start(rows: number, cols: number): (string?, string?)
     env = { TERM = "xterm-256color" },
   }
   if not pty then
-    app.log(`terminal: {if err then err.message else "no terminal"}`)
+    tracing.warn("could not start the shell", { error = if err then err.message else "no terminal" })
     return nil, "The shell could not be started."
   end
   local session: Session = {

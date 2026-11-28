@@ -4,19 +4,21 @@
   type Agent = VosApp.Agents.Agent
   type Chat = VosApp.Agents.Chat
   import ChatSidebar from './ChatSidebar.svelte'
-  import { PICTURE, PICTURED, SCRIPTED } from '../lib/fakeApi'
+  import { CODER, ECHO, PICTURE, PICTURED, SCRIPTED } from '../lib/fakeApi'
 
   interface Args {
     agents: readonly Agent[]
     chats: readonly Chat[]
     selected?: string
     onstart: (agent: Agent) => void
-    onedit: (agent: Agent | null) => void
+    onedit: (agent: Agent) => void
+    onadd: () => void
     onopen: (chat: Chat) => void
   }
 
   const onstart = fn<(agent: Agent) => void>()
-  const onedit = fn<(agent: Agent | null) => void>()
+  const onedit = fn<(agent: Agent) => void>()
+  const onadd = fn<() => void>()
   const onopen = fn<(chat: Chat) => void>()
 
   const chat = (id: string, title: string, agent: Agent = SCRIPTED): Chat => ({ id, title, agent: agent.name, agent_id: agent.id, updated: '2026-06-09T08:41:00.000Z' })
@@ -27,10 +29,11 @@
     title: 'Organisms/ChatSidebar',
     component: ChatSidebar,
     tags: ['autodocs'],
-    args: { agents: [SCRIPTED], chats: [], onstart, onedit, onopen },
+    args: { agents: [SCRIPTED], chats: [], onstart, onedit, onadd, onopen },
     beforeEach: () => {
       onstart.mockClear()
       onedit.mockClear()
+      onadd.mockClear()
       onopen.mockClear()
     },
     render: template
@@ -82,6 +85,17 @@
   }}
 />
 
+<!-- Agents of the three types: under its name, a remote agent's address, Container, or a program's command. -->
+<Story
+  name="Agents of every type"
+  args={{ agents: [CODER, ECHO, SCRIPTED] }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('agents-agent-scripted')).toHaveProperty('subheading', SCRIPTED.url)
+    await expect(canvas.getByTestId('agents-agent-coder')).toHaveProperty('subheading', 'Container')
+    await expect(canvas.getByTestId('agents-agent-echo')).toHaveProperty('subheading', 'python3 -u echo_agent.py')
+  }}
+/>
+
 <!-- A chat with an agent that was removed: its initials, from the name it had. -->
 <Story name="A removed agent's chat" args={{ chats: [chat('r', 'An old chat', { ...PICTURED, id: 'gone', name: 'Gone away' })] }} />
 
@@ -100,6 +114,6 @@
     await expect(onedit).toHaveBeenCalledWith(SCRIPTED)
     await expect(onstart).not.toHaveBeenCalled()
     await userEvent.click(canvas.getByTestId('agents-add'))
-    await expect(onedit).toHaveBeenCalledWith(null)
+    await expect(onadd).toHaveBeenCalledTimes(1)
   }}
 />

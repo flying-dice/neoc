@@ -1,10 +1,12 @@
-<!-- @organism ImageList — the images Docker has, each with its id, size, the day it was built and how many containers were made from it, the buttons that remove one or make a container of it, the field an image is pulled by with how the pull goes, and the prune of the dangling ones with what it freed -->
+<!-- @organism ImageList — the images Docker has, each with its id, size, the day it was built and how many containers were made from it, the buttons that remove one or make a container of it, the field an image is pulled by with how the pull goes, the recipes images are built from with how each one's image stands, and the prune of the dangling ones with what it freed -->
 <script lang="ts">
   type Image = VosApp.Containers.Image
+  type Recipe = VosApp.Containers.Recipe
   import PullMeter from '../molecules/PullMeter.svelte'
   import ResourceRow from '../molecules/ResourceRow.svelte'
   import SectionBar from '../molecules/SectionBar.svelte'
   import { bytes, count, day, imageName, listed, shortId, usage } from '../lib/format'
+  import type { RecipeStatus } from '../lib/recipes.svelte'
   import { danglingOf, type Pull } from '../lib/resources.svelte'
 
   interface Props {
@@ -23,9 +25,17 @@
     /** Make a container of the image: the form, with the image filled in. */
     onnew: (image: Image) => void
     onprune: () => void
+    /** The recipes images are built from. */
+    recipes: readonly Recipe[]
+    /** How a recipe's image stands. */
+    statusOf: (recipe: Recipe) => RecipeStatus
+    /** Open a recipe, to change, build or remove it. */
+    onrecipe: (recipe: Recipe) => void
+    /** Open the form for a new recipe. */
+    onnewrecipe: () => void
   }
 
-  let { images, pull = $bindable(), pruning = false, report, back = false, onback, onpull, onremove, onnew, onprune }: Props = $props()
+  let { images, pull = $bindable(), pruning = false, report, back = false, onback, onpull, onremove, onnew, onprune, recipes, statusOf, onrecipe, onnewrecipe }: Props = $props()
 
   const valueOf = (e: Event): string => (e.currentTarget as unknown as { value: string }).value
   const total = $derived(images.reduce((sum, image) => sum + image.size, 0))
@@ -108,6 +118,26 @@
     {#if pull.busy && pull.progress}
       <PullMeter pulling={pull.progress} testid="containers-pull-progress" />
     {/if}
+    <ui-list variant="inset" label="Build an image">
+      <ui-section
+        header="Build an Image"
+        footer="A recipe is the name of an image and the Dockerfile it is built from."
+        data-testid="containers-recipes"
+      >
+        {#each recipes as recipe (recipe.id)}
+          <ui-row
+            heading={recipe.tag}
+            subheading={statusOf(recipe).text}
+            icon="doc"
+            chevron
+            tappable
+            onpress={() => onrecipe(recipe)}
+            data-testid="containers-recipe-{recipe.tag}"
+          ></ui-row>
+        {/each}
+        <ui-row heading="New Recipe" action tappable onpress={onnewrecipe} data-testid="containers-recipe-new"></ui-row>
+      </ui-section>
+    </ui-list>
     {#if report}
       <ui-banner tone="success" data-testid="containers-images-report">{report}</ui-banner>
     {/if}

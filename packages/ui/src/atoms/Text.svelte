@@ -63,7 +63,7 @@
   .subheadline { font: var(--type-subheadline); letter-spacing: var(--tracking-subheadline); }
   .footnote { font: var(--type-footnote); letter-spacing: var(--tracking-footnote); }
   .caption1 { font: var(--type-caption1); }
-  .caption2 { font: var(--type-caption2); letter-spacing: 0.07px; }
+  .caption2 { font: var(--type-caption2); letter-spacing: var(--tracking-caption); }
 
   .c-primary { color: var(--label); }
   .c-secondary { color: var(--label-secondary); }

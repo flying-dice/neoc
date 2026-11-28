@@ -8,19 +8,26 @@
     /** How many there are, before the search. */
     total: number
     query: string
+    /** Only the traces where something failed are listed. */
+    failedOnly?: boolean
     /** The trace open beside the list; nothing is marked when left out (a narrow window shows one thing). */
     selected?: string | null
     /** Show the way back to the views (a window too narrow for both). */
     back?: boolean
     onsearch: (text: string) => void
+    onfailed?: (on: boolean) => void
     onopen: (trace: TraceSummary) => void
     onback?: () => void
   }
 
-  let { traces, total, query, selected = null, back = false, onsearch, onopen, onback }: Props = $props()
+  let { traces, total, query, failedOnly = false, selected = null, back = false, onsearch, onfailed, onopen, onback }: Props = $props()
+  const SHOW = [
+    { value: 'all', label: 'All' },
+    { value: 'failed', label: 'Failed' }
+  ]
 
   const valueOf = (e: Event): string => (e.target as HTMLInputElement).value
-  const header = $derived(query.trim() === '' ? `${total} ${total === 1 ? 'Trace' : 'Traces'}` : `${traces.length} of ${total}`)
+  const header = $derived(query.trim() === '' && !failedOnly ? `${total} ${total === 1 ? 'Trace' : 'Traces'}` : `${traces.length} of ${total}`)
 </script>
 
 <section class="list" aria-label="Traces">
@@ -50,6 +57,8 @@
         oninput={(e) => onsearch(valueOf(e))}
         data-testid="telemetry-traces-search"
       ></ui-text-field>
+      <ui-segmented block label="Show" value={failedOnly ? 'failed' : 'all'} options={SHOW} onchange={(e) => onfailed?.(e.detail.value === 'failed')} data-testid="telemetry-traces-show"
+      ></ui-segmented>
     </div>
     {#if traces.length > 0}
       <ui-list variant="insetGrouped" selection="single" label="Traces" data-testid="telemetry-traces">
@@ -96,7 +105,7 @@
   .controls {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     padding: 0 16px 8px;
   }
 </style>

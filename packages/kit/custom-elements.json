@@ -2443,7 +2443,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A picker (SwiftUI's `Picker` in its menu style, a pop-up button): one choice from a list too long, or too changeable,\nfor a `ui-segmented`. It shows the chosen option and opens the system's own menu of them, so the keyboard, type-ahead\nand a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is\nsubmitted, and `required` keeps the form invalid until an option is chosen.\n\nWith a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it is a 44 pt high target, all\nof which opens the menu.",
+          "description": "A picker (SwiftUI's `Picker` in its menu style, a pop-up button): one choice from a list too long, or too changeable,\nfor a `ui-segmented`. It shows the chosen option and opens the system's own menu of them, so the keyboard, type-ahead\nand a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is\nsubmitted, and `required` keeps the form invalid until an option is chosen.\n\nWith a `value` no option has, it shows nothing chosen. Drawn 36 pt high inside a 44 pt high target, all\nof which opens the menu.",
           "name": "UiPicker",
           "cssParts": [
             {
@@ -3654,7 +3654,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A segmented control (UISegmented Control): one choice from a few. A radio group: Tab reaches the selected segment,\nthe arrow keys move the selection, Home and End jump. A form control (see `FormControl`): the selected value is\nsubmitted, and `required` keeps the form invalid until a segment is chosen.\n\nEach segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high; with `hit` they have a\n44 pt high hit area.",
+          "description": "A segmented control (UISegmented Control): one choice from a few. A radio group: Tab reaches the selected segment,\nthe arrow keys move the selection, Home and End jump. A form control (see `FormControl`): the selected value is\nsubmitted, and `required` keeps the form invalid until a segment is chosen.\n\nEach segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high inside a\n44 pt high hit area.",
           "name": "UiSegmented",
           "members": [
             {
@@ -5425,7 +5425,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "A single-line text field that takes what an ordinary text input takes: `type` (including `number`), `inputmode`,\n`maxlength`, `minlength`, `pattern`, `min`, `max`, `step`, `enterkeyhint`, `autocapitalize`, `autocomplete`. A form\ncontrol (see `FormControl`): with a `name` it submits its value, Enter submits the form, and `required`, the length and\npattern limits and `setCustomValidity` take part in validation (`checkValidity`, `validity`, ...).\n\nThe field is drawn 36 pt high; with `hit` it has a 44 pt high hit area (a click on the strip around it focuses it).",
+          "description": "A single-line text field that takes what an ordinary text input takes: `type` (including `number`), `inputmode`,\n`maxlength`, `minlength`, `pattern`, `min`, `max`, `step`, `enterkeyhint`, `autocapitalize`, `autocomplete`. A form\ncontrol (see `FormControl`): with a `name` it submits its value, Enter submits the form, and `required`, the length and\npattern limits and `setCustomValidity` take part in validation (`checkValidity`, `validity`, ...).\n\nThe field is drawn 36 pt high inside a 44 pt high hit area (a click on the strip around it focuses it).",
           "name": "UiTextField",
           "cssParts": [
             {

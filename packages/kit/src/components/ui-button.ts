@@ -184,8 +184,7 @@ export class UiButton extends FormControl {
       .filled.inverts[aria-pressed='true'] {
         background: var(--btn-ink);
         color: var(--btn-fill);
-        outline: 2px solid var(--btn-fill);
-        outline-offset: -2px;
+        box-shadow: inset 0 0 0 2px var(--btn-fill);
       }
       /* Tint-coloured text on a tinted or gray fill: darker in light mode, lighter in dark, for 4.5:1. */
       .tinted,
@@ -287,6 +286,7 @@ export class UiButton extends FormControl {
       ?disabled=${this.isDisabled}
       aria-pressed=${ifDefined(this.toggle ? String(this.pressed) : undefined)}
       aria-label=${ifDefined(this.label || undefined)}
+      title=${ifDefined(this.square && this.label && !this.title ? this.label : undefined)}
       aria-description=${ifDefined(this.description || undefined)}
       @click=${() => this.activate()}
     >

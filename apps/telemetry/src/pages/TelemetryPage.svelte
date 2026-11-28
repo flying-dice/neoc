@@ -61,9 +61,11 @@
           traces={telemetry.traces}
           total={telemetry.traceCount}
           query={telemetry.query}
+          failedOnly={telemetry.failedOnly}
           selected={narrow ? null : telemetry.selected}
           back={narrow}
           onsearch={(text) => telemetry.search(text)}
+          onfailed={(on) => telemetry.onlyFailed(on)}
           onopen={(trace) => void telemetry.open(trace.traceId)}
           onback={() => telemetry.back()}
         />
@@ -72,10 +74,12 @@
           logs={telemetry.logs}
           query={telemetry.query}
           level={telemetry.level}
+          source={telemetry.source}
           selected={narrow || !entry ? null : logKey(entry)}
           back={narrow}
           onsearch={(text) => telemetry.search(text)}
           onlevel={(level) => telemetry.filter(level)}
+          onsource={(source) => telemetry.from(source)}
           onopen={(log) => telemetry.inspect(log)}
           onback={() => telemetry.back()}
         />

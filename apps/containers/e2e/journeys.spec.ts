@@ -22,10 +22,13 @@ const row = (page: Page, name: string, piece?: string): Locator => part(page, `i
 const address = (page: Page): Locator => part(page, 'host-input').locator('input')
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
 const picker = (page: Page, name: string): Locator => part(page, name).locator('select')
+const area = (page: Page, name: string): Locator => part(page, name).locator('textarea')
 /** The footer of a kit section: what it says under its rows (a reason, in red, for `footer-tone="error"`). */
 const footer = (page: Page, name: string): Promise<string> => part(page, name).evaluate((e) => (e as HTMLElement & { footer?: string }).footer ?? '')
 // an image the journeys' registry does not have
 const MISSING = 'nosuch/app:1'
+// the Dockerfile of a recipe; the fake Docker reads it, and fails at a `RUN exit <n>`
+const DOCKERFILE = 'FROM alpine:3.20\nRUN apk add --no-cache curl'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -43,6 +46,24 @@ async function choose(page: Page, host: string): Promise<void> {
   if (!(await address(page).isVisible())) await part(page, 'choose').click()
   await address(page).fill(host)
   await part(page, 'host-connect').click()
+}
+
+/** The images of the journeys' Docker a build gave the label, each with its names and labels, as Docker lists them. */
+async function labelled(label: string): Promise<{ Id: string; RepoTags: string[]; Labels: Record<string, string> }[]> {
+  const filters = encodeURIComponent(JSON.stringify({ label: [label] }))
+  return (await fetch(`${docker.host.replace('tcp://', 'http://')}/images/json?filters=${filters}`)).json()
+}
+
+/** The id of the image the journeys' Docker has by that name, as the window shortens it. */
+const shortOf = (tag: string): string | undefined => docker.images().find((i) => i.tags.includes(tag))?.id.slice(7, 19)
+
+/** The form of a new recipe, from the list of images, filled in. */
+async function newRecipe(page: Page, tag: string, dockerfile: string): Promise<void> {
+  await part(page, 'scope-images').click()
+  await part(page, 'recipe-new').click()
+  await expect(part(page, 'recipe-form-title')).toHaveText('New Recipe')
+  await field(page, 'recipe-form-tag').fill(tag)
+  await area(page, 'recipe-form-dockerfile').fill(dockerfile)
 }
 
 /** The app's window, managing the journeys' Docker. */
@@ -548,5 +569,80 @@ test.describe('Containers journeys', () => {
     await expect(part(page, 'networks')).toBeVisible()
     await expect(part(page, 'network-media_default')).toHaveCount(0)
     expect(docker.networks()).toEqual(['bridge', 'host', 'none', 'blog_default'])
+  })
+
+  test('CT20: add a recipe and build it: the log fills as it goes, and the image is in the list by its name', async ({ page }) => {
+    await openContainers(page)
+    await newRecipe(page, 'tools:1', DOCKERFILE)
+    await expect(part(page, 'recipe-log-status')).toHaveText('Not built yet.')
+    await part(page, 'recipe-form-build').click()
+    // Build saved it first: the form is the recipe's now
+    await expect(part(page, 'recipe-form-title')).toHaveText('tools:1')
+    const log = part(page, 'recipe-log-lines')
+    await expect(log).toContainText('Building tools:1')
+    await expect(log).toContainText('Step 2/2 : RUN apk add --no-cache curl')
+    await expect(log).toContainText('Successfully tagged tools:1')
+    await expect(log).toContainText('Built tools:1.')
+    await expect.poll(() => shortOf('tools:1')).toBeDefined()
+    await expect(part(page, 'recipe-log-status')).toHaveText(`Built: ${shortOf('tools:1')}`)
+    // labelled as the app's, and the recipe's
+    const built = await labelled('vos.app=containers')
+    expect(built.map((i) => i.RepoTags)).toEqual([['tools:1']])
+    expect(built[0]!.Labels['vos.recipe']).toMatch(/^[0-9a-f-]{36}$/)
+
+    await part(page, 'recipe-form-cancel').click()
+    await expect(part(page, 'image-tools:1-note')).toHaveText('Unused')
+    await expect(part(page, 'recipe-tools:1')).toHaveJSProperty('subheading', `Built: ${shortOf('tools:1')}`)
+  })
+
+  test('CT21: edit a recipe and build it again: the name moves to the new image, and the one before keeps none', async ({ page }) => {
+    await openContainers(page)
+    await newRecipe(page, 'site:1', DOCKERFILE)
+    await part(page, 'recipe-form-build').click()
+    await expect(part(page, 'recipe-log-status')).toHaveText(/Built: [0-9a-f]{12}/)
+    const before = docker.images().find((i) => i.tags.includes('site:1'))!.id
+
+    await area(page, 'recipe-form-dockerfile').fill(`${DOCKERFILE} git`)
+    await part(page, 'recipe-form-save').click()
+    // saved and closed: the list says the recipe changed since its image was built
+    await expect(part(page, 'recipe-site:1')).toHaveJSProperty('subheading', `Changed since the last build (${before.slice(7, 19)}).`)
+    await part(page, 'recipe-site:1').click()
+    await expect(area(page, 'recipe-form-dockerfile')).toHaveValue(`${DOCKERFILE} git`)
+    await part(page, 'recipe-form-build').click()
+    await expect(part(page, 'recipe-log-lines')).toContainText('Step 2/2 : RUN apk add --no-cache curl git')
+    await expect.poll(() => docker.images().find((i) => i.tags.includes('site:1'))?.id).not.toBe(before)
+    await expect(part(page, 'recipe-log-status')).toHaveText(`Built: ${shortOf('site:1')}`)
+    expect(docker.images().find((i) => i.id === before)?.tags, 'the image before is left with no name').toEqual([])
+
+    await part(page, 'recipe-form-cancel').click()
+    await expect(part(page, 'image-site:1')).toBeVisible()
+    await expect(part(page, `image-${before.slice(7, 19)}`)).toHaveText(/<none>:<none>/)
+  })
+
+  test("CT22: a Dockerfile that fails says why, in Docker's words, and makes no image", async ({ page }) => {
+    await openContainers(page)
+    await newRecipe(page, 'broken:1', 'FROM alpine:3.20\nRUN exit 3')
+    await part(page, 'recipe-form-build').click()
+    const problem = "The command '/bin/sh -c exit 3' returned a non-zero code: 3"
+    await expect(part(page, 'recipe-log-status')).toContainText(`Failed: The image could not be built: ${problem}`)
+    await expect(part(page, 'recipe-log-lines')).toContainText('Step 2/2 : RUN exit 3')
+    expect(docker.images().some((i) => i.tags.includes('broken:1'))).toBe(false)
+    // the list says it too; the recipe is kept, to be put right
+    await part(page, 'recipe-form-cancel').click()
+    await expect.poll(() => part(page, 'recipe-broken:1').evaluate((e) => (e as HTMLElement & { subheading?: string }).subheading ?? '')).toContain(problem)
+    await expect(part(page, 'image-broken:1')).toHaveCount(0)
+  })
+
+  test('CT23: remove a recipe after a second look: the image it built stays', async ({ page }) => {
+    await openContainers(page)
+    await newRecipe(page, 'keep:1', DOCKERFILE)
+    await part(page, 'recipe-form-build').click()
+    await expect(part(page, 'recipe-log-status')).toHaveText(/Built: [0-9a-f]{12}/)
+    await part(page, 'recipe-form-remove').click()
+    await part(page, 'recipe-form-remove-confirm-confirm').click()
+    await expect(part(page, 'images')).toBeVisible()
+    await expect(part(page, 'recipe-keep:1')).toHaveCount(0)
+    await expect(part(page, 'image-keep:1')).toBeVisible()
+    expect(docker.images().some((i) => i.tags.includes('keep:1'))).toBe(true)
   })
 })

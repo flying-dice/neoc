@@ -13,6 +13,7 @@
 -- A function that changes something answers with an outcome: a status, a sentence for what the person needs to know,
 -- and the overview as it now stands, so the window that asked draws what the machine has.
 local sm = require("vnd:service_manager")
+local tracing = require("lib:tracing")
 
 local manager = {}
 
@@ -129,14 +130,16 @@ local function outcome(status: services_Status, message: string): services_Outco
   return { status = status, message = message, overview = manager.overview() }
 end
 
-local function failure(err: vnd_service_manager_Error): services_Outcome
+local function failure(err: vnd_service_manager_Error, label: string): services_Outcome
   local status, message = sentence(err)
+  tracing.warn("the service manager refused a change", { error = err.message, kind = err.kind, label = label })
   return outcome(status :: services_Status, message)
 end
 
 local function opened(): (vnd_service_manager_Manager?, services_Outcome?)
   local found, problem = open()
   if not found then
+    tracing.warn("could not open the service manager", { error = problem })
     return nil, outcome("failed", problem or "")
   end
   return found, nil
@@ -156,7 +159,7 @@ function manager.control(action: "start" | "stop" | "restart", label: string): s
   else
     _, err = found:restart(label)
   end
-  return if err then failure(err) else outcome("done", "")
+  return if err then failure(err, label) else outcome("done", "")
 end
 
 function manager.configure(
@@ -179,6 +182,7 @@ function manager.configure(
   })
   if err then
     local status, message = sentence(err)
+    tracing.warn("the service manager refused a change", { error = err.message, kind = err.kind, label = label })
     -- the settings are written one after the other: a refusal or a failure may come after the first was made (what is
     -- invalid or unsupported is refused before anything is written)
     if status == "denied" or status == "failed" then
@@ -195,7 +199,7 @@ function manager.register(spec: vnd_service_manager_Spec): services_Outcome
     return assert(refused)
   end
   local _, err = found:install(spec)
-  return if err then failure(err) else outcome("done", "")
+  return if err then failure(err, spec.label or "") else outcome("done", "")
 end
 
 function manager.unregister(label: string): services_Outcome
@@ -204,7 +208,7 @@ function manager.unregister(label: string): services_Outcome
     return assert(refused)
   end
   local _, err = found:uninstall(label)
-  return if err then failure(err) else outcome("done", "")
+  return if err then failure(err, label) else outcome("done", "")
 end
 
 return manager

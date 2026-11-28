@@ -5,18 +5,20 @@ type Logs = VosApp.Containers.Logs
 type Made = VosApp.Containers.Made
 type Network = VosApp.Containers.Network
 type Overview = VosApp.Containers.Overview
+type Building = VosApp.Containers.BuildingParams
 type Pulling = VosApp.Containers.PullingParams
 type Stack = VosApp.Containers.Stack
 type Volume = VosApp.Containers.Volume
+import { Recipes, type RecipesRpc } from './recipes.svelte'
 import { Resources, type Kind, type ResourcesRpc } from './resources.svelte'
 import { blankDraft, copyName, draftOf, specOf, type Draft } from './spec'
 
 /**
- * What the window needs of the backend: the overview, each way of changing it, a container's details and logs, and
- * Docker's images, volumes and networks (the networks and volumes are also what a new container can use): the app's
- * private methods on the bus, `_overview` ...: `App.svelte` sends them.
+ * What the window needs of the backend: the overview, each way of changing it, a container's details and logs,
+ * Docker's images, volumes and networks (the networks and volumes are also what a new container can use), and the
+ * image recipes: the app's private methods on the bus, `_overview` ...: `App.svelte` sends them.
  */
-export interface ContainersRpc extends ResourcesRpc {
+export interface ContainersRpc extends ResourcesRpc, RecipesRpc {
   overview(): Promise<Overview>
   connect(params: VosApp.Containers.ConnectParams): Promise<Overview>
   start(params: VosApp.Containers.StartParams): Promise<Overview>
@@ -33,12 +35,14 @@ export interface ContainersRpc extends ResourcesRpc {
   logs(params: VosApp.Containers.LogsParams): Promise<Logs>
 }
 /**
- * Where the window hears that Docker changed (the backend's `changed`, and the host's `host:reconnected`), and how the
- * pull of an image goes while a container waits for it (the backend's `_pulling`).
+ * Where the window hears that Docker changed (the backend's `changed`, and the host's `host:reconnected`), how the
+ * pull of an image goes while a container waits for it (the backend's `_pulling`), and how the build of a recipe's
+ * image goes (`_building`).
  */
 export interface ContainersEvents {
   on(name: 'changed' | 'host:reconnected', fn: () => void): () => void
   on(name: 'pulling', fn: (progress: Pulling) => void): () => void
+  on(name: 'building', fn: (line: Building) => void): () => void
 }
 
 /** What can be done to a container, and to a stack. Removing a container asks first, with its own choices (`ask`). */
@@ -123,6 +127,8 @@ export class Containers {
   removal = $state<Removal | null>(null)
   /** Docker's images, volumes and networks, and what is changed of them. */
   readonly resources: Resources
+  /** The image recipes, and their builds. */
+  readonly recipes: Recipes
 
   readonly #rpc: ContainersRpc
   readonly #events: ContainersEvents
@@ -130,7 +136,9 @@ export class Containers {
   constructor(rpc: ContainersRpc, events: ContainersEvents) {
     this.#rpc = rpc
     this.#events = events
-    this.resources = new Resources(rpc, (message) => (this.#failure = message))
+    const fail = (message: string): void => void (this.#failure = message)
+    this.resources = new Resources(rpc, fail)
+    this.recipes = new Recipes(rpc, fail, () => this.resources.load(['images']))
   }
 
   get engine(): Engine {
@@ -243,9 +251,9 @@ export class Containers {
     }
   }
 
-  /** Read what Docker has: its containers, and, when it can be reached, its images, volumes and networks. */
+  /** Read what Docker has: its containers, and, when it can be reached, its images, volumes and networks, and the recipes. */
   async load(): Promise<void> {
-    if ((await this.#show(() => this.#rpc.overview())) && this.engine.reachable) await this.resources.load()
+    if ((await this.#show(() => this.#rpc.overview())) && this.engine.reachable) await Promise.all([this.resources.load(), this.recipes.load()])
   }
 
   /**
@@ -264,7 +272,12 @@ export class Containers {
       if (form?.saving && progress.image === form.draft.image.trim()) form.pulling = progress
       this.resources.hear(progress)
     }
-    const stops = [this.#events.on('changed', again), this.#events.on('host:reconnected', again), this.#events.on('pulling', pulling)]
+    const stops = [
+      this.#events.on('changed', again),
+      this.#events.on('host:reconnected', again),
+      this.#events.on('pulling', pulling),
+      this.#events.on('building', (line) => this.recipes.hear(line))
+    ]
     return () => stops.forEach((stop) => stop())
   }
 
@@ -325,6 +338,7 @@ export class Containers {
     this.form = null
     this.removal = null
     this.resources.close()
+    this.recipes.close()
   }
 
   /** Read the networks and volumes the form offers. A failure is kept, to be shown; the form opens anyway. */
@@ -336,6 +350,7 @@ export class Containers {
   async compose(image = ''): Promise<void> {
     this.removal = null
     this.resources.close()
+    this.recipes.close()
     this.form = { mode: 'new', of: null, draft: { ...blankDraft(), image }, failure: null, saving: false, pulling: null }
     this.#browsing = false
     await this.#choices()

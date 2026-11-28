@@ -7,23 +7,32 @@
  * A classic script (not a module): an app frame has an opaque origin, and a module script needs CORS, which the host's
  * Origin guard refuses for `Origin: null`. No external URL, no `eval`: the frame's CSP is `script-src 'self'`.
  */
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
-import { buildTokensCss } from '../../scripts/kit-tokens.ts'
+import { buildTokensCss, FONT_FILE } from '../../scripts/kit-tokens.ts'
 
 const here = import.meta.dirname
 const ui = resolve(here, '../ui/src')
 
 const TOKENS_ID = 'virtual:kit-tokens.css'
 
-/** The token sheet as a virtual module (Storybook imports it) and as an emitted asset (the build). */
+/**
+ * The token sheet as a virtual module (Storybook imports it, and the font through Vite) and as an emitted asset (the
+ * build), with the font file beside it at `fonts/`.
+ */
 function tokens(): Plugin {
   return {
     name: 'vos-kit-tokens',
     resolveId: (id) => (id === TOKENS_ID ? `\0${TOKENS_ID}` : undefined),
     load: (id) => (id === `\0${TOKENS_ID}` ? buildTokensCss() : undefined),
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'tokens.css', source: buildTokensCss() })
+      this.emitFile({ type: 'asset', fileName: 'tokens.css', source: buildTokensCss('fonts/') })
+      this.emitFile({
+        type: 'asset',
+        fileName: 'fonts/InterVariable.woff2',
+        source: readFileSync(FONT_FILE)
+      })
     }
   }
 }

@@ -3,9 +3,11 @@
   import { expect, fn } from 'storybook/test'
   import { alertButton, alertDialog } from '@vos/storybook/kit'
   type Image = VosApp.Containers.Image
+  type Recipe = VosApp.Containers.Recipe
   import ImageList from './ImageList.svelte'
+  import { statusOf, type RecipeStatus } from '../lib/recipes.svelte'
   import type { Pull } from '../lib/resources.svelte'
-  import { IMAGES, image } from '../lib/fakeApi'
+  import { IMAGES, image, recipe } from '../lib/fakeApi'
 
   interface Args {
     images: readonly Image[]
@@ -18,6 +20,10 @@
     onremove: (image: Image) => void
     onnew: (image: Image) => void
     onprune: () => void
+    recipes: readonly Recipe[]
+    statusOf: (recipe: Recipe) => RecipeStatus
+    onrecipe: (recipe: Recipe) => void
+    onnewrecipe: () => void
   }
 
   const onback = fn<() => void>()
@@ -25,7 +31,9 @@
   const onremove = fn<(image: Image) => void>()
   const onnew = fn<(image: Image) => void>()
   const onprune = fn<() => void>()
-  const heard = [onback, onpull, onremove, onnew, onprune]
+  const onrecipe = fn<(recipe: Recipe) => void>()
+  const onnewrecipe = fn<() => void>()
+  const heard = [onback, onpull, onremove, onnew, onprune, onrecipe, onnewrecipe]
 
   // the images of the fake's machine, each with the containers made from it as the backend lists them
   const USERS: Readonly<Record<string, string[]>> = {
@@ -35,6 +43,13 @@
     'pihole/pihole:2024.07.0': ['pihole']
   }
   const LISTED: Image[] = IMAGES.map((i) => ({ ...i, containers: USERS[i.tags[0] ?? ''] ?? [] }))
+  // a recipe built from what it is now, one whose last build failed, and one never built
+  const BUILT = { ...image(['tools:1']), containers: [] }
+  const RECIPES: Recipe[] = [
+    recipe('tools:1', { image: BUILT.id, current: true }),
+    recipe('broken:1', { problem: "The image could not be built: The command '/bin/sh -c exit 3' returned a non-zero code: 3" }),
+    recipe('later:1')
+  ]
   const idle = (more: Partial<Pull> = {}): Pull => ({ reference: '', busy: false, progress: null, failure: null, ...more })
   const input = (element: HTMLElement): HTMLInputElement => element.shadowRoot!.querySelector('input')!
 
@@ -43,7 +58,19 @@
     title: 'Organisms/ImageList',
     component: ImageList,
     tags: ['autodocs'],
-    args: { images: LISTED, pull: idle(), onback, onpull, onremove, onnew, onprune },
+    args: {
+      images: LISTED,
+      pull: idle(),
+      onback,
+      onpull,
+      onremove,
+      onnew,
+      onprune,
+      recipes: [],
+      statusOf: (r: Recipe) => statusOf(r, null, LISTED),
+      onrecipe,
+      onnewrecipe
+    },
     beforeEach: () => heard.forEach((spy) => spy.mockClear()),
     render: template
   })
@@ -69,6 +96,18 @@
     await expect(canvas.getByTestId(`containers-image-${id}`)).toHaveTextContent('<none>:<none>')
     await expect(canvas.queryByTestId(`containers-image-<none>:<none>-new`)).toBeNull()
     await expect(canvas.getByTestId('containers-images-prune')).toHaveProperty('disabled', false)
+  }}
+/>
+
+<!-- The recipes images are built from, each with how its image stands. -->
+<Story
+  name="Recipes"
+  args={{ images: [...LISTED, BUILT], recipes: RECIPES, statusOf: (r: Recipe) => statusOf(r, null, [...LISTED, BUILT]) }}
+  play={async ({ canvas }) => {
+    await expect(canvas.getByTestId('containers-recipe-tools:1')).toHaveProperty('subheading', `Built: ${BUILT.id.slice(7, 19)}`)
+    await expect(canvas.getByTestId('containers-recipe-broken:1')).toHaveProperty('subheading', expect.stringContaining('Failed: The image could not be built'))
+    await expect(canvas.getByTestId('containers-recipe-later:1')).toHaveProperty('subheading', 'Not built yet.')
+    await expect(canvas.getByTestId('containers-recipe-new')).toBeVisible()
   }}
 />
 
@@ -140,6 +179,18 @@
     await expect(onnew).toHaveBeenCalledTimes(1)
     await userEvent.click(canvas.getByTestId('containers-image-nginx:1.27-remove'))
     await expect(onremove).toHaveBeenCalledTimes(1)
+  }}
+/>
+
+<Story
+  name="Tapping a recipe"
+  tags={['play-only']}
+  args={{ recipes: RECIPES }}
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId('containers-recipe-later:1'))
+    await expect(onrecipe).toHaveBeenCalledWith(RECIPES[2])
+    await userEvent.click(canvas.getByTestId('containers-recipe-new'))
+    await expect(onnewrecipe).toHaveBeenCalledTimes(1)
   }}
 />
 

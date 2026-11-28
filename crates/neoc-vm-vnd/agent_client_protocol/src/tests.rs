@@ -1,5 +1,6 @@
-//! `vnd:agent_client_protocol` against agents in this process, over a real WebSocket on a local port. An agent
-//! tells the test what it was sent through a channel, and nothing sleeps to wait for an event.
+//! `vnd:agent_client_protocol` against agents in this process, over a real WebSocket on a local port, or over lines
+//! a script's own functions read and write. An agent tells the test what it was sent through a channel, and nothing
+//! sleeps to wait for an event.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -15,29 +16,68 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::http::HeaderMap;
 
+use neoc_vm_core::lifecycle::{Role, async_function};
 use neoc_vm_core::make_engine;
 
-/// An agent's end of one connection, and the headers of the upgrade that opened it.
+/// How an agent's messages travel: a WebSocket, or the lines a script's functions read and write.
+enum Wire {
+    Ws(Box<WebSocketStream<TcpStream>>),
+    Lines {
+        /// What the script's `write` sent.
+        from_client: mpsc::UnboundedReceiver<String>,
+        /// What the script's `read` gives; `None` once the agent hung up.
+        to_client: Option<mpsc::UnboundedSender<String>>,
+    },
+}
+
+/// An agent's end of one connection, and the headers of the upgrade that opened it (none over lines).
 struct Agent {
-    ws: WebSocketStream<TcpStream>,
+    wire: Wire,
     headers: HeaderMap,
 }
 
 impl Agent {
     /// The next message the client sent; `None` once it closed the connection.
     async fn recv(&mut self) -> Option<Value> {
-        while let Some(Ok(message)) = self.ws.next().await {
-            match message {
-                Message::Text(text) => return Some(serde_json::from_str(text.as_str()).expect("json")),
-                Message::Close(_) => return None,
-                _ => {}
+        match &mut self.wire {
+            Wire::Ws(ws) => {
+                while let Some(Ok(message)) = ws.next().await {
+                    match message {
+                        Message::Text(text) => {
+                            return Some(serde_json::from_str(text.as_str()).expect("json"));
+                        }
+                        Message::Close(_) => return None,
+                        _ => {}
+                    }
+                }
+                None
+            }
+            Wire::Lines { from_client, .. } => {
+                from_client.recv().await.map(|line| serde_json::from_str(&line).expect("json"))
             }
         }
-        None
     }
 
     async fn send(&mut self, message: Value) {
-        let _ = self.ws.send(Message::text(message.to_string())).await;
+        match &mut self.wire {
+            Wire::Ws(ws) => {
+                let _ = ws.send(Message::text(message.to_string())).await;
+            }
+            Wire::Lines { to_client: Some(to_client), .. } => {
+                let _ = to_client.send(message.to_string());
+            }
+            Wire::Lines { to_client: None, .. } => {}
+        }
+    }
+
+    /// Hang up: a close frame, or the end of what the script reads.
+    async fn close(&mut self) {
+        match &mut self.wire {
+            Wire::Ws(ws) => {
+                let _ = WebSocketStream::close(ws, None).await;
+            }
+            Wire::Lines { to_client, .. } => *to_client = None,
+        }
     }
 
     async fn answer(&mut self, request: &Value, result: Value) {
@@ -105,7 +145,11 @@ where
                 )
                 .await;
                 if let Ok(ws) = upgraded {
-                    serve(Agent { ws, headers: headers.recv().expect("the headers") }).await;
+                    serve(Agent {
+                        wire: Wire::Ws(Box::new(ws)),
+                        headers: headers.recv().expect("the headers"),
+                    })
+                    .await;
                 }
             });
         }
@@ -166,6 +210,38 @@ async fn run(lua: &Lua, body: &str) -> String {
 fn engine(url: &str) -> Lua {
     let lua = make_engine().expect("engine");
     lua.globals().set("URL", url).expect("global");
+    lua
+}
+
+/// An engine with an agent served by `serve` in this process, over lines: the globals `agent_read()` (it waits for
+/// the agent's next message, `nil` once the agent hung up) and `agent_write(line)` are what a script's functions for
+/// `Lines.from_functions` call, as they would read and write a container's streams.
+fn lines_engine<F, Fut>(serve: F) -> Lua
+where
+    F: FnOnce(Agent) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let lua = make_engine().expect("engine");
+    let (to_agent, from_client) = mpsc::unbounded_channel::<String>();
+    let (to_client, from_agent) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(serve(Agent {
+        wire: Wire::Lines { from_client, to_client: Some(to_client) },
+        headers: HeaderMap::new(),
+    }));
+    let from_agent = Arc::new(tokio::sync::Mutex::new(from_agent));
+    let read = async_function(&lua, Role::Wait, move |_, ()| {
+        let from_agent = from_agent.clone();
+        async move { Ok(from_agent.lock().await.recv().await) }
+    })
+    .expect("agent_read");
+    let write = lua
+        .create_function(move |_, line: String| {
+            let _ = to_agent.send(line);
+            Ok(())
+        })
+        .expect("agent_write");
+    lua.globals().set("agent_read", read).expect("global");
+    lua.globals().set("agent_write", write).expect("global");
     lua
 }
 
@@ -290,6 +366,9 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
         local session = assert(cx:build_session("/w")
           :with_mcp_server({ type = "http", name = "vos", url = "http://10.0.0.1:1/mcp", headers = { { name = "Authorization", value = "Bearer k" } } })
           :with_mcp_server({ type = "stdio", name = "local", command = "run", args = { "a" }, env = { { name = "K", value = "v" } } })
+          -- no arguments, variables or headers: a script's empty table is an empty list
+          :with_mcp_server({ type = "stdio", name = "bare", command = "go", args = {}, env = {} })
+          :with_mcp_server({ type = "http", name = "open", url = "http://10.0.0.1:2/mcp", headers = {} })
           :start_session())
         assert(session.session_id == "s1" and session.modes == nil)
         assert(session:send_prompt("hi"))
@@ -360,6 +439,8 @@ async fn a_turn_streams_the_agents_updates_asks_for_permission_and_ends_with_the
             { "type": "http", "name": "vos", "url": "http://10.0.0.1:1/mcp",
               "headers": [{ "name": "Authorization", "value": "Bearer k" }] },
             { "name": "local", "command": "run", "args": ["a"], "env": [{ "name": "K", "value": "v" }] },
+            { "name": "bare", "command": "go", "args": [], "env": [] },
+            { "type": "http", "name": "open", "url": "http://10.0.0.1:2/mcp", "headers": [] },
         ])
     );
     let prompt = said.recv().await.expect("session/prompt");
@@ -564,7 +645,7 @@ async fn an_agent_error_and_a_lost_connection_end_what_waits_on_them() {
         let _ = agent.recv().await.expect("session/prompt");
         agent.update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": text("a") })).await;
         // the agent goes away mid-turn
-        let _ = agent.ws.close(None).await;
+        agent.close().await;
     })
     .await;
     let lua = engine(&format!("ws://127.0.0.1:{port}/acp"));
@@ -649,4 +730,200 @@ async fn an_agent_that_drops_the_socket_mid_turn_ends_the_turn() {
     )
     .await;
     assert_eq!(got, "closed closed");
+}
+
+#[tokio::test]
+async fn a_session_keeps_its_connection_open_when_the_connection_handle_is_collected() {
+    let port = agents(|mut agent| async move {
+        agent.initialize().await;
+        agent.new_session("s1").await;
+        let prompt = agent.recv().await.expect("session/prompt");
+        agent
+            .update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": text("still here") }))
+            .await;
+        agent.answer(&prompt, json!({ "stopReason": "end_turn" })).await;
+        let _ = agent.recv().await;
+    })
+    .await;
+    let lua = engine(&format!("ws://127.0.0.1:{port}/acp"));
+    // the connection, its builder and its socket are locals of the first script: only the session is kept
+    run(
+        &lua,
+        r#"
+        local cx = connect(URL)
+        assert(cx:send_request({ protocol_version = 1 }))
+        SESSION = assert(cx:build_session("/w"):start_session())
+        return ""
+        "#,
+    )
+    .await;
+    lua.gc_collect().expect("collect");
+    lua.gc_collect().expect("collect");
+    let got = run(
+        &lua,
+        r#"
+        assert(SESSION:send_prompt("hi"))
+        local messages, stop = turn(SESSION)
+        return messages[1].update.content.text .. " " .. stop
+        "#,
+    )
+    .await;
+    assert_eq!(got, "still here end_turn");
+}
+
+#[tokio::test]
+async fn closing_the_connection_ends_an_initialize_the_agent_never_answers() {
+    // the agent takes the socket and answers nothing: an application bounds `initialize` by closing the connection
+    let port = agents(|mut agent| async move { while agent.recv().await.is_some() {} }).await;
+    let lua = engine(&format!("ws://127.0.0.1:{port}/acp"));
+    run(&lua, r#"CX = connect(URL) return """#).await;
+    let closer = lua.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        closer.load("CX:close()").exec_async().await.expect("close");
+    });
+    let got = run(&lua, r#"return failed(CX:send_request({ protocol_version = 1 }))"#).await;
+    assert_eq!(got, "closed");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// over the script's lines
+// ---------------------------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn over_the_scripts_lines_a_turn_streams_asks_for_permission_and_ends_with_the_answer() {
+    let (seen, mut said) = mpsc::unbounded_channel::<Value>();
+    let lua = lines_engine(move |mut agent| async move {
+        let initialize = agent.initialize().await;
+        let _ = seen.send(initialize);
+        agent.new_session("s1").await;
+        let prompt = agent.recv().await.expect("session/prompt");
+        let _ = seen.send(prompt.clone());
+        agent.update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": text("Hel") })).await;
+        agent
+            .send(json!({
+                "jsonrpc": "2.0", "id": "p1", "method": "session/request_permission",
+                "params": {
+                    "sessionId": "s1", "toolCall": { "toolCallId": "c1", "title": "Edit a" },
+                    "options": [
+                        { "optionId": "yes", "name": "Allow", "kind": "allow_once" },
+                        { "optionId": "no", "name": "Reject", "kind": "reject_once" }
+                    ]
+                }
+            }))
+            .await;
+        let _ = seen.send(agent.recv().await.expect("the permission's answer"));
+        agent.update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": text("lo") })).await;
+        agent.answer(&prompt, json!({ "stopReason": "end_turn" })).await;
+        // nothing more: the script's transport is still open, as a container's streams would be
+        let _ = agent.recv().await;
+    });
+    let got = run(
+        &lua,
+        r#"
+        local reads, writes = 0, 0
+        local lines = acp.Lines.from_functions({
+          -- both wait, as reading and writing a container's streams does
+          read = function(): string?
+            reads += 1
+            return agent_read()
+          end,
+          write = function(line: string)
+            writes += 1
+            agent_write(line)
+          end,
+        })
+        local cx = assert(acp.Client.v1():name("agents"):connect(lines))
+        local init = assert(cx:send_request({ protocol_version = 1, client_info = { name = "agents", version = "1" } }))
+        assert(init.protocol_version == 1 and init.agent_capabilities.load_session)
+        local session = assert(cx:build_session("/w"):start_session())
+        assert(session:send_prompt("hi"))
+        local out, said = {}, ""
+        while true do
+          local message = assert(session:read_update())
+          if message.type == "prompt_response" then
+            table.insert(out, "done " .. message.stop_reason)
+            break
+          elseif message.type == "request_permission" then
+            table.insert(out, "permission " .. message.id)
+            assert(session:respond_permission(message.id, { outcome = "selected", option_id = message.options[1].option_id }))
+          else
+            table.insert(out, message.update.type)
+            if message.update.type == "agent_message_chunk" then said ..= message.update.content.text end
+          end
+        end
+        assert(reads > 0 and writes >= 4, `{reads} reads, {writes} writes`)
+        cx:close()
+        return table.concat(out, " ") .. " | " .. said
+        "#,
+    )
+    .await;
+    assert_eq!(got, "agent_message_chunk permission p1 agent_message_chunk done end_turn | Hello");
+    let initialize = said.recv().await.expect("initialize");
+    assert_eq!(initialize["params"]["clientInfo"], json!({ "name": "agents", "version": "1" }));
+    let prompt = said.recv().await.expect("session/prompt");
+    assert_eq!(prompt["params"], json!({ "sessionId": "s1", "prompt": [{ "type": "text", "text": "hi" }] }));
+    let permission = said.recv().await.expect("the permission's answer");
+    assert_eq!(permission["result"]["outcome"], json!({ "outcome": "selected", "optionId": "yes" }));
+}
+
+#[tokio::test]
+async fn over_the_scripts_lines_an_agent_that_hangs_up_ends_what_waits_on_it() {
+    let lua = lines_engine(|mut agent| async move {
+        agent.initialize().await;
+        agent.new_session("s1").await;
+        let _ = agent.recv().await.expect("session/prompt");
+        agent.update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": text("a") })).await;
+        // what the script reads ends
+        agent.close().await;
+        let _ = agent.recv().await;
+    });
+    let got = run(
+        &lua,
+        r#"
+        local cx = assert(acp.Client.v1():connect(acp.Lines.from_functions({ read = agent_read, write = agent_write })))
+        assert(cx:send_request({ protocol_version = 1 }))
+        local session = assert(cx:build_session("/w"):start_session())
+        assert(session:send_prompt("a"))
+        assert(assert(session:read_update()).type == "update")
+        return failed(session:read_update()) .. " " .. failed(cx:build_session("/w"):start_session())
+        "#,
+    )
+    .await;
+    assert_eq!(got, "closed closed");
+}
+
+#[tokio::test]
+async fn over_the_scripts_lines_what_fails_before_initialize_is_an_error_with_a_kind() {
+    // the agent answers nothing, and never hangs up
+    let lua = lines_engine(|mut agent| async move { while agent.recv().await.is_some() {} });
+    let got = run(
+        &lua,
+        r#"
+        local out = {}
+        local function try(transport)
+          -- the transport may end before the connection is up, or after
+          local cx, refused = acp.Client.v1():connect(acp.Lines.from_functions(transport))
+          table.insert(out, if cx then failed(cx:send_request({ protocol_version = 1 })) else refused.kind)
+        end
+        -- the agent's side is closed from the start
+        try({ read = function(): string? return nil end, write = function(_: string) end })
+        -- reading fails
+        try({ read = function(): string? error("the container is gone") end, write = function(_: string) end })
+        -- writing fails
+        try({ read = agent_read, write = function(_: string) error("the input is closed") end })
+        -- what the types say is checked before the call runs: a wrong argument is raised
+        local function raised(...)
+          local ok = pcall(acp.Lines.from_functions :: any, ...)
+          table.insert(out, if ok then "accepted" else "raised")
+        end
+        raised({ read = agent_read })
+        raised({ read = agent_read, write = "agent_write" })
+        raised({ read = agent_read, write = agent_write, close = agent_write })
+        raised("ws://127.0.0.1:1/acp")
+        return table.concat(out, " ")
+        "#,
+    )
+    .await;
+    assert_eq!(got, "closed closed closed raised raised raised raised");
 }

@@ -1,0 +1,311 @@
+{
+  "openrpc": "1.4.0",
+  "info": {
+    "title": "Skills",
+    "version": "0.1.0"
+  },
+  "methods": [
+    {
+      "name": "_skills",
+      "summary": "The skills, by name.",
+      "params": [],
+      "result": {
+        "name": "skills",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "_add_skill",
+      "summary": "Add a skill.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the skill is called: the name of its folder where an agent is given it. Letters, digits, `.`, `_` and `-`, starting with a letter or a digit. Another skill's name is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "description": "Its `SKILL.md`. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        {
+          "name": "files",
+          "description": "Other files of the skill, each by its path in the skill's folder. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "skills",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Skill"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name cannot be a folder's or is another skill's, the SKILL.md is blank, or a file's path is not a relative path in the skill's folder (absolute, with `..`, `\\` or an empty part, `SKILL.md` itself, or another file's)."
+        }
+      ]
+    },
+    {
+      "name": "_update_skill",
+      "summary": "Change a skill. An agent given it before keeps the copy it was given.",
+      "params": [
+        {
+          "name": "skill",
+          "required": true,
+          "description": "The id of one of `_skills`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the skill is called, as `_add_skill` takes it.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "description": "Its `SKILL.md`. Blank is refused with a message.",
+          "schema": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        {
+          "name": "files",
+          "description": "Its other files, in place of the ones it has. Absent: none.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "skills",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Skill"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such skill, or what is given is refused as `_add_skill` refuses it."
+        }
+      ]
+    },
+    {
+      "name": "_remove_skill",
+      "summary": "Remove a skill. An agent given it before keeps the copy it was given; an app that asks for it by name is told there is no such skill.",
+      "params": [
+        {
+          "name": "skill",
+          "required": true,
+          "description": "The id of one of `_skills`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "skills",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Skill"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such skill."
+        }
+      ]
+    },
+    {
+      "name": "list_skills",
+      "summary": "List the skills",
+      "x-readOnly": true,
+      "description": "The skills the Skills app keeps, by name: what each is called (the name of its folder) and what it is for (the `description` of its SKILL.md's front matter; empty when it has none). An app that runs agents offers them to choose from, and asks for one with `get_skill`.",
+      "params": [],
+      "result": {
+        "name": "listed",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "skills": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/SkillSummary"
+              }
+            }
+          },
+          "required": [
+            "skills"
+          ]
+        }
+      }
+    },
+    {
+      "name": "get_skill",
+      "summary": "Read a skill",
+      "x-readOnly": true,
+      "description": "One skill, by its name: its SKILL.md and the other files of its folder, each by its path there. A name that is no skill's fails, and says so.",
+      "params": [
+        {
+          "name": "name",
+          "required": true,
+          "description": "What the skill is called, as `list_skills` gives it",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "skill",
+        "schema": {
+          "$ref": "#/components/schemas/SkillText"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no skill of that name."
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "SkillFile": {
+        "type": "object",
+        "description": "A file of a skill besides its SKILL.md.",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Where it is in the skill's folder, with `/` between its parts (`scripts/check.sh`)."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ]
+      },
+      "Skill": {
+        "type": "object",
+        "description": "A skill: a folder an agent is given, with its SKILL.md and other files.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "What it is called, and the name of its folder."
+          },
+          "description": {
+            "type": "string",
+            "description": "The `description` of its SKILL.md's front matter; empty when it has none."
+          },
+          "text": {
+            "type": "string",
+            "description": "Its SKILL.md."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "text",
+          "files"
+        ]
+      },
+      "SkillSummary": {
+        "type": "object",
+        "description": "A skill as another app lists it: what it is called, which is the name of its folder, and what it is for.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "The `description` of its SKILL.md's front matter; empty when it has none."
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ]
+      },
+      "SkillText": {
+        "type": "object",
+        "description": "A skill as another app is given it, to copy where its agent reads it: a folder of its name, holding its SKILL.md and its other files.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "Its SKILL.md."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "text",
+          "files"
+        ]
+      }
+    }
+  }
+}

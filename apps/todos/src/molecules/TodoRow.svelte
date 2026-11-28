@@ -86,7 +86,9 @@
       square
       toggle
       pressed={todo.flagged}
+      hit
       label="Flag: {todo.title}"
+      title="Flag"
       onclick={onflag}
       data-testid="{id}-flag"
     >
@@ -98,7 +100,9 @@
       square
       toggle
       pressed={expanded}
+      hit
       label="Details: {todo.title}"
+      title="Details"
       onclick={onexpand}
       data-testid="{id}-details"
     >
@@ -126,7 +130,7 @@
         </label>
         {#if todo.due}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <ui-button variant="plain" size="small" onclick={() => ondue('')} data-testid="{id}-no-due">No day</ui-button>
+          <ui-button variant="plain" size="small" onclick={() => ondue('')} data-testid="{id}-no-due">No Day</ui-button>
         {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <ui-button class="remove" variant="plain" size="small" destructive onclick={onremove} data-testid="{id}-remove">
@@ -203,8 +207,8 @@
   }
   .when input {
     box-sizing: border-box;
-    min-height: 36px;
-    padding: 0 10px;
+    min-height: 44px;
+    padding: 0 12px;
     border: 0;
     border-radius: var(--radius-md);
     background: var(--fill-tertiary);

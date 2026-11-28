@@ -31,11 +31,11 @@
   <p class="summary" data-testid="dns-records-summary">{recordsSummary(records.length)}</p>
   <div class="list-box">
     {#if records.length > 0}
-      <ul class="list" data-testid="dns-records">
+      <ui-list variant="inset" label="Names" class="list" data-testid="dns-records"><ui-section>
         {#each records as record (record.id)}
           <RecordRow {record} busy={removing(record)} disabled={working} onremove={() => onremove(record)} />
         {/each}
-      </ul>
+      </ui-section></ui-list>
     {:else}
       <ui-empty-state
         icon="network"
@@ -62,12 +62,7 @@
     color: var(--label-secondary);
   }
   .list-box {
-    padding: 0 16px 16px;
-  }
-  .list {
-    margin: 0;
-    padding: 0;
-    border-radius: var(--radius-lg);
-    background: var(--bg-secondary);
+    --list-inset: 16px;
+    padding-bottom: 16px;
   }
 </style>

@@ -9,7 +9,8 @@
 //! one JSON-RPC message per line, the connection a `ConnectionTo` with `send_request` and `send_notification`,
 //! `build_session` and `load_session` the SDK's session builders, and a session an `ActiveSession` whose
 //! `read_update` gives each `SessionMessage` the agent sends for it, in order. The transport comes from `lib:websocket`
-//! (one message per text frame, as `acpd` serves `GET /acp`): this module dials nothing.
+//! (one message per text frame, as `acpd` serves `GET /acp`), or from the script's own `read` and `write` functions
+//! (`Lines.from_functions`: an agent on a container's or a program's standard streams): this module dials nothing.
 //!
 //! ```lua
 //! local acp = require("vnd:agent_client_protocol")
@@ -89,6 +90,15 @@ fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(d: D) -> Re
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
+/// A list in a tagged union a script gives: serde reads the union before it knows a field's type, so a script's empty
+/// table (`args = {}`) comes as a map; that is an empty list.
+fn list<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Object(fields) if fields.is_empty() => Ok(Vec::new()),
+        value => serde_json::from_value(value).map_err(serde::de::Error::custom),
+    }
+}
+
 /// A list ACP says is read leniently: an item that is not what it should be is left out.
 fn lenient_items<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
     let value = serde_json::Value::deserialize(d)?;
@@ -104,11 +114,12 @@ pub mod agent_client_protocol {
     use std::sync::Arc;
 
     use mlua::Lua;
-    use mlua_ir::{LuaError, Object, Shape};
+    use mlua_ir::ir::{Field, Ty, TypeBody};
+    use mlua_ir::{Callback, Definition, FromLuaArg, LuaError, Object, Registry, Shape, name_params};
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
 
-    use super::{Data, lenient, lenient_items};
+    use super::{Data, lenient, lenient_items, list};
     use crate::link;
     use neoc_vm_core::lifecycle::Life;
     use neoc_vm_lib_websocket::websocket::WebSocket;
@@ -229,7 +240,7 @@ pub mod agent_client_protocol {
             /// Its URL.
             url: String,
             /// Headers to send it (`Authorization`).
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             headers: Vec<HttpHeader>,
         },
         /// A server at a URL, over server-sent events (when the agent's `mcp_capabilities.sse` says it can).
@@ -239,7 +250,7 @@ pub mod agent_client_protocol {
             /// Its URL.
             url: String,
             /// Headers to send it.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             headers: Vec<HttpHeader>,
         },
         /// A program the agent starts on its own machine, which every agent can do. The wire has no `type` for it.
@@ -249,10 +260,10 @@ pub mod agent_client_protocol {
             /// The program.
             command: String,
             /// Its arguments.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             args: Vec<String>,
             /// Its environment, besides the agent's.
-            #[serde(default)]
+            #[serde(default, deserialize_with = "list")]
             env: Vec<EnvVariable>,
         },
     }
@@ -850,6 +861,91 @@ pub mod agent_client_protocol {
             })?;
             Ok(Lines { lines: Arc::new(Mutex::new(Some(lines))) })
         }
+
+        /// The lines a script carries itself: `read()` gives the agent's next message (`nil` once its side closed)
+        /// and `write(line)` sends one (an agent on a container's or a program's standard streams, say). Both may
+        /// wait, and each runs as a call of its own while the connection does; an error either raises ends the
+        /// connection. Closing the connection stops calling them: the script closes what they read and write.
+        pub fn from_functions(lua: &Lua, transport: LineTransport) -> Lines {
+            let lines = link::script_lines(lua, transport.read, transport.write);
+            Lines { lines: Arc::new(Mutex::new(Some(lines))) }
+        }
+    }
+
+    /// What `Lines.from_functions` carries messages with: two functions of the script's own, one JSON-RPC message
+    /// per call.
+    pub struct LineTransport {
+        read: mlua::Function,
+        write: mlua::Function,
+    }
+
+    impl Shape for LineTransport {
+        fn shape(reg: &mut Registry) -> Ty {
+            reg.named(
+                "LineTransport",
+                Some("vnd:agent_client_protocol"),
+                "neoc_vm_vnd_agent_client_protocol::agent_client_protocol::LineTransport",
+                |reg| {
+                    let read = Callback::<fn() -> Option<String>>::shape(reg);
+                    let mut write = Callback::<fn(String)>::shape(reg);
+                    name_params(&mut write, &["line"]);
+                    let field = |name: &str, doc: &str, ty: Ty| Field {
+                        name: name.to_owned(),
+                        doc: Some(doc.to_owned()),
+                        ty,
+                        default: None,
+                        readonly: false,
+                    };
+                    Definition {
+                        doc: Some(
+                            "What `Lines.from_functions` carries messages with: two functions of the script's own, \
+                             one JSON-RPC message per call. Both may wait."
+                                .to_owned(),
+                        ),
+                        body: TypeBody::Record {
+                            fields: vec![
+                                field(
+                                    "read",
+                                    "The agent's next message, or `nil` once the agent's side has closed.",
+                                    read,
+                                ),
+                                field("write", "Send one message to the agent.", write),
+                            ],
+                        },
+                    }
+                },
+            )
+        }
+    }
+
+    impl FromLuaArg for LineTransport {
+        fn from_lua_arg(value: mlua::Value, _: &Lua) -> Result<Self, String> {
+            let mlua::Value::Table(table) = value else {
+                return Err(mlua_ir::expected("a table of `read` and `write` functions", &value));
+            };
+            let (mut read, mut write) = (None, None);
+            for pair in table.pairs::<mlua::Value, mlua::Value>() {
+                let (key, value) = pair.map_err(|e| e.to_string())?;
+                let name = match &key {
+                    mlua::Value::String(name) => name.to_string_lossy(),
+                    other => return Err(format!("a {} key, expected `read` or `write`", other.type_name())),
+                };
+                let slot = match name.as_str() {
+                    "read" => &mut read,
+                    "write" => &mut write,
+                    other => return Err(format!("unknown field `{other}`, expected `read` or `write`")),
+                };
+                match value {
+                    mlua::Value::Function(function) => *slot = Some(function),
+                    other => return Err(format!("{name}: {}", mlua_ir::expected("a function", &other))),
+                }
+            }
+            match (read, write) {
+                (Some(read), Some(write)) => Ok(Self { read, write }),
+                (None, _) => Err("missing field `read`".to_owned()),
+                (_, None) => Err("missing field `write`".to_owned()),
+            }
+        }
     }
 
     /// A connection to an agent: the SDK's `ConnectionTo<Agent>`. Copies of the handle are the same connection.
@@ -920,7 +1016,7 @@ pub mod agent_client_protocol {
                 None => {
                     let request =
                         NewSessionRequest { cwd: self.cwd.clone(), mcp_servers: self.mcp_servers.clone() };
-                    self.link.new_session(&request).await?
+                    link::Link::new_session(&self.link, &request).await?
                 }
                 Some(session_id) => {
                     let request = LoadSessionRequest {
@@ -928,15 +1024,16 @@ pub mod agent_client_protocol {
                         cwd: self.cwd.clone(),
                         mcp_servers: self.mcp_servers.clone(),
                     };
-                    self.link.load_session(&request).await?
+                    link::Link::load_session(&self.link, &request).await?
                 }
             };
             Ok(ActiveSession { session: Arc::new(session) })
         }
     }
 
-    /// A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session; when the
-    /// last one goes, the permission requests that wait are answered `cancelled`.
+    /// A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session, and it keeps
+    /// its connection open while it is held, whatever became of the `ConnectionTo` it was started on; when the last
+    /// one goes, the permission requests that wait are answered `cancelled`.
     #[derive(Clone, Object)]
     pub struct ActiveSession {
         session: Arc<link::Session>,

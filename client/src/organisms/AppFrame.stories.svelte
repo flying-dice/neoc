@@ -191,6 +191,28 @@ ${CLOSE}</body></html>`
   }}
 />
 
+<!-- The page started, then had errors it did not handle (`vos/error`): the window says so on a strip, counts them, and
+     the person can dismiss it; the page goes on running under it. -->
+<Story
+  name="Reports an error it did not handle"
+  args={{
+    srcdoc:
+      '<!doctype html><html lang="en"><title>Calculator</title><p>running</p><script>const send = (m) => parent.postMessage({ jsonrpc: "2.0", ...m }, "*"); window.addEventListener("message", (e) => { if (e.data.id === 1) { send({ method: "ui/notifications/initialized", params: {} }); setTimeout(() => { send({ method: "vos/error", params: { message: "total is not a function" } }); send({ method: "vos/error", params: { message: "Method not found: _save" } }) }, 100) } }); send({ id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appCapabilities: {} } })' +
+      CLOSE
+  }}
+  beforeEach={withHost(() => null)}
+  play={async ({ canvas, userEvent }) => {
+    const problem = await canvas.findByTestId('calculator-problem')
+    await waitFor(() =>
+      expect(problem).toHaveTextContent('Calculator ran into a problem (2 times)')
+    )
+    await expect(problem).toHaveTextContent('Method not found: _save')
+    await expect(canvas.getByTestId('calculator-frame')).toBeVisible()
+    await userEvent.click(canvas.getByTestId('calculator-problem-dismiss'))
+    await expect(canvas.queryByTestId('calculator-problem')).toBeNull()
+  }}
+/>
+
 <!-- The page navigates itself away (no policy stops that): the shell notices the document is not the one it loaded. -->
 <Story
   name="Leaves its page"

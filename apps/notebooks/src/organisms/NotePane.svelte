@@ -208,7 +208,7 @@
     align-items: center;
     gap: 8px;
     min-height: 44px;
-    padding: 0 16px;
+    padding: 0 16px 8px;
   }
   .status {
     margin: 0 auto 0 0;
@@ -248,9 +248,8 @@
   }
   /* Markdown is written in the fixed-width face, so that its marks line up */
   ui-text-area::part(input) {
+    font: var(--type-subheadline);
     font-family: var(--font-mono);
-    font-size: 14px;
-    line-height: 1.55;
   }
   .backlinks button:focus-visible {
     outline: 2px solid var(--focus-ring);

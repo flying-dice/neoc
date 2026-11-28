@@ -2,8 +2,8 @@
   "name": "@vos-apps/containers",
   "private": true,
   "type": "module",
-  "version": "0.3.0",
-  "description": "The Docker containers and Compose stacks of this machine: see what runs, make, change and remove containers, start, stop and restart them, read their logs; pull, remove and prune its images, and make and remove its volumes and networks.",
+  "version": "0.4.0",
+  "description": "The Docker containers and Compose stacks of this machine: see what runs, make, change and remove containers, start, stop and restart them, read their logs; pull, build from a Dockerfile, remove and prune its images, and make and remove its volumes and networks.",
   "vos": {
     "title": "Containers",
     "icon": "rectangle.stack",

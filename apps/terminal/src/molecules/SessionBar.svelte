@@ -14,11 +14,11 @@
 </script>
 
 <div class="bar" role="status" data-testid="terminal-bar">
-  {#if busy}<ui-spinner></ui-spinner>{/if}
+  {#if busy}<ui-spinner label="Starting the shell"></ui-spinner>{/if}
   <p class="message" data-testid="terminal-bar-message">{message}</p>
   {#if action}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <ui-button variant="tinted" size="small" onclick={() => onaction?.()} data-testid="terminal-bar-action">{action}</ui-button>
+    <ui-button variant="tinted" size="small" hit onclick={() => onaction?.()} data-testid="terminal-bar-action">{action}</ui-button>
   {/if}
 </div>
 
@@ -27,9 +27,9 @@
     box-sizing: border-box;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-height: 44px;
-    padding: 6px 12px;
+    padding: 8px 16px;
     background: var(--bg-elevated, var(--bg));
     border-top: 1px solid var(--separator);
     color: var(--label);

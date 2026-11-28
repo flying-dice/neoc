@@ -1,0 +1,45 @@
+{
+  "name": "@vos/chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The chat with an ACP agent, as the apps that talk to one show it (Agents): what was said and done in it, the questions the agent asks, and the composer (src/, Svelte on the kit).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./samples": "./src/lib/samples.ts"
+  },
+  "scripts": {
+    "typecheck": "bun -e \"import { writeKitTypes } from '@vos/vite-plugin'; writeKitTypes('.')\" && svelte-check --tsconfig ./tsconfig.json",
+    "test": "bun test ./src",
+    "storybook": "storybook dev -p 6027 --no-open",
+    "build-storybook": "storybook build -o storybook-static --quiet"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "dependencies": {
+    "micromark": "4.0.3",
+    "micromark-extension-gfm": "3.0.0"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.6.7",
+    "@storybook/addon-docs": "10.6.7",
+    "@storybook/addon-svelte-csf": "5.1.6",
+    "@storybook/addon-themes": "10.6.7",
+    "@storybook/svelte-vite": "10.6.7",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "1.4.4",
+    "@vos/kit": "workspace:*",
+    "@vos/storybook": "workspace:*",
+    "@vos/vite-plugin": "workspace:*",
+    "storybook": "10.6.7",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}

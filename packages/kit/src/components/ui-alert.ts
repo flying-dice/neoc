@@ -64,7 +64,8 @@ export class UiAlert extends LitElement {
         padding: 0;
         border: 0;
         border-radius: var(--radius-xl);
-        background: var(--bg-elevated);
+        background: var(--material-thick);
+        backdrop-filter: var(--material-blur);
         color: var(--label);
         box-shadow: var(--shadow-popover);
         overflow: hidden;

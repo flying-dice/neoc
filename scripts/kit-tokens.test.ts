@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildTokensCss } from './kit-tokens.ts'
+import { buildTokensCss, FONT_FILE } from './kit-tokens.ts'
 
 const components = join(import.meta.dirname, '../packages/kit/src/components')
 const sources = readdirSync(components)
@@ -85,5 +85,11 @@ describe('the components', () => {
       expect({ file, tag: m?.[1] ? true : false }).toEqual({ file, tag: true })
       expect({ file, tagged: text.includes(`@tag ${m?.[1]}`) }).toEqual({ file, tagged: true })
     }
+  })
+
+  test('the built sheet carries the bundled font, beside it at fonts/; the virtual one leaves it to Vite', () => {
+    expect(existsSync(FONT_FILE)).toBe(true)
+    expect(buildTokensCss('fonts/')).toContain("src: url('fonts/InterVariable.woff2') format('woff2')")
+    expect(buildTokensCss()).not.toContain('@font-face')
   })
 })

@@ -53,6 +53,7 @@ local app = require("vos:app")
 local bollard = require("vnd:bollard")
 local task = require("std:task")
 local text = __DARKLUA_BUNDLE_MODULES.a()
+local tracing = require("lib:tracing")
 
 local engine = {}
 
@@ -90,6 +91,11 @@ local watched= {}
 
 local chosen = 0
 
+
+
+local was_reachable= nil
+local last_error = ""
+
 function engine.host()  
 local host = app.kv:get(HOST)
   return if type(host) == "string" then host else ""
@@ -121,6 +127,7 @@ if clients then
   for _, timeout in { READ_TIMEOUT, ACT_TIMEOUT, PULL_TIMEOUT } do
     local client, err = bollard.connect { host = host, timeout = timeout }
     if not client then
+      last_error = if err then err.message else ""
       return nil, engine.sentence(err)
     end
     table.insert(made, client)
@@ -148,21 +155,35 @@ local all, problem = connected()
 end
 
 
+local function noted(status)  
+if status.reachable ~= was_reachable then
+    if not status.reachable then
+      tracing.warn(status.problem, { host = status.host, error = last_error })
+    elseif was_reachable == false then
+      tracing.info("Docker can be reached again", { host = status.host, version = status.version })
+    end
+    was_reachable = status.reachable
+  end
+  return status
+end
+
+
 function engine.status()  
 local status= { reachable = false, version = "", host = engine.host(), problem = "" }
   local api, problem = engine.reader()
   if not api then
     status.problem = problem or ""
-    return status
+    return noted(status)
   end
   local version, err = api:version()
   if not version then
+    last_error = if err then err.message else ""
     status.problem = engine.sentence(err)
-    return status
+    return noted(status)
   end
   status.reachable = true
   status.version = version.Version or ""
-  return status
+  return noted(status)
 end
 
 
@@ -191,6 +212,8 @@ if host ~= "" then
     app.kv:set(HOST, host)
   end
   clients = nil
+  
+  was_reachable = nil
   
   chosen += 1
   for events in watched do
@@ -475,6 +498,7 @@ end function __DARKLUA_BUNDLE_MODULES.c()local v=__DARKLUA_BUNDLE_MODULES.cache.
 local app = require("vos:app")
 local task = require("std:task")
 local time = require("std:time")
+local tracing = require("lib:tracing")
 local declaration = __DARKLUA_BUNDLE_MODULES.c()
 local engine = __DARKLUA_BUNDLE_MODULES.b()
 
@@ -643,6 +667,17 @@ return if declared then make(api, declared, always == true) else removeAll(api)
       end)
     end
     local failure= if ran then answer else "The container could not be made."
+    
+    
+    if api and failure then
+      local message = `the container {name} could not be {if declared then "made" else "removed"}`
+      local fields = { container = name, error = tostring(answer) }
+      if ran then
+        tracing.warn(message, fields)
+      else
+        tracing.error(message, fields)
+      end
+    end
     
     if turn == mine then
       since = nil

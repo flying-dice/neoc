@@ -11,7 +11,7 @@ import { base } from '../styles'
  * and a screen reader work as they do on every select. A form control (see `FormControl`): the chosen value is
  * submitted, and `required` keeps the form invalid until an option is chosen.
  *
- * With a `value` no option has, it shows nothing chosen. Drawn 36 pt high; with `hit` it is a 44 pt high target, all
+ * With a `value` no option has, it shows nothing chosen. Drawn 36 pt high inside a 44 pt high target, all
  * of which opens the menu.
  *
  * @tag ui-picker
@@ -42,9 +42,9 @@ export class UiPicker extends FormControl {
   static styles = [
     base,
     css`
-      /* with hit, 44 pt high: the select itself is that high, so a tap anywhere in the box opens the menu; the field
-         is drawn 36 pt high behind it */
-      :host([hit]) {
+      /* 44 pt high, always: the select itself is that high, so a tap anywhere in the box opens the menu; the field is
+         drawn 36 pt high behind it */
+      :host {
         --ui-hit: 44px;
       }
       :host {
@@ -95,6 +95,10 @@ export class UiPicker extends FormControl {
       .box:has(select:focus-visible)::before {
         outline: 3px solid var(--focus-ring);
         outline-offset: 2px;
+      }
+      /* bare, in a row: the ring is drawn tight, so that it fits the row's 44 pt (the section clips what is outside) */
+      :host([variant='bare']) .box:has(select:focus-visible)::before {
+        outline-offset: 0;
       }
       :host([invalid]) .box:not(:has(select:focus-visible))::before {
         box-shadow: inset 0 0 0 1.5px var(--ios-red);

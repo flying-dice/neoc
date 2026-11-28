@@ -456,7 +456,7 @@ where
         conn: Box::pin(async move {
             if let Err(message) = crate::caught(conn).await {
                 panicked.store(true, Ordering::SeqCst);
-                tracing::error!(target: "neoc_net", "connection driver panicked: {message}");
+                tracing::error!(target: "neoc_net", %message, "a connection's driver panicked");
             }
         }),
         finished: false,

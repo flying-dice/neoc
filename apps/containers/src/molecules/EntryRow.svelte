@@ -85,6 +85,6 @@
   }
   .equals {
     flex: none;
-    color: var(--label-tertiary);
+    color: var(--label-secondary);
   }
 </style>

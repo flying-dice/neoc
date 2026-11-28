@@ -94,6 +94,25 @@ test('the kit runs in a sandboxed frame under the frame policy and answers the k
   ).toEqual([])
 })
 
+test('a sandboxed frame draws its text in the bundled Inter, loaded from /kit/fonts/ under the frame policy', async ({
+  page
+}) => {
+  await page.goto(`${origin}/frame`)
+  const loaded = await page.evaluate(async () => {
+    await document.fonts.load('17px InterVariable')
+    return [...document.fonts].some(
+      (f) => f.family.replaceAll('"', '') === 'InterVariable' && f.status === 'loaded'
+    )
+  })
+  expect(loaded).toBe(true)
+  expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(
+    /^InterVariable,/
+  )
+  expect(
+    await page.evaluate(() => (window as unknown as { violations: string[] }).violations)
+  ).toEqual([])
+})
+
 test('the kit follows data-theme: the same elements read dark on a dark document', async ({
   page
 }) => {

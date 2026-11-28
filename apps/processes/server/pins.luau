@@ -10,6 +10,7 @@
 -- ending (the system would not let Processes, or the platform does not know which process it is) is a selection
 -- with `blocked` set, so that it can be inspected and cannot be ended.
 local random = require("lib:random")
+local tracing = require("lib:tracing")
 
 local pins = {}
 
@@ -50,6 +51,12 @@ function pins.hold(process: vnd_sysinfo_Process): (Selection?, vnd_sysinfo_Error
   local _, err = process:pin()
   if err and (err.kind == "process_gone" or err.kind == "pid_reused") then
     return nil, err
+  end
+  if err then
+    tracing.debug(
+      "could not hold the process, so it is only looked at",
+      { error = err.message, kind = err.kind, pid = process.pid }
+    )
   end
   issued += 1
   local selection: Selection = { id = `{run}:{issued}`, process = process, blocked = err }

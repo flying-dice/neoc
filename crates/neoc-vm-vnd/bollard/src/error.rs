@@ -55,6 +55,13 @@ pub enum DockerError {
         /// What could not be read.
         reason: String,
     },
+    /// An attached container's input cannot be written: `close_input()` was called, the connection broke, or the
+    /// script stopped.
+    #[error("{reason}")]
+    Closed {
+        /// Why.
+        reason: String,
+    },
     /// A result was longer than this module reads into memory.
     #[error("the command wrote more than {limit} bytes")]
     TooLarge {

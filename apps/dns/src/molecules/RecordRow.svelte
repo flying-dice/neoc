@@ -16,12 +16,12 @@
   const id = $derived(`dns-record-${record.id}`)
 </script>
 
-<li class="row" data-testid={id}>
+<ui-row data-testid={id}>
   <span class="text">
     <span class="name" data-testid="{id}-name">{record.subdomains ? `${record.name} and *.${record.name}` : record.name}</span>
     <span class="address" data-testid="{id}-address">{record.address}</span>
   </span>
-  <span class="act">
+  <span class="act" slot="trailing">
     {#if busy}
       <ui-spinner label="Removing {record.name}" data-testid="{id}-busy"></ui-spinner>
     {:else}
@@ -33,6 +33,7 @@
         destructive
         hit
         {disabled}
+        title="Remove {record.name} at {record.address}"
         label="Remove {record.name} at {record.address}"
         onclick={onremove}
         data-testid="{id}-remove"
@@ -41,27 +42,16 @@
       </ui-button>
     {/if}
   </span>
-</li>
+</ui-row>
 
 <style>
-  .row {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-inline-start: 12px;
-    border-bottom: 1px solid var(--separator);
-  }
-  .row:last-child {
-    border-bottom: 0;
-  }
   .text {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 6px 0;
+    padding: 0;
   }
   .name,
   .address {

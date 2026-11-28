@@ -1,6 +1,7 @@
 //! The connection under `vnd:agent_client_protocol`: the SDK's v1 client running over a transport of lines.
 //!
-//! The transport is a `lib:websocket` socket's lines, one text frame per JSON-RPC message. The SDK's connection runs
+//! The transport is a `lib:websocket` socket's lines, one text frame per JSON-RPC message, or the script's own `read`
+//! and `write` functions, one call per message ([`script_lines`]). The SDK's connection runs
 //! on a task of the engine's [`Life`] until the script closes it, every handle to it is gone, or the agent hangs up.
 //! Each session the script starts or loads is an SDK `ActiveSession`, which receives what the agent sends for that
 //! session (its updates, its permission requests, the answer to a prompt) on a stream of its own; `read_update` reads
@@ -26,7 +27,9 @@ use crate::agent_client_protocol::{
     LoadSessionResponse, NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOutcome,
     SessionMessage as Message, SessionModeState, SessionUpdate, StopReason, ToolCallUpdate,
 };
-use neoc_vm_core::lifecycle::Life;
+use mlua::{FromLuaMulti, Function, IntoLuaMulti, Lua};
+use neoc_vm_core::lifecycle::{self, Life};
+use neoc_vm_core::panics;
 
 fn invalid(reason: String) -> AcpError {
     AcpError::InvalidInput { reason }
@@ -210,6 +213,8 @@ pub(crate) struct Session {
     active: tokio::sync::Mutex<ActiveSession<'static, Agent>>,
     /// The permission requests given to the script and not answered.
     permissions: Arc<Permissions>,
+    /// The connection's lifetime: a session held keeps it open (the link holds no session, so this is no cycle).
+    _link: Arc<Link>,
 }
 
 /// Permission requests given to the script and not answered yet, by the id the script names them by.
@@ -327,6 +332,69 @@ impl Session {
     }
 }
 
+/// A call into the VM that nobody called: one of the script's own transport functions, called by the SDK's
+/// connection task. It is a call of its own, which waits for its turn (as a server's handler does), with what it
+/// takes from the call that made the transport. It holds the engine weakly: a transport does not keep a dropped engine
+/// alive.
+struct ScriptCall {
+    entrance: lifecycle::Entrance,
+    inherited: lifecycle::Inherited,
+    lua: mlua::WeakLua,
+}
+
+impl ScriptCall {
+    async fn call<R: FromLuaMulti + Send>(
+        &self,
+        function: &Function,
+        args: impl IntoLuaMulti,
+    ) -> std::io::Result<R> {
+        if self.lua.try_upgrade().is_none() {
+            return Err(std::io::Error::other("the script's engine is gone"));
+        }
+        let called = self
+            .entrance
+            .inbound(self.inherited.clone(), panics::caught(function.call_async::<R>(args)))
+            .await;
+        match called {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(e)) => Err(std::io::Error::other(e.to_string())),
+            Err(panic) => Err(std::io::Error::other(panics::error(&panic).to_string())),
+        }
+    }
+}
+
+/// The script's own transport as lines: `read()` gives the agent's next message (`nil` once its side closed, which
+/// ends the transport; an error it raises ends it too), and `write(line)` sends one. Both may wait. The SDK writes
+/// one message at a time, and reads while it writes.
+pub(crate) fn script_lines(lua: &Lua, read: Function, write: Function) -> neoc_vm_lib_websocket::Lines {
+    let caller = Arc::new(ScriptCall {
+        entrance: lifecycle::entrance(lua),
+        inherited: lifecycle::inherited(),
+        lua: lua.weak(),
+    });
+    let writer = Arc::clone(&caller);
+    let outgoing = futures_util::sink::unfold(write, move |write, line: String| {
+        let caller = Arc::clone(&writer);
+        async move {
+            caller.call::<()>(&write, line).await?;
+            Ok::<_, std::io::Error>(write)
+        }
+    });
+    let incoming = futures_util::stream::unfold(Some(read), move |read| {
+        let caller = Arc::clone(&caller);
+        async move {
+            let read = read?;
+            match caller.call::<Option<String>>(&read, ()).await {
+                Ok(Some(line)) => Some((Ok(line), Some(read))),
+                Ok(None) => None,
+                // what failed is the last of it
+                Err(e) => Some((Err(e), None)),
+            }
+        }
+    });
+    neoc_vm_lib_websocket::Lines { outgoing: Box::pin(outgoing), incoming: Box::pin(incoming) }
+}
+
 /// A connection, as the script's handles hold it. When the last one is dropped the connection closes.
 pub(crate) struct Link {
     cx: ConnectionTo<Agent>,
@@ -397,49 +465,60 @@ impl Link {
         from_sdk(&answer, "the answer to initialize")
     }
 
-    fn session(&self, active: ActiveSession<'static, Agent>, modes: Option<SessionModeState>) -> Session {
+    fn session(
+        this: &Arc<Self>,
+        active: ActiveSession<'static, Agent>,
+        modes: Option<SessionModeState>,
+    ) -> Session {
         let id = active.session_id().to_string();
         let permissions = Arc::new(Permissions::default());
-        let mut sessions = self.sessions.lock();
+        let mut sessions = this.sessions.lock();
         sessions.retain(|_, permissions| permissions.strong_count() > 0);
         sessions.insert(id.clone(), Arc::downgrade(&permissions));
         Session {
             id,
             modes,
-            connection: self.cx.clone(),
+            connection: this.cx.clone(),
             active: tokio::sync::Mutex::new(active),
             permissions,
+            _link: Arc::clone(this),
         }
     }
 
-    pub(crate) async fn new_session(&self, params: &NewSessionRequest) -> Result<Session, AcpError> {
-        if let Some(closed) = self.closed() {
+    pub(crate) async fn new_session(
+        this: &Arc<Self>,
+        params: &NewSessionRequest,
+    ) -> Result<Session, AcpError> {
+        if let Some(closed) = this.closed() {
             return Err(closed);
         }
         let request: schema::NewSessionRequest = to_sdk(params)?;
-        let setup = self
+        let setup = this
             .cx
             .build_session_from(request)
             .block_task()
             .start_session()
             .await
-            .map_err(|e| failure(&self.cx, &e))?;
+            .map_err(|e| failure(&this.cx, &e))?;
         let response: NewSessionResponse = from_sdk(&setup.response, "the answer to session/new")?;
-        Ok(self.session(setup.session, response.modes))
+        Ok(Self::session(this, setup.session, response.modes))
     }
 
-    pub(crate) async fn load_session(&self, params: &LoadSessionRequest) -> Result<Session, AcpError> {
-        if let Some(closed) = self.closed() {
+    pub(crate) async fn load_session(
+        this: &Arc<Self>,
+        params: &LoadSessionRequest,
+    ) -> Result<Session, AcpError> {
+        if let Some(closed) = this.closed() {
             return Err(closed);
         }
         let request: schema::LoadSessionRequest = to_sdk(params)?;
-        let setup = self
+        let setup = this
             .cx
             .load_session_from(request)
             .block_task()
             .start_session()
             .await
-            .map_err(|e| failure(&self.cx, &e))?;
+            .map_err(|e| failure(&this.cx, &e))?;
         let response: LoadSessionResponse = from_sdk(&setup.response, "the answer to session/load")?;
         let mut active = setup.session;
         // the history the agent replayed came before its answer, so it is all queued now: drop it (a request in it
@@ -451,7 +530,7 @@ impl Link {
                 cancel_all(&permissions);
             }
         }
-        Ok(self.session(active, response.modes))
+        Ok(Self::session(this, active, response.modes))
     }
 
     pub(crate) fn cancel(&self, session_id: &str) -> Result<(), AcpError> {

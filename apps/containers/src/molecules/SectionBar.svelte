@@ -16,37 +16,50 @@
 </script>
 
 <header class="bar">
-  {#if back}
+  <div class="lead">
+    {#if back}
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button variant="plain" size="small" hit label="Back to the sidebar" onclick={onback} data-testid="containers-back">
       <ui-icon slot="icon" name="chevron.left"></ui-icon>
       Back
     </ui-button>
-  {/if}
+    {/if}
+  </div>
   <div class="heading">
     <h1 data-testid="containers-title">{title}</h1>
     <p class="summary" data-testid="containers-summary">{summary}</p>
   </div>
-  {@render children?.()}
+  <div class="trail">{@render children?.()}</div>
 </header>
 
 <style>
+  /* the title is centred in the bar, the way back before it and the buttons after it */
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, 2fr) minmax(max-content, 1fr);
     align-items: center;
-    gap: 4px;
+    gap: 8px;
     min-height: 44px;
     padding: 0 16px 8px;
   }
+  .lead {
+    display: flex;
+    justify-content: flex-start;
+  }
+  .trail {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+  }
   .heading {
-    flex: 1;
     min-width: 0;
+    text-align: center;
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

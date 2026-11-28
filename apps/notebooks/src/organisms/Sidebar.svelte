@@ -260,7 +260,7 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
   }
   /* the button that starts a note takes the room the three beside it leave */
   .actions :global(.new) {
@@ -284,7 +284,7 @@
   .tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
     max-height: 72px;
     overflow-y: auto;
     /* room for the focus ring of the tags at the edges */
@@ -294,7 +294,7 @@
   .tag {
     display: inline-block;
     line-height: 28px;
-    padding: 0 10px;
+    padding: 0 12px;
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--fill-tertiary);

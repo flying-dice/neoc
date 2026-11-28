@@ -11,6 +11,7 @@ import {
   type Level,
   type Log,
   type LogQuery,
+  type Source,
   type Span,
   type TraceSummary
 } from './telemetry'
@@ -47,6 +48,8 @@ export type View = 'traces' | 'logs'
 export type Pane = 'sidebar' | 'content' | 'detail'
 /** A probe that answers, one that fails in the backend, and one that answers and then fails to render on the page. */
 export type Probe = 'answer' | 'fail' | 'render'
+/** Whose logs the Logs view shows: every source's, or one source's (the host writes much that is not an app's). */
+export type SourceFilter = 'all' | Source
 /** What is picked in a trace: one of its spans, or one of its logs (by `logKey`). */
 export type Choice = { kind: 'span'; id: string } | { kind: 'log'; key: string } | null
 
@@ -74,6 +77,8 @@ export class Telemetry {
   #entry = $state<string | null>(null)
   #query = $state('')
   #level = $state<Level>('info')
+  #source = $state<SourceFilter>('all')
+  #failedOnly = $state(false)
   #probing = $state<Probe | null>(null)
 
   readonly #reader: TelemetryReader
@@ -111,19 +116,29 @@ export class Telemetry {
   get level(): Level {
     return this.#level
   }
+  get source(): SourceFilter {
+    return this.#source
+  }
+  /** The Traces view shows only the traces where something failed (a poll every few seconds buries them otherwise). */
+  get failedOnly(): boolean {
+    return this.#failedOnly
+  }
   get probing(): Probe | null {
     return this.#probing
   }
   get traceCount(): number {
     return this.#traces.length
   }
-  /** The traces that match the search, newest first. */
+  /** The traces that match the search (and failed, when only those are shown), newest first. */
   get traces(): readonly TraceSummary[] {
-    return matchingTraces(this.#traces, this.#query)
+    const found = matchingTraces(this.#traces, this.#query)
+    return this.#failedOnly ? found.filter((t) => t.errors > 0) : found
   }
-  /** The logs that match the search, newest first. */
+  /** The logs that match the search and the source, newest first. */
   get logs(): readonly Log[] {
-    return matchingLogs(this.#logs, this.#query)
+    const found = matchingLogs(this.#logs, this.#query)
+    const source = this.#source
+    return source === 'all' ? found : found.filter((l) => l.source === source)
   }
   get selected(): string | null {
     return this.#selected
@@ -222,6 +237,16 @@ export class Telemetry {
   filter(level: Level): void {
     this.#level = level
     void this.refresh()
+  }
+
+  /** Show one source's logs, or every source's. */
+  from(source: SourceFilter): void {
+    this.#source = source
+  }
+
+  /** Show only the traces where something failed, or every trace. */
+  onlyFailed(on: boolean): void {
+    this.#failedOnly = on
   }
 
   /** Send a probe, in a span of its own; its trace shows once the page has sent what it recorded (every 2 s). */

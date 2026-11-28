@@ -22,6 +22,12 @@ interface Loaded {
   answer(id: unknown, result?: unknown): void
   /** What the page recorded, as the host page is sent it (`vos/telemetry`, sent when the page goes). */
   recorded(): { spans: Record<string, unknown>[]; logs: Record<string, unknown>[] }
+  /** The page's console, as the app sees it (the bridge's wrapped one). */
+  console: Record<'error' | 'warn' | 'info' | 'log' | 'debug', (...args: unknown[]) => void>
+  /** What reached the console underneath: the level and the arguments. */
+  written: [string, unknown[]][]
+  /** The browser fires an event at the page's window. */
+  fire(name: string, e: unknown): void
 }
 
 function load(): Loaded {
@@ -35,7 +41,12 @@ function load(): Loaded {
       posted.push(message)
     }
   }
+  const written: [string, unknown[]][] = []
+  const pageConsole = Object.fromEntries(
+    ['error', 'warn', 'info', 'log', 'debug'].map((level) => [level, (...args: unknown[]) => void written.push([level, args])])
+  )
   const win: Record<string, unknown> = {
+    console: pageConsole,
     parent: host,
     addEventListener: (name: string, fn: (e: unknown) => void) => (listeners[name] ??= []).push(fn),
     matchMedia: () => ({ matches: false }),
@@ -62,6 +73,9 @@ function load(): Loaded {
     RPC: win.RPC as never,
     vos: win.vos as never,
     answer: (id, result = {}) => fire('message', { source: host, data: { jsonrpc: '2.0', id, result } }),
+    console: pageConsole as never,
+    written,
+    fire,
     recorded: () => {
       fire('pagehide', {})
       const batches = posted.filter((m) => m.method === 'vos/telemetry').map((m) => m.params as { spans: []; logs: [] })
@@ -171,5 +185,45 @@ describe('tracing: the span the page is in', () => {
     const draw = spans.find((s) => s.name === 'draw')!
     expect([draw.status, (draw.attributes as Record<string, unknown>)['error.message']]).toEqual(['error', 'each_key_duplicate'])
     expect(logs.find((l) => l.body === 'drawing')?.spanId).toBe(draw.spanId)
+  })
+})
+
+describe('ambient capture: what the app did not log or catch', () => {
+  test('the console is still written, and recorded at its level, an Error with its type and stack', () => {
+    const page = load()
+    page.console.error('saving failed:', new Error('the disk is full'))
+    page.console.warn('slow', { ms: 900 })
+    page.console.log('rendered')
+    expect(page.written.map(([level]) => level)).toEqual(['error', 'warn', 'log'])
+    const logs = page.recorded().logs
+    expect(logs.map((l) => [l.severity, l.body])).toEqual([
+      ['error', 'saving failed: the disk is full'],
+      ['warn', 'slow {"ms":900}'],
+      ['debug', 'rendered']
+    ])
+    const attributes = logs[0]!.attributes as Record<string, unknown>
+    expect(attributes['vos.console']).toBe(true)
+    expect(attributes['exception.type']).toBe('Error')
+    expect(String(attributes['exception.stacktrace'])).toContain('the disk is full')
+  })
+
+  test('once started, an error nobody handled is recorded and told to the host page; before, the page failed to start', () => {
+    const page = load()
+    page.fire('error', { message: 'x is not defined', filename: 'http://h/apps/notes/static/main.js', lineno: 3 })
+    expect(page.posted.some((m) => m.method === 'vos/failed')).toBe(true)
+    expect(page.posted.some((m) => m.method === 'vos/error')).toBe(false)
+
+    const started = load()
+    started.fire('load', {})
+    started.fire('unhandledrejection', { reason: new Error('Method not found: _save') })
+    started.fire('error', { error: new TypeError("Cannot read properties of undefined (reading 'id')") })
+    expect(started.posted.filter((m) => m.method === 'vos/error').map((m) => m.params)).toEqual([
+      { message: 'Method not found: _save' },
+      { message: "Cannot read properties of undefined (reading 'id')" }
+    ])
+    expect(started.recorded().logs.map((l) => [l.severity, l.body])).toEqual([
+      ['error', 'Method not found: _save'],
+      ['error', "Cannot read properties of undefined (reading 'id')"]
+    ])
   })
 })

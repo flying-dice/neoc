@@ -5,7 +5,9 @@
 
 use std::collections::HashMap;
 
-use mlua_ir::{Options, Shape, Text};
+use mlua::{Lua, Value};
+use mlua_ir::ir::Ty;
+use mlua_ir::{FromLuaArg, Options, Registry, Shape, Text};
 use serde::{Deserialize, Serialize};
 
 /// The longest name of a container, volume or network Docker takes, and far more than any image reference needs.
@@ -100,10 +102,12 @@ pub struct VolumeName(pub String);
 pub struct NetworkName(pub String);
 
 /// An image reference: `nginx`, `nginx:1.27`, `registry:5000/team/app@sha256:...`.
-#[derive(Debug, Clone, PartialEq, Eq, Text)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Text)]
 #[text(validate = "image_reference")]
+#[serde(try_from = "String", into = "String")]
 #[shape(module = "vnd:bollard")]
 pub struct ImageRef(pub String);
+checked_text!(ImageRef, image_reference);
 
 impl ImageRef {
     /// The repository and the tag a pull names. Without a tag or a digest the tag is `latest`: Docker's API pulls
@@ -131,6 +135,27 @@ impl ImageRef {
 #[shape(module = "vnd:bollard")]
 pub struct Signal(pub String);
 checked_text!(Signal, signal_name);
+
+/// Bytes a call sends as they are: a string (any bytes), or a `buffer`. Declared `string`, the one bytes type the
+/// declarations have.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Payload(pub Vec<u8>);
+
+impl Shape for Payload {
+    fn shape(_: &mut Registry) -> Ty {
+        Ty::String
+    }
+}
+
+impl FromLuaArg for Payload {
+    fn from_lua_arg(value: Value, _: &Lua) -> Result<Self, String> {
+        match value {
+            Value::String(text) => Ok(Self(text.as_bytes().to_vec())),
+            Value::Buffer(buffer) => Ok(Self(buffer.to_vec())),
+            other => Err(mlua_ir::expected("a string or a buffer", &other)),
+        }
+    }
+}
 
 /// Docker's `filters`: each filter's name with the values it may have
 /// (`{ label = { "app=web" }, status = { "running" } }`).
@@ -340,11 +365,79 @@ pub struct Events {
     pub filters: Option<Filters>,
 }
 
+/// The options of `build_image`.
+#[derive(Debug, Serialize, Deserialize, Options)]
+#[serde(default, deny_unknown_fields)]
+#[shape(module = "vnd:bollard")]
+pub struct Build {
+    /// The name to give the image, with its tag (`app:1`); the image is only known by its id when not given.
+    pub t: Option<ImageRef>,
+    /// Where the Dockerfile is in the archive: `Dockerfile` when not given.
+    pub dockerfile: String,
+    /// Labels to put on the image.
+    pub labels: Option<HashMap<String, String>>,
+    /// The values of the Dockerfile's `ARG`s, by name.
+    pub buildargs: Option<HashMap<String, String>>,
+    /// Remove the build's intermediate containers once it succeeds: `true` when not given, as for Docker.
+    pub rm: bool,
+    /// Remove them even when it fails.
+    pub forcerm: bool,
+    /// Use no cached layer.
+    pub nocache: bool,
+    /// Pull the `FROM` images again even when they are on the host.
+    pub pull: bool,
+}
+
+impl Default for Build {
+    fn default() -> Self {
+        Self {
+            t: None,
+            dockerfile: "Dockerfile".to_owned(),
+            labels: None,
+            buildargs: None,
+            rm: true,
+            forcerm: false,
+            nocache: false,
+            pull: false,
+        }
+    }
+}
+
+/// The options of `attach_container`: which of the container's streams to attach to. Nothing when not given, as
+/// for Docker.
+#[derive(Debug, Default, Serialize, Deserialize, Options)]
+#[serde(default, deny_unknown_fields)]
+#[shape(module = "vnd:bollard")]
+pub struct AttachContainer {
+    /// Stay attached and read what the container writes from now on.
+    pub stream: bool,
+    /// Attach to its standard input, which `write` writes to.
+    pub stdin: bool,
+    /// Read its standard output.
+    pub stdout: bool,
+    /// Read its standard error.
+    pub stderr: bool,
+    /// Read what it wrote before, first.
+    pub logs: bool,
+    /// The keys that detach from the container when they are written to its input (`ctrl-p,ctrl-q`, Docker's
+    /// own, when not given).
+    pub detach_keys: Option<String>,
+}
+
+/// Where `upload_to_container` unpacks its archive.
+#[derive(Debug, Clone, Serialize, Deserialize, Shape)]
+#[serde(deny_unknown_fields)]
+#[shape(module = "vnd:bollard")]
+pub struct Upload {
+    /// The directory in the container to unpack the archive into; it must exist.
+    pub path: String,
+    /// Refuse to replace a directory with a file, or a file with a directory.
+    #[serde(default)]
+    pub no_overwrite_dir_non_dir: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
-    use mlua::{Lua, Value};
-    use mlua_ir::FromLuaArg;
-
     use super::*;
 
     fn read<T: FromLuaArg>(lua: &Lua, source: &str) -> Result<T, String> {

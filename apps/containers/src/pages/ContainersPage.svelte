@@ -1,4 +1,4 @@
-<!-- @page ContainersPage — the whole app: the sidebar beside what it shows (or one of the two in a narrow window): the containers of every stack or one, or Docker's images, volumes or networks; a container looked at in their place, the forms a container, a volume or a network is made in, the questions before one is removed, and what to do when Docker cannot be reached; driven by one window's Containers state -->
+<!-- @page ContainersPage — the whole app: the sidebar beside what it shows (or one of the two in a narrow window): the containers of every stack or one, or Docker's images, volumes or networks; a container looked at in their place, the forms a container, a volume or a network is made in, the form an image recipe is kept and built in, the questions before one is removed, and what to do when Docker cannot be reached; driven by one window's Containers state -->
 <script lang="ts">
   import ContainerForm from '../organisms/ContainerForm.svelte'
   import ContainerInspector from '../organisms/ContainerInspector.svelte'
@@ -7,6 +7,7 @@
   import ImageList from '../organisms/ImageList.svelte'
   import NetworkForm from '../organisms/NetworkForm.svelte'
   import NetworkList from '../organisms/NetworkList.svelte'
+  import RecipeForm from '../organisms/RecipeForm.svelte'
   import RemoveContainer from '../organisms/RemoveContainer.svelte'
   import RemoveResource from '../organisms/RemoveResource.svelte'
   import StackSidebar from '../organisms/StackSidebar.svelte'
@@ -14,6 +15,7 @@
   import VolumeList from '../organisms/VolumeList.svelte'
   import type { Containers } from '../lib/containers.svelte'
   import { isUp } from '../lib/format'
+  import { statusOf } from '../lib/recipes.svelte'
 
   interface Props {
     /** This window's state; the composition root builds it with the real `rpc` and `events`, a story with a fake. */
@@ -29,6 +31,7 @@
   const engine = $derived(containers.engine)
   const inspected = $derived(containers.inspected)
   const resources = $derived(containers.resources)
+  const recipes = $derived(containers.recipes)
   const scope = $derived(containers.scope)
   const reportOf = (kind: 'images' | 'volumes'): string | undefined => (resources.report?.kind === kind ? resources.report.text : undefined)
   // a Docker that cannot be reached is said in the middle of the window, whichever column was in front
@@ -104,6 +107,19 @@
           onsave={() => void resources.save()}
           oncancel={() => resources.cancel()}
         />
+      {:else if recipes.form}
+        {@const recipe = recipes.editing}
+        <RecipeForm
+          bind:form={recipes.form}
+          {recipe}
+          status={statusOf(recipe, recipes.buildOf(recipe?.id ?? null), resources.images)}
+          lines={recipes.buildOf(recipe?.id ?? null)?.lines ?? []}
+          savable={recipes.savable}
+          onsave={() => void recipes.save()}
+          onbuild={() => void recipes.build()}
+          oncancel={() => recipes.close()}
+          onremove={() => void recipes.remove()}
+        />
       {:else if resources.removal}
         <RemoveResource
           bind:removal={resources.removal}
@@ -136,6 +152,10 @@
           onremove={(image) => resources.askImage(image)}
           onnew={(image) => void containers.compose(image.tags[0] ?? '')}
           onprune={() => void resources.prune('images')}
+          recipes={recipes.all}
+          statusOf={(recipe) => statusOf(recipe, recipes.buildOf(recipe.id), resources.images)}
+          onrecipe={(recipe) => recipes.edit(recipe)}
+          onnewrecipe={() => recipes.compose()}
         />
       {:else if scope.kind === 'volumes'}
         <VolumeList

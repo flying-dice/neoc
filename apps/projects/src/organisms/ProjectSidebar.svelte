@@ -17,13 +17,14 @@
 
 <nav class="sidebar" aria-label="Projects">
   <header class="bar">
-    <h1>Projects</h1>
+    <span class="grow"></span>
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <ui-button variant="plain" square hit label="New Project" onclick={onnew} data-testid="projects-new">
+    <ui-button variant="plain" square hit label="New Project" title="New Project" onclick={onnew} data-testid="projects-new">
       <ui-icon slot="icon" name="plus"></ui-icon>
     </ui-button>
   </header>
+  <h1 class="ios-large-title">Projects</h1>
   <div class="scroll">
     <!-- an empty selectable list is not valid ARIA: the list is there once there is a project -->
     {#if projects.length > 0}
@@ -65,14 +66,15 @@
   .bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     min-height: 44px;
-    padding: 0 8px 6px 16px;
+    padding: 0 8px;
+  }
+  .grow {
+    flex: 1;
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    padding: 0 16px 8px;
   }
   .scroll {
     flex: 1;

@@ -45,7 +45,7 @@
       <ui-button variant="plain" size="small" hit onclick={ondiscard} data-testid="projects-page-cancel">Cancel</ui-button>
       <span class="gap"></span>
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <ui-button size="small" hit disabled={edit.title.trim() === ''} onclick={onsave} data-testid="projects-page-done">Done</ui-button>
+      <ui-button variant="plain" size="small" hit disabled={edit.title.trim() === ''} onclick={onsave} data-testid="projects-page-done">Done</ui-button>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <ui-button variant="plain" size="small" hit label="Back to {from}" onclick={onback} data-testid="projects-page-back">
@@ -62,6 +62,7 @@
         destructive
         hit
         label="Delete the page"
+        title="Delete the page"
         disabled={confirming}
         onclick={() => (asking = page.id)}
         data-testid="projects-page-remove"

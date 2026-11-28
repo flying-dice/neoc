@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Telemetry, RENDER_FAILURE } from './telemetry.svelte'
-import { FAILED_TRACE, RENDER_TRACE, createFakeBackend, rpcError } from './fakeApi'
+import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS, createFakeBackend, rpcError } from './fakeApi'
 
 const window = (options: Parameters<typeof createFakeBackend>[0] = {}, later?: (fn: () => void) => void) => {
   const backend = createFakeBackend(options)
@@ -28,6 +28,21 @@ describe('Telemetry', () => {
     expect(telemetry.pickedSpan?.name).toBe('rpc overview')
     telemetry.choose({ kind: 'log', key: `${error.timeMs}:${error.spanId}:${error.source}:${error.body}` })
     expect(telemetry.pickedLog).toBeNull()
+  })
+
+  test('only the traces where something failed can be listed, and the logs of one source', async () => {
+    const healthy = { ...SPANS[0]!, traceId: '0123456789abcdef0123456789abcdef', spanId: '7777777777777777', name: 'rpc _overview', startMs: 9000, endMs: 9003 }
+    const { telemetry } = window({ spans: [...SPANS, healthy], logs: LOGS })
+    await telemetry.refresh()
+    expect(telemetry.traces).toHaveLength(3)
+    telemetry.onlyFailed(true)
+    expect(telemetry.traces.map((t) => t.traceId)).toEqual([FAILED_TRACE, RENDER_TRACE])
+    telemetry.show('logs')
+    await telemetry.refresh()
+    telemetry.from('browser')
+    expect(telemetry.logs.map((l) => l.source)).toEqual(['browser'])
+    telemetry.from('all')
+    expect(new Set(telemetry.logs.map((l) => l.source))).toEqual(new Set(['browser', 'backend']))
   })
 
   test('the Logs view reads at the level chosen, and a log opens in the detail column', async () => {

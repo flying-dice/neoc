@@ -32,8 +32,12 @@ const SKIP = /(^|\/)(node_modules|storybook-static|dist|out)\/|^packages\/[^/]+\
 
 /** The shell's protocol.ts re-exports the types generated from the Rust schema: the one file that reaches types/. */
 const GENERATED_REEXPORT = 'client/src/shell/protocol.ts'
-/** Static, reviewed markup only. Never pass agent, tool or user text to these. */
-const HTML_ALLOWED = ['packages/ui/src/atoms/Icon.svelte', 'packages/kit/src/components/ui-icon.ts'] // SVG strings from the constant icons map
+/** Reviewed markup only: static, or made safe before it is rendered. Never pass agent, tool or user text to these as it is. */
+const HTML_ALLOWED = [
+  'packages/ui/src/atoms/Icon.svelte', // SVG strings from the constant icons map
+  'packages/kit/src/components/ui-icon.ts', // the same
+  'packages/chat/src/atoms/Markdown.svelte' // micromark's safe mode (packages/chat/src/lib/markdown.ts): every tag of the agent's own is escaped
+]
 /** Runs in a browser: no Node or Bun builtins. */
 const BROWSER = ['client/src/', 'packages/ui/src/', 'packages/kit/src/']
 const WEBSOCKET_ALLOWED = ['client/src/shell/rpc/websocket.ts'] // the reconnecting JSON-RPC transport

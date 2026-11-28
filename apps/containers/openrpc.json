@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Containers",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "methods": [
     {
@@ -580,6 +580,167 @@
       ]
     },
     {
+      "name": "_recipes",
+      "summary": "The image recipes, by the name of their image: each the Dockerfile an image of that name is built from, and what its last build left.",
+      "params": [],
+      "result": {
+        "name": "recipes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        }
+      }
+    },
+    {
+      "name": "_add_recipe",
+      "summary": "Keep a new recipe, and answer with the recipes there are now. Nothing is built until `_build`.",
+      "params": [
+        {
+          "name": "tag",
+          "required": true,
+          "description": "The name the image is built as, with its tag: `tools:1`, `ghcr.io/owner/tools:1`. A name without a tag is `:latest`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        {
+          "name": "dockerfile",
+          "required": true,
+          "description": "The Dockerfile: the whole build context. What the image needs, it downloads.",
+          "schema": {
+            "type": "string",
+            "maxLength": 100000
+          }
+        }
+      ],
+      "result": {
+        "name": "recipes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is not one of an image, another recipe builds it, or the Dockerfile is empty: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_update_recipe",
+      "summary": "Change a recipe's name or Dockerfile, and answer with the recipes there are now. What its last build left stays; the next build builds the recipe as it is then.",
+      "params": [
+        {
+          "name": "recipe",
+          "required": true,
+          "description": "The id of one of the recipes of `_recipes`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "tag",
+          "required": true,
+          "description": "The name the image is built as, with its tag: `tools:1`, `ghcr.io/owner/tools:1`. A name without a tag is `:latest`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        {
+          "name": "dockerfile",
+          "required": true,
+          "description": "The Dockerfile: the whole build context. What the image needs, it downloads.",
+          "schema": {
+            "type": "string",
+            "maxLength": 100000
+          }
+        }
+      ],
+      "result": {
+        "name": "recipes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "The name is not one of an image, another recipe builds it, or the Dockerfile is empty: the message says which."
+        }
+      ]
+    },
+    {
+      "name": "_remove_recipe",
+      "summary": "Remove a recipe, and answer with the recipes there are now. The images it built stay: they are removed with `_image_remove`.",
+      "params": [
+        {
+          "name": "recipe",
+          "required": true,
+          "description": "The id of one of the recipes of `_recipes`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "recipes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such recipe."
+        }
+      ]
+    },
+    {
+      "name": "_build",
+      "summary": "Start a build of a recipe's image from its Dockerfile, and answer at once with the recipes (it is `building`). `_building` tells how it goes. The name moves to the new image, as `docker build -t` does. A build of it that is under way goes on, and no second one starts.",
+      "params": [
+        {
+          "name": "recipe",
+          "required": true,
+          "description": "The id of one of the recipes of `_recipes`.",
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      ],
+      "result": {
+        "name": "recipes",
+        "schema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such recipe."
+        }
+      ]
+    },
+    {
       "name": "_stack_start",
       "summary": "Start every container of a Compose stack, the services others depend on first.",
       "params": [
@@ -1112,6 +1273,36 @@
           "description": "How many bytes there are to download, as far as Docker has said; 0 while it has not.",
           "schema": {
             "type": "number"
+          }
+        }
+      ]
+    },
+    {
+      "name": "_building",
+      "summary": "How the build of a recipe's image goes, a line at a time: Docker's output while it runs, then a last line that says it is done or why it failed. Read the recipes and the images again once it is over.",
+      "params": [
+        {
+          "name": "recipe",
+          "required": true,
+          "description": "The id of the recipe whose image is built.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "line",
+          "required": true,
+          "description": "A line of the build's output, or the last line: the image it made, or why it failed.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "description": "`running` while the build goes on, `done` when it made the image, `failed` when it did not.",
+          "schema": {
+            "$ref": "#/components/schemas/BuildStatus"
           }
         }
       ]
@@ -1736,6 +1927,57 @@
           "images",
           "removed",
           "space"
+        ]
+      },
+      "BuildStatus": {
+        "type": "string",
+        "description": "How a build of an image goes: under way, done, or failed.",
+        "enum": [
+          "running",
+          "done",
+          "failed"
+        ]
+      },
+      "Recipe": {
+        "type": "object",
+        "description": "An image recipe: the name an image is built as, and the Dockerfile it is built from.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string",
+            "description": "The name the image is built as, with its tag: `tools:1`."
+          },
+          "dockerfile": {
+            "type": "string",
+            "description": "The Dockerfile, the whole build context."
+          },
+          "image": {
+            "type": "string",
+            "description": "The id of the image the last build that worked made; empty when none has."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "That image was built from the recipe as it is now: neither its name nor its Dockerfile changed since."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why the last build failed; empty when it worked, or there was none."
+          },
+          "building": {
+            "type": "boolean",
+            "description": "A build of it is under way."
+          }
+        },
+        "required": [
+          "id",
+          "tag",
+          "dockerfile",
+          "image",
+          "current",
+          "problem",
+          "building"
         ]
       },
       "VolumesPruned": {

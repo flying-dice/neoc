@@ -98,10 +98,10 @@
   <div class="scroll" tabindex="0" role="region" aria-label="Details of {service.label}">
     <ui-list variant="inset" label="Settings">
       <ui-section header="Settings" footer={canChange('autostart') ? undefined : 'This service manager does not change these settings.'}>
-        <ui-row heading="Start automatically">
+        <ui-row heading="Start Automatically">
           <ui-toggle
             slot="trailing"
-            label="Start automatically"
+            label="Start Automatically"
             hit
             checked={service.autostart === true}
             disabled={busy || !canChange('autostart') || service.autostart === undefined}
@@ -155,14 +155,14 @@
       <ui-section header="Definition">
         <ui-row heading="Program" value={said(service.program ?? service.commandLine, 'program')} data-testid="services-detail-program"></ui-row>
         <ui-row heading="Arguments" value={service.args ? (service.args.length > 0 ? service.args.join(' ') : 'None') : unsaid(manager, 'args')} data-testid="services-detail-args"></ui-row>
-        <ui-row heading="Working directory" value={said(service.workingDirectory, 'working_directory')} data-testid="services-detail-directory"></ui-row>
+        <ui-row heading="Working Directory" value={said(service.workingDirectory, 'working_directory')} data-testid="services-detail-directory"></ui-row>
         <ui-row
           heading="Environment"
           value={service.environment ? (service.environment.length > 0 ? service.environment.map((v) => `${v.name}=${v.value}`).join(' ') : 'None') : unsaid(manager, 'environment')}
           data-testid="services-detail-environment"
         ></ui-row>
-        <ui-row heading="Runs as" value={said(service.user, 'user')} data-testid="services-detail-user"></ui-row>
-        <ui-row heading="Defined in" value={said(service.path, 'path')} data-testid="services-detail-path"></ui-row>
+        <ui-row heading="Runs As" value={said(service.user, 'user')} data-testid="services-detail-user"></ui-row>
+        <ui-row heading="Defined In" value={said(service.path, 'path')} data-testid="services-detail-path"></ui-row>
       </ui-section>
     </ui-list>
   </div>
@@ -191,8 +191,7 @@
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -201,7 +200,7 @@
     margin: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }
@@ -214,6 +213,9 @@
   }
   .actions :global(.remove) {
     margin-inline-start: auto;
+  }
+  strong {
+    font-weight: 600;
   }
   .waiting {
     font: var(--type-footnote);

@@ -5,7 +5,11 @@
   backend through `app.call`, its events, the shell's appearance and the window's display mode reach the app as
   messages in a dialect of MCP Apps, and a message is the frame's only when it comes from this iframe's own window
   (`shell/hostBridge.ts`). Atoms: ActivityIndicator, Button, Text.
+  An error the page did not handle once it started (`vos/error`: a throw outside every handler, a rejection nobody
+  caught) is said on a strip across the foot of the window, over the page, which goes on running: what went wrong,
+  how many times, and Reload or Dismiss. A person is told the app hit a problem even when its developer did not catch it.
   Test ids: `${appId}-opening` while the client mounts, `${appId}-failed` (+ `-retry`) when it cannot,
+  `${appId}-problem` (+ `-reload`, `-dismiss`) for an error the page did not handle,
   `${appId}-frame` on the iframe itself and `${appId}-shield` on the cover while a press or a drag is going on.
 -->
 <script lang="ts">
@@ -38,6 +42,8 @@
   let iframe: HTMLIFrameElement | undefined = $state()
   let phase = $state<'opening' | 'ready' | 'failed'>('opening')
   let failure = $state<string | null>(null)
+  /** The last error the page did not handle since the strip was dismissed, and how many there were. */
+  let problem = $state<{ message: string; count: number } | null>(null)
   let attempt = $state(0)
   // a press anywhere in the shell, or a drag of something in it (a recent app dragged onto the stage: the browser takes
   // the pointer over then and ends the press with `pointercancel`): while it lasts the frame must not swallow the
@@ -127,6 +133,9 @@
       onFailed: (message) => {
         failure = message
         phase = 'failed'
+      },
+      onProblem: (message) => {
+        problem = { message, count: (problem?.count ?? 0) + 1 }
       }
     })
     bridge = made
@@ -179,6 +188,7 @@
     void attempt
     phase = 'opening'
     failure = null
+    problem = null
     const timer = setTimeout(() => {
       if (phase === 'opening') {
         failure = `${name} did not start.`
@@ -259,6 +269,25 @@
         >Try again</Button
       >
     </div>
+  {:else if phase === 'ready' && problem}
+    <div class="problem" role="alert" data-testid="{appId}-problem">
+      <div class="problem-text">
+        <Text style="subheadline" weight="semibold"
+          >{name} ran into a problem{problem.count > 1 ? ` (${problem.count} times)` : ''}</Text
+        >
+        <Text style="footnote" color="secondary">{problem.message}</Text>
+      </div>
+      <Button testid="{appId}-problem-reload" size="small" capsule hit onclick={() => attempt++}
+        >Reload</Button
+      >
+      <Button
+        testid="{appId}-problem-dismiss"
+        variant="plain"
+        size="small"
+        hit
+        onclick={() => (problem = null)}>Dismiss</Button
+      >
+    </div>
   {:else if phase === 'opening'}
     <div class="state" data-testid="{appId}-opening">
       <ActivityIndicator size="large" label="Opening {name}" />
@@ -287,6 +316,26 @@
   .shield {
     position: absolute;
     inset: 0;
+  }
+  .problem {
+    position: absolute;
+    inset: auto 8px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-popover);
+    border-left: 3px solid var(--ios-red);
+  }
+  .problem-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-wrap: anywhere;
   }
   .state {
     position: absolute;

@@ -12,7 +12,7 @@ import { base } from '../styles'
  * the arrow keys move the selection, Home and End jump. A form control (see `FormControl`): the selected value is
  * submitted, and `required` keeps the form invalid until a segment is chosen.
  *
- * Each segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high; with `hit` they have a
+ * Each segment has the test id `<data-testid of the control>-<value>`. The segments are drawn 28 pt high inside a
  * 44 pt high hit area.
  *
  * @tag ui-segmented
@@ -41,12 +41,14 @@ export class UiSegmented extends FormControl {
   static styles = [
     base,
     css`
-      /* with hit, 44 pt high: layout space the control owns. Segments already tile it horizontally. */
-      :host([hit]) {
+      /* 44 pt high, always: layout space the control owns (the segments are drawn 28 pt high inside it). Segments already
+         tile it horizontally. */
+      :host {
         --ui-hit: 44px;
       }
       :host {
         display: inline-flex;
+        max-width: 100%;
         align-items: center;
         vertical-align: middle;
         width: fit-content;
@@ -62,6 +64,7 @@ export class UiSegmented extends FormControl {
         display: inline-grid;
         grid-template-columns: repeat(var(--count), minmax(0, 1fr));
         padding: 2px;
+        max-width: 100%;
         min-height: 32px;
         border-radius: 9px;
         background: var(--fill-tertiary);
@@ -97,13 +100,21 @@ export class UiSegmented extends FormControl {
         position: relative;
         z-index: 1;
         padding: 0 14px;
+        min-width: 0; /* a segment is never wider than its share, whatever its label */
         font: var(--type-footnote);
         font-weight: 500;
         letter-spacing: var(--tracking-footnote);
         color: var(--label);
         cursor: pointer;
-        white-space: nowrap;
         transition: opacity var(--duration-fast);
+      }
+      /* a label too long for its segment ends in an ellipsis inside it (the button itself cannot clip: its hit area is
+         drawn outside it) */
+      .label {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .segment.selected {
         font-weight: 600;
@@ -249,7 +260,7 @@ export class UiSegmented extends FormControl {
             ?disabled=${this.off || s.disabled}
             @click=${() => this.select(s.value)}
           >
-            ${s.label}
+            <span class="label">${s.label}</span>
           </button>`
       )}
     </div>`

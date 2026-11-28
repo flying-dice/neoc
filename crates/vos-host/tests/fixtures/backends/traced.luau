@@ -17,3 +17,23 @@ RPC.on_request("_overview", function()
   log.info("read the overview", { units = units })
   return { units = units }
 end)
+
+-- three ways a call goes wrong, none of them logged by the app: each must still be a line in the logs, in the call's
+-- trace. The app refuses (a reason it gives), its code fails (a bug), and work it started in the background fails
+-- after the call has answered.
+RPC.on_request("_refuse", function(_params: any, ctx: any)
+  return ctx:fail("Docker cannot be reached at tcp://nowhere.")
+end)
+
+RPC.on_request("_crash", function()
+  local missing: any = nil
+  return { units = missing.count }
+end)
+
+RPC.on_request("_background", function()
+  task.spawn(function()
+    task.wait(0)
+    error("the feed went away")
+  end)
+  return { units = 0 }
+end)

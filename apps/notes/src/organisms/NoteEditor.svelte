@@ -76,7 +76,7 @@
       {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <ui-button
-        variant={note.pinned ? 'tinted' : 'plain'}
+        variant="plain"
         size="small"
         toggle
         pressed={note.pinned}
@@ -87,7 +87,7 @@
         {note.pinned ? 'Pinned' : 'Pin'}
       </ui-button>
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <ui-button variant="plain" square destructive hit label="Delete the note" onclick={() => onremove(note)} data-testid="notes-remove">
+      <ui-button variant="plain" square destructive hit label="Delete the note" title="Delete the note" onclick={() => onremove(note)} data-testid="notes-remove">
         <ui-icon slot="icon" name="trash"></ui-icon>
       </ui-button>
     {/if}
@@ -144,7 +144,7 @@
     align-items: center;
     gap: 8px;
     min-height: 44px;
-    padding: 0 8px 0 12px;
+    padding: 0 12px 0 12px;
   }
   .gap {
     flex: 1;

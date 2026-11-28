@@ -45,8 +45,9 @@
 //! root: it is root on the host. Nothing here narrows that, as nothing narrows `std:fs` or `vnd:hyper`: a script
 //! that is given this module is trusted with the machine.
 //!
-//! **Streams.** Logs, events and the progress of a pull are streams (`stream`): `next()` waits for the next item,
-//! `(nil, nil)` is the end, `items()` iterates. A stream belongs to the script that made it and stops with it.
+//! **Streams.** Logs, events and the progress of a pull or a build are streams (`stream`): `next()` waits for the
+//! next item, `(nil, nil)` is the end, `items()` iterates. A stream belongs to the script that made it and stops with
+//! it. So does an `Attach` (`attach_container`), which reads the same way and also writes to the container's input.
 //!
 //! The API's rules:
 //! - An error is a typed [`DockerError`](error::DockerError) (`err.kind`, `err.reason`, `err.status`).
@@ -57,8 +58,17 @@
 //! - A name, an image reference, a signal, an option that is refused is raised as a wrong argument with its place.
 //! - A filter's values are always a list (`status = { "running" }`).
 //! - TLS is `tls = { ca, cert, key }`.
-//! - `logs`, `events` and `pull_image` return the stream itself (they cannot fail before the first `next()`), and a
-//!   stream has `items()`.
+//! - `logs`, `events`, `pull_image` and `build_image` return the stream itself (they cannot fail before the first
+//!   `next()`), and a stream has `items()`.
+//! - `build_image` takes the build context (a tar archive, as a string of its bytes or a buffer), then its options.
+//!   It builds with Docker's classic builder, and what it reports is this module's own record of bollard's
+//!   `BuildInfo` (`id`, `stream`, `status`, `progressDetail`, `aux.ID`): bollard's model cannot be given to a script
+//!   as it is. A build that fails is the stream's error, not an `errorDetail`.
+//! - `attach_container` returns an `Attach`: `next()` and `items()` read the output as `logs` pieces, `write(data)`
+//!   writes to the input and waits until it is sent, `close_input()` ends the input. Its options are bollard's, and
+//!   none is on unless given. Writing to an input that is closed is `closed`.
+//! - `upload_to_container` takes the container, `{ path, no_overwrite_dir_non_dir }` and a tar archive (a string of
+//!   its bytes or a buffer).
 //! - `exec` with an empty command is refused as `invalid_input`, and what it returns is a typed table.
 //! - A volume that is returned (`list_volumes`, `create_volume`) is this module's own record of Docker's volume, with
 //!   Docker's field names and its date as text: bollard's model cannot be read field by field yet. It leaves out
@@ -76,6 +86,7 @@
 )]
 
 pub mod args;
+mod attach;
 pub mod error;
 mod stream;
 
@@ -89,16 +100,16 @@ pub mod bollard {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use bollard::container::LogOutput;
+    use bollard::container::{AttachContainerResults, LogOutput};
     use bollard::exec::StartExecResults;
     use bollard::models::{
-        self, ContainerCreateBody, ContainerCreateResponse, ContainerInspectResponse, ContainerStatsResponse,
-        ContainerSummary, CreateImageInfo, EventMessage, ExecConfig, ImageDeleteResponseItem,
-        ImagePruneResponse, ImageSummary, Network, NetworkCreateRequest, NetworkCreateResponse, SystemInfo,
-        SystemVersion, VolumeCreateRequest, VolumePruneResponse,
+        self, BuildInfoAux, ContainerCreateBody, ContainerCreateResponse, ContainerInspectResponse,
+        ContainerStatsResponse, ContainerSummary, CreateImageInfo, EventMessage, ExecConfig,
+        ImageDeleteResponseItem, ImagePruneResponse, ImageSummary, Network, NetworkCreateRequest,
+        NetworkCreateResponse, SystemInfo, SystemVersion, VolumeCreateRequest, VolumePruneResponse,
     };
     use bollard::query_parameters as query;
-    use bollard::{API_DEFAULT_VERSION, Docker};
+    use bollard::{API_DEFAULT_VERSION, Docker, body_full};
     use futures::StreamExt;
     use mlua::Lua;
     use mlua_ir::{Foreign, Object, Shape, Stream};
@@ -107,10 +118,11 @@ pub mod bollard {
     use tokio::sync::OnceCell;
 
     use super::args::{
-        ConnectOptions, ContainerName, CreateContainer, Events, ExecOptions, Filtered, ImageRef, Kill,
-        ListContainers, ListImages, Logs, NetworkName, Pull, RemoveContainer, RemoveImage, RemoveVolume,
-        Stop, VolumeName, clamped,
+        AttachContainer, Build, ConnectOptions, ContainerName, CreateContainer, Events, ExecOptions,
+        Filtered, ImageRef, Kill, ListContainers, ListImages, Logs, NetworkName, Payload, Pull,
+        RemoveContainer, RemoveImage, RemoveVolume, Stop, Upload, VolumeName, clamped,
     };
+    use super::attach::{self, Attached};
     use super::error::DockerError;
     use super::stream;
     use neoc_vm_core::lifecycle::Life;
@@ -394,6 +406,58 @@ pub mod bollard {
         pub warnings: Vec<String>,
     }
 
+    /// How far a step of a build has got: Docker's `progressDetail`.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Shape)]
+    pub struct ProgressDetail {
+        /// What is done (bytes, for a download).
+        pub current: Option<i64>,
+        /// What there is to do.
+        pub total: Option<i64>,
+    }
+
+    /// The image a build made: Docker's `aux`.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Shape)]
+    pub struct ImageId {
+        /// Its id (`sha256:...`).
+        #[serde(rename = "ID")]
+        pub id: Option<String>,
+    }
+
+    /// What a build reports as it goes, with Docker's field names: a line of its output (`stream`), the status of a
+    /// pull it makes (`status`, `id`, `progressDetail`), or the image it made (`aux.ID`).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Shape)]
+    pub struct BuildInfo {
+        /// What the status is about (a layer).
+        pub id: Option<String>,
+        /// A piece of the build's output (`Step 1/3 : FROM alpine`), with its line ends.
+        pub stream: Option<String>,
+        /// A status (`Downloading`).
+        pub status: Option<String>,
+        /// How far the status has got.
+        #[serde(rename = "progressDetail")]
+        pub progress_detail: Option<ProgressDetail>,
+        /// The image the build made.
+        pub aux: Option<ImageId>,
+    }
+
+    impl From<models::BuildInfo> for BuildInfo {
+        fn from(info: models::BuildInfo) -> Self {
+            Self {
+                id: info.id,
+                stream: info.stream,
+                status: info.status,
+                progress_detail: info
+                    .progress_detail
+                    .map(|detail| ProgressDetail { current: detail.current, total: detail.total }),
+                // the classic builder reports the image's id; BuildKit's status is not asked for
+                aux: match info.aux {
+                    Some(BuildInfoAux::Default(image)) => Some(ImageId { id: image.id }),
+                    Some(BuildInfoAux::BuildKit(_)) | None => None,
+                },
+            }
+        }
+    }
+
     #[mlua_ir::object]
     impl Client {
         /// Ask the daemon whether it is there: `true`, or the error (`connect` when no daemon answers).
@@ -642,6 +706,67 @@ pub mod bollard {
             exec(self.api().await?, name.0, config).await
         }
 
+        /// Attach to a container's streams, as `docker attach` does: Docker hijacks the connection, which then
+        /// carries the container's output one way and its input the other. Returns an `Attach`: its `next()` and
+        /// `items()` read the output as `logs` gives it (a container with a TTY sends everything as `"console"`),
+        /// `write` writes to the input, `close_input` ends it. A container that does not exist is `not_found`.
+        ///
+        /// ```luau
+        /// local docker = assert(bollard.connect())
+        /// local attach = assert(docker:attach_container("agent", { stream = true, stdin = true, stdout = true }))
+        /// assert(attach:write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'))
+        /// local piece = assert(attach:next())
+        /// print(piece.stream, piece.data)
+        /// assert(attach:close_input())
+        /// ```
+        pub async fn attach_container(
+            &self,
+            lua: Lua,
+            name: ContainerName,
+            opts: AttachContainer,
+        ) -> Result<Attach, DockerError> {
+            let options = query::AttachContainerOptions {
+                detach_keys: opts.detach_keys,
+                logs: opts.logs,
+                stream: opts.stream,
+                stdin: opts.stdin,
+                stdout: opts.stdout,
+                stderr: opts.stderr,
+            };
+            let AttachContainerResults { output, input } =
+                self.api().await?.attach_container(&name.0, Some(options)).await?;
+            Ok(Attach { attached: Attached::new(&Life::of(&lua), output.map(log_piece), input) })
+        }
+
+        /// Unpack a tar archive (a string of its bytes, or a buffer) into a directory of a container, which need not
+        /// be running. A directory that is not there is `not_found`.
+        ///
+        /// ```luau
+        /// local docker = assert(bollard.connect())
+        /// local archive = "..." -- a tar archive
+        /// assert(docker:upload_to_container("web", { path = "/usr/share/nginx/html" }, archive))
+        /// ```
+        pub async fn upload_to_container(
+            &self,
+            name: ContainerName,
+            opts: Upload,
+            archive: Payload,
+        ) -> Result<(), DockerError> {
+            let options = query::UploadToContainerOptions {
+                path: opts.path,
+                no_overwrite_dir_non_dir: opts
+                    .no_overwrite_dir_non_dir
+                    .unwrap_or(false)
+                    .then(|| "true".to_owned()),
+                ..Default::default()
+            };
+            self.api()
+                .await?
+                .upload_to_container(&name.0, Some(options), body_full(archive.0.into()))
+                .await?;
+            Ok(())
+        }
+
         /// The images on the host, as Docker's summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...).
         pub async fn list_images(&self, opts: ListImages) -> Result<Foreign<Vec<ImageSummary>>, DockerError> {
             let options = query::ListImagesOptions {
@@ -680,6 +805,54 @@ pub mod bollard {
             // a pull that fails does so inside a 200 response, as a progress line: bollard makes it an error
             self.stream(lua, move |docker| {
                 docker.create_image(Some(options), None, None).map(|progress| Ok(Foreign(progress?)))
+            })
+        }
+
+        /// Build an image from a build context: a tar archive (a string of its bytes, or a buffer) that holds the
+        /// Dockerfile and what it copies. A stream of Docker's progress (`stream`, `status`, `aux.ID`), which ends
+        /// when the build is over. It uses Docker's classic builder. The build runs as the stream is read and stops if
+        /// the stream is closed; a build that fails (a step that fails, a Dockerfile that is not there) is the error
+        /// of a `next()`.
+        ///
+        /// ```luau
+        /// local docker = assert(bollard.connect())
+        /// local context = "..." -- a tar archive with a Dockerfile in it
+        /// for progress in docker:build_image(context, { t = "app:1", buildargs = { VERSION = "1" } }):items() do
+        ///     if progress.stream then print(progress.stream) end
+        /// end
+        /// ```
+        pub fn build_image(
+            &self,
+            lua: &Lua,
+            context: Payload,
+            opts: Build,
+        ) -> Stream<BuildInfo, DockerError> {
+            let options = query::BuildImageOptions {
+                t: opts.t.map(|t| t.0),
+                dockerfile: opts.dockerfile,
+                labels: opts.labels,
+                buildargs: opts.buildargs,
+                rm: opts.rm,
+                forcerm: opts.forcerm,
+                nocache: opts.nocache,
+                pull: opts.pull.then(|| "true".to_owned()),
+                version: query::BuilderVersion::BuilderV1,
+                ..Default::default()
+            };
+            let client = self.clone();
+            // the progress borrows the client it was asked of, so the task holds both
+            stream::driven(&Life::of(lua), move |queue| async move {
+                match client.api().await {
+                    Ok(docker) => {
+                        let progress = docker.build_image(options, None, Some(body_full(context.0.into())));
+                        // a build that fails does so inside a 200 response, as a progress line: bollard makes it an
+                        // error
+                        stream::pump(progress.map(|info| Ok(BuildInfo::from(info?))), queue).await;
+                    }
+                    Err(error) => {
+                        let _ = queue.send(Err(error)).await;
+                    }
+                }
             })
         }
 
@@ -791,6 +964,48 @@ pub mod bollard {
                 filters: opts.filters,
             };
             self.stream(lua, move |docker| docker.events(Some(options)).map(|event| Ok(Foreign(event?))))
+        }
+    }
+
+    /// A container's streams, attached (`attach_container`). It belongs to the script that made it and closes with
+    /// it, or when the script lets go of it.
+    #[derive(Clone, Object)]
+    pub struct Attach {
+        attached: Arc<Attached>,
+    }
+
+    #[mlua_ir::object]
+    impl Attach {
+        /// The next piece of the container's output: `(piece, nil)`; `(nil, nil)` at the end (the container
+        /// stopped, or the connection closed); or `(nil, err)`, after which nothing follows.
+        pub async fn next(&self) -> Result<Option<LogPiece>, DockerError> {
+            self.attached.next().await
+        }
+
+        /// The output as an iterator, which raises what `next()` returns as an error.
+        ///
+        /// ```luau
+        /// local docker = assert(bollard.connect())
+        /// local attach = assert(docker:attach_container("web", { stream = true, stdout = true, stderr = true }))
+        /// for piece in attach:items() do
+        ///     print(piece.stream, piece.data)
+        /// end
+        /// ```
+        pub fn items(&self) -> attach::Items {
+            attach::Items(self.attached.clone())
+        }
+
+        /// Write to the container's input (a string of bytes, or a buffer), and wait until it is sent. The
+        /// container's input must have been attached (`stdin`), and the container made with its input open
+        /// (`OpenStdin`). An input that was closed is `closed`.
+        pub async fn write(&self, data: Payload) -> Result<(), DockerError> {
+            self.attached.write(&data.0).await
+        }
+
+        /// Close the container's input: the container reads its end. The output can still be read. Closing again
+        /// does nothing.
+        pub async fn close_input(&self) -> Result<(), DockerError> {
+            self.attached.close_input().await
         }
     }
 

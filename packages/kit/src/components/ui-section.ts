@@ -137,7 +137,7 @@ export class UiSection extends LitElement {
     const selectable = selection === 'single' || selection === 'multi'
     // in a listbox only options may be its children: the header and footer are labels, not content
     const presentation = selectable ? 'presentation' : undefined
-    return html`${this.header ? html`<h3 class="header" id=${this.uid} role=${ifDefined(presentation)}>${this.header}</h3>` : ''}
+    return html`${this.header ? html`<h2 class="header" id=${this.uid} role=${ifDefined(presentation)}>${this.header}</h2>` : ''}
       <div
         class="rows"
         part="rows"

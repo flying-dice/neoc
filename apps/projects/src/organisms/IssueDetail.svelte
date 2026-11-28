@@ -68,6 +68,7 @@
       destructive
       hit
       label="Delete the issue"
+      title="Delete the issue"
       disabled={confirming}
       onclick={() => (asking = issue.id)}
       data-testid="projects-issue-remove"
@@ -203,14 +204,14 @@
     padding: 0 16px 20px;
   }
   h2 {
-    margin: 0 0 6px;
+    margin: 0 0 8px;
     padding-inline: 16px;
     font: var(--type-footnote);
     color: var(--label-secondary);
     text-transform: uppercase;
   }
   .edited {
-    margin: 6px 0 0;
+    margin: 8px 0 0;
     padding-inline: 16px;
     font: var(--type-footnote);
     color: var(--label-secondary);

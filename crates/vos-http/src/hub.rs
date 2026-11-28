@@ -735,6 +735,7 @@ impl RpcHandler for RpcHub {
                     p.traceparent.as_deref().and_then(crate::telemetry::parse_traceparent).unzip();
                 let span = tracing::info_span!(
                     "app.call",
+                    "otel.name" = format!("app.call {}", p.method).as_str(),
                     app = %p.app,
                     method = %p.method,
                     trace_id = trace_id.as_deref().unwrap_or(""),
@@ -742,16 +743,23 @@ impl RpcHandler for RpcHub {
                     outcome = tracing::field::Empty,
                     error = tracing::field::Empty,
                 );
-                let out = app
-                    .call_handler(&p.app, &p.method, p.args)
-                    .instrument(span.clone())
-                    .await
-                    .map_err(|e| handler_err(&e));
+                let out = app.call_handler(&p.app, &p.method, p.args).instrument(span.clone()).await;
                 match &out {
                     Ok(_) => span.record("outcome", "ok"),
-                    Err(e) => span.record("outcome", "error").record("error", e.message.as_str()),
+                    Err(e) => {
+                        let error = handler_err(e).message;
+                        // every failed call is a line in the logs, not only a red span: the app's own failures are
+                        // said by its runtime, where they happened; one the host refused (no such app, not running)
+                        // is said here
+                        if !matches!(e, AppError::Port(_)) {
+                            span.in_scope(
+                                || tracing::warn!(app = %p.app, %error, "{} was refused", p.method),
+                            );
+                        }
+                        span.record("outcome", "error").record("error", error.as_str())
+                    }
                 };
-                out
+                out.map_err(|e| handler_err(&e))
             }
             // the page's side of the RPC bus: its app's notification, its handlers, and its answers
             "app.notify" => {

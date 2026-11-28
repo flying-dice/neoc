@@ -2,8 +2,8 @@
   "name": "@vos-apps/agents",
   "private": true,
   "type": "module",
-  "version": "0.6.1",
-  "description": "Chat with agents over the Agent Client Protocol: add one by its address, write to it, and watch what it answers and does.",
+  "version": "0.7.2",
+  "description": "Chat with agents over the Agent Client Protocol: one reached at its address, one run in a container of each chat's own, or one run as a program on this machine. Write to it, and watch what it answers and does.",
   "vos": {
     "title": "Agents",
     "icon": "sparkles",
@@ -31,6 +31,8 @@
     "@storybook/svelte-vite": "10.6.7",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "1.4.4",
+    "@vos/chat": "workspace:*",
+    "@vos/docker": "workspace:*",
     "@vos/storybook": "workspace:*",
     "@vos/vite-plugin": "workspace:*",
     "storybook": "10.6.7",
@@ -38,9 +40,5 @@
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
-  },
-  "dependencies": {
-    "micromark": "4.0.3",
-    "micromark-extension-gfm": "3.0.0"
   }
 }

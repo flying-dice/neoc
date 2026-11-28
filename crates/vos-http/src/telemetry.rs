@@ -2,9 +2,11 @@
 //! trace id.
 //!
 //! - [`TelemetryLayer`] sits next to the journal's fmt layer: every `tracing` span the host opens becomes a span record
-//!   (a span named with a `trace_id` field joins that trace, as `app.call` does with the page's `traceparent`), and
-//!   every event becomes a log record under the span it was written in. `lib:log` lines are events too, so a
-//!   backend's log is in the trace of the call that wrote it.
+//!   (a span named with a `trace_id` field joins that trace, as `app.call` does with the page's `traceparent`; one
+//!   with an `otel.name` field is shown by that name, as OpenTelemetry's bridge does), and every event becomes a log
+//!   record under the span it was written in. `lib:log` lines are events too, so a backend's log is in the trace of
+//!   the call that wrote it. A record is read without its fields: an event's `error` is part of its message
+//!   (`app code failed: notes/main.luau:3: boom`), not only a field next to it.
 //! - [`ingest`] takes what a frame recorded (its RPC spans, its errors) from the shell, stamped with the frame's app.
 //! - [`query`] and [`traces`] read it back.
 //!
@@ -161,6 +163,8 @@ fn clean(attributes: Map<String, Value>) -> Map<String, Value> {
 
 /// What a span carries while it is open.
 struct Open {
+    /// What the span is shown as, when it said (`otel.name`); else its own name.
+    name: Option<String>,
     trace_id: String,
     span_id: String,
     parent_span_id: Option<String>,
@@ -227,6 +231,25 @@ fn take_str(map: &mut Map<String, Value>, key: &str) -> Option<String> {
     }
 }
 
+/// What an event says, as a person reads it: its message and the `error` it carries (`could not install app: the
+/// file is not there`), so a list of messages says what went wrong without opening each one. An error the message
+/// already holds is not said twice.
+fn readable(message: String, attributes: &Map<String, Value>) -> String {
+    let error = match attributes.get("error") {
+        Some(Value::String(e)) => e.trim().to_owned(),
+        Some(Value::Null) | None => String::new(),
+        Some(other) => other.to_string(),
+    };
+    if error.is_empty() || message.contains(&error) {
+        message
+    } else if message.is_empty() {
+        error
+    } else {
+        // a message that is a sentence of its own ends where the error begins
+        format!("{}: {error}", message.trim_end().trim_end_matches('.'))
+    }
+}
+
 /// Records every span and event into the store. Register it next to the fmt layer.
 pub struct TelemetryLayer;
 
@@ -264,7 +287,9 @@ where
             .or_else(|| in_vm.then(|| "backend".to_owned()))
             .or_else(|| parent_open.map(|p| p.3.clone()))
             .unwrap_or_else(|| "host".into());
+        let name = take_str(&mut values, "otel.name");
         span.extensions_mut().insert(Open {
+            name,
             trace_id,
             span_id: random_hex(8),
             parent_span_id,
@@ -283,6 +308,9 @@ where
         spread_fields(&mut values);
         let mut extensions = span.extensions_mut();
         if let Some(open) = extensions.get_mut::<Open>() {
+            if let Some(name) = take_str(&mut values, "otel.name") {
+                open.name = Some(name);
+            }
             open.attributes.extend(values);
         }
     }
@@ -301,6 +329,7 @@ where
                 attributes.extend(line);
             }
         }
+        let body = readable(body, &attributes);
         let (trace_id, span_id, span_app, span_source) = ctx
             .event_span(event)
             .and_then(|s| {
@@ -349,7 +378,7 @@ where
                 trace_id: open.trace_id,
                 span_id: open.span_id,
                 parent_span_id: open.parent_span_id,
-                name: span.name().to_owned(),
+                name: open.name.unwrap_or_else(|| span.name().to_owned()),
                 source: open.source,
                 app: open.app,
                 start_ms: open.start_ms,
@@ -394,11 +423,12 @@ pub fn ingest(app: &str, batch: Batch) -> usize {
         l.span_id = l.span_id.filter(|s| is_hex(s, 16));
         l.app = Some(app.to_owned());
         l.source = "browser".into();
-        l.body = cut(l.body);
         if !matches!(l.severity.as_str(), "trace" | "debug" | "info" | "warn" | "error") {
             l.severity = "info".into();
         }
         l.attributes = clean(l.attributes);
+        // a page's line says its error too, as the host's do
+        l.body = cut(readable(l.body, &l.attributes));
         push(&STORE.logs, MAX_LOGS, l);
         kept += 1;
     }
@@ -577,6 +607,44 @@ mod tests {
         assert!(listed.iter().any(|t| t.trace_id == trace && t.name == "app.call" && t.spans == 2));
     }
 
+    #[tokio::test]
+    async fn a_record_says_its_error_in_its_message_and_a_span_takes_the_name_it_was_given() {
+        let subscriber = tracing_subscriber::registry().with(TelemetryLayer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let trace = "4bf92f3577b34da6a3ce929d0e0e4739";
+        let span = tracing::info_span!(
+            "app.call",
+            "otel.name" = "app.call _connect",
+            app = "containers",
+            trace_id = trace,
+            parent_span_id = ""
+        );
+        span.in_scope(|| {
+            tracing::warn!(error = "containers/main.luau:9: no Docker", "app code failed");
+            tracing::warn!(error = "no Docker", "the call failed: no Docker");
+            tracing::warn!(error = "the pipe is not there", "Docker cannot be reached.");
+            tracing::error!(target: "vos_lua::vm", app = "containers", r#"{{"level":"error","msg":"a background task failed","error":"the feed went away"}}"#);
+        });
+        drop(span);
+
+        let found = query(&Query { trace_id: Some(trace.into()), ..Query::default() });
+        assert_eq!(found.spans[0].name, "app.call _connect");
+        let bodies: Vec<&str> = found.logs.iter().map(|l| l.body.as_str()).collect();
+        assert_eq!(
+            bodies,
+            [
+                "app code failed: containers/main.luau:9: no Docker",
+                "the call failed: no Docker",
+                "Docker cannot be reached: the pipe is not there",
+                "a background task failed: the feed went away"
+            ]
+        );
+        assert_eq!(
+            found.logs[0].attributes.get("error"),
+            Some(&Value::from("containers/main.luau:9: no Docker"))
+        );
+    }
+
     #[test]
     fn ingest_stamps_the_app_and_refuses_bad_ids() {
         let trace = "4bf92f3577b34da6a3ce929d0e0e4738";
@@ -587,7 +655,8 @@ mod tests {
                 { "traceId": "nope", "spanId": "00f067aa0ba902b9", "name": "x", "source": "browser",
                   "startMs": 1.0, "endMs": 2.0, "status": "ok" }
             ],
-            "logs": [{ "timeMs": 1.5, "severity": "error", "body": "boom", "source": "browser", "traceId": trace }]
+            "logs": [{ "timeMs": 1.5, "severity": "warn", "body": "Couldn't copy the link.", "source": "browser",
+                       "traceId": trace, "attributes": { "error": "NotAllowedError: Write permission denied." } }]
         }))
         .unwrap();
         assert_eq!(ingest("services", batch), 2);
@@ -595,5 +664,6 @@ mod tests {
         assert_eq!(found.spans[0].app.as_deref(), Some("services"));
         assert_eq!(found.spans[0].source, "browser");
         assert_eq!(found.logs[0].app.as_deref(), Some("services"));
+        assert_eq!(found.logs[0].body, "Couldn't copy the link: NotAllowedError: Write permission denied.");
     }
 }

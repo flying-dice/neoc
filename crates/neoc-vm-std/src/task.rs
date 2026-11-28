@@ -170,6 +170,45 @@ mod tests {
         lua
     }
 
+    /// The engine with its log lines taken (as an embedder takes them), and the lines it got.
+    fn engine_with_sink() -> (Lua, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let lua = engine();
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kept = lines.clone();
+        neoc_vm_core::log_sink::set_log_sink(
+            &lua,
+            std::sync::Arc::new(move |level, line| kept.lock().unwrap().push(format!("{level} {line}"))),
+        );
+        (lua, lines)
+    }
+
+    /// A program that runs for good never reaches `wait_all`: a task that fails while nothing waits for it is said
+    /// where the log lines go, with what it raised and no stack.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_background_task_that_fails_unwatched_is_logged_at_once() {
+        let (lua, lines) = engine_with_sink();
+        lua.load(r#"task.spawn(function() task.wait(0) error("the feed went away") end) task.wait(0.05)"#)
+            .exec_async()
+            .await
+            .unwrap();
+        let lines = lines.lock().unwrap();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("error {"), "{lines:?}");
+        assert!(lines[0].contains(r#""msg":"a background task failed""#), "{lines:?}");
+        assert!(lines[0].contains("the feed went away") && !lines[0].contains("traceback"), "{lines:?}");
+    }
+
+    /// A task something waits for hands its failure to the one waiting: nothing is logged.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_task_that_is_awaited_hands_its_failure_over_and_logs_nothing() {
+        let (lua, lines) = engine_with_sink();
+        lua.load(r#"local t = task.spawn(function() task.wait(0) error("handled") end) pcall(t.await, t)"#)
+            .exec_async()
+            .await
+            .unwrap();
+        assert!(lines.lock().unwrap().is_empty(), "{:?}", lines.lock().unwrap());
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wait_gives_the_time_that_passed() {
         let lua = engine();

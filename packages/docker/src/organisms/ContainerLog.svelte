@@ -35,7 +35,7 @@
     {/if}
     <!-- a region that scrolls is reached with the keyboard -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <pre tabindex="0" data-testid="{testid}-log">{logs.text}</pre>
+    <pre tabindex="0" role="region" aria-label="Log" data-testid="{testid}-log">{logs.text}</pre>
   {/if}
 </section>
 
@@ -62,7 +62,7 @@
     flex: 1;
     min-height: 0;
     margin: 0;
-    padding: 10px 12px;
+    padding: 12px;
     overflow: auto;
     border-radius: var(--radius-lg);
     background: var(--bg-secondary);

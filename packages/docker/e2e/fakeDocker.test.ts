@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { connect, type Socket } from 'node:net'
 import { startFakeDocker } from './fakeDocker'
 
 // the fake answers in Docker's shapes, over HTTP, as a client reaches the real one
@@ -266,4 +267,131 @@ test('an event reaches the listeners that asked for its type, its action and its
   expect(volumes.events.map((e) => `${e.Type} ${e.Action}`)).toEqual(['volume create'])
   expect(labelled.events, 'web has no such label').toEqual([])
   for (const stream of [containers, volumes, labelled]) stream.close()
+})
+
+describe('a build', () => {
+  test('reports its steps and the image it made, which is then on the machine', async () => {
+    const labels = encodeURIComponent(JSON.stringify({ 'vos.app': 'containers' }))
+    const res = await fetch(`${base}/build?t=agent%3A1&dockerfile=Dockerfile&labels=${labels}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-tar' },
+      body: new Uint8Array([1, 2, 3])
+    })
+    expect(res.status).toBe(200)
+    const steps = (await res.text()).trim().split('\n').map((line) => JSON.parse(line) as { stream?: string; aux?: { ID: string } })
+    expect(steps.some((s) => s.aux?.ID.startsWith('sha256:'))).toBe(true)
+    expect(steps.at(-1)?.stream).toBe('Successfully tagged agent:1\n')
+    expect(docker.images().flatMap((i) => i.tags)).toContain('agent:1')
+    const listed = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ reference: ['agent:1'] }))}`)).body
+    expect(listed.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
+    // and by the labels the build gave it
+    const mine = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ label: ['vos.app=containers'] }))}`)).body
+    expect(mine.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
+  })
+
+  /** A tar archive of one file, as a build context is sent: a 512-byte header, the file in 512-byte blocks, two empty blocks. */
+  const tar = (path: string, text: string): Uint8Array<ArrayBuffer> => {
+    const body = Buffer.from(text)
+    const header = Buffer.alloc(512)
+    header.write(path, 0)
+    header.write('0000644\0', 100)
+    header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124)
+    header.write('ustar\0', 257)
+    return new Uint8Array(Buffer.concat([header, body, Buffer.alloc((512 - (body.length % 512)) % 512), Buffer.alloc(1024)]))
+  }
+  type Said = { stream?: string; aux?: { ID: string }; error?: string; errorDetail?: { code: number; message: string } }
+  const build = async (tag: string, dockerfile: string): Promise<Said[]> => {
+    const res = await fetch(`${base}/build?t=${encodeURIComponent(tag)}`, { method: 'POST', body: tar('Dockerfile', dockerfile) })
+    return (await res.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Said)
+  }
+  const tagged = (tag: string) => docker.images().find((i) => i.tags.includes(tag))
+
+  test("reports each instruction of the context's Dockerfile as a step", async () => {
+    const steps = await build('tools:1', 'FROM alpine:3.20\n# a comment\nRUN apk add curl\n')
+    expect(steps.filter((s) => s.stream?.startsWith('Step')).map((s) => s.stream)).toEqual(['Step 1/2 : FROM alpine:3.20\n', 'Step 2/2 : RUN apk add curl\n'])
+    expect(steps.at(-1)?.stream).toBe('Successfully tagged tools:1\n')
+  })
+
+  test('of a changed Dockerfile is a new image, which the name moves to; the same Dockerfile again is the same image', async () => {
+    await build('tools:1', 'FROM alpine:3.20\n')
+    const first = tagged('tools:1')!.id
+    const steps = await build('tools:1', 'FROM alpine:3.21\n')
+    const second = tagged('tools:1')!.id
+    expect(second).not.toBe(first)
+    expect(steps.find((s) => s.aux)?.aux?.ID).toBe(second)
+    expect(docker.images().find((i) => i.id === first)?.tags, 'the image before keeps no name').toEqual([])
+    await build('tools:1', 'FROM alpine:3.21\n')
+    expect(tagged('tools:1')!.id).toBe(second)
+  })
+
+  test('that runs `exit <n>` fails there as Docker does, and makes no image', async () => {
+    const steps = await build('broken:1', 'FROM alpine:3.20\nRUN exit 3\nRUN echo never\n')
+    const message = "The command '/bin/sh -c exit 3' returned a non-zero code: 3"
+    expect(steps.at(-1)).toEqual({ errorDetail: { code: 3, message }, error: message })
+    expect(steps.some((s) => s.stream?.includes('echo never'))).toBe(false)
+    expect(tagged('broken:1')).toBeUndefined()
+  })
+})
+
+test('an archive uploaded into a container is kept with its path', async () => {
+  const res = await fetch(`${base}/containers/web/archive?path=%2Fwork`, { method: 'PUT', body: new Uint8Array([7, 8]) })
+  expect(res.status).toBe(200)
+  expect(docker.uploads('web')).toEqual([{ path: '/work', archive: new Uint8Array([7, 8]), running: true }])
+  expect((await fetch(`${base}/containers/ghost/archive?path=%2Fwork`, { method: 'PUT', body: '' })).status).toBe(404)
+})
+
+/** A client's end of an attach: the connection, its answer's head, and what the container wrote to it since. */
+const attach = async (name: string): Promise<{ socket: Socket; head: string; received: () => Buffer; more: () => Promise<void> }> => {
+  const socket = connect(Number(new URL(base).port), '127.0.0.1')
+  let bytes = Buffer.alloc(0)
+  let wake: (() => void) | undefined
+  socket.on('data', (data: Buffer) => {
+    bytes = Buffer.concat([bytes, data])
+    wake?.()
+  })
+  const more = (): Promise<void> => new Promise((resolve) => (wake = resolve))
+  socket.write(`POST /v1.47/containers/${name}/attach?stream=1&stdin=1&stdout=1 HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n`)
+  while (!bytes.includes('\r\n\r\n')) await more()
+  const end = bytes.indexOf('\r\n\r\n') + 4
+  const head = bytes.subarray(0, end).toString()
+  bytes = bytes.subarray(end)
+  return { socket, head, received: () => bytes, more }
+}
+
+describe('an attached client', () => {
+  test("writes the container's input, which the journey reads, and reads the frames the journey writes", async () => {
+    const container = docker.attached('web')
+    const client = await attach('web')
+    expect(client.head).toStartWith('HTTP/1.1 101')
+    const program = await container
+    expect(program.name).toBe('web')
+
+    client.socket.write('{"id":1}\n')
+    expect(Buffer.from((await program.read()) ?? []).toString()).toBe('{"id":1}\n')
+    program.write('{"result":{}}\n')
+    program.write('oops', 'stderr')
+    // Docker's frames: the stream, three zero bytes, the length, the bytes
+    const expected = Buffer.concat([
+      Buffer.from([1, 0, 0, 0, 0, 0, 0, 14]),
+      Buffer.from('{"result":{}}\n'),
+      Buffer.from([2, 0, 0, 0, 0, 0, 0, 4]),
+      Buffer.from('oops')
+    ])
+    while (client.received().length < expected.length) await client.more()
+    expect(client.received()).toEqual(expected)
+
+    // the client closes the input: the journey reads its end
+    client.socket.end()
+    expect(await program.read()).toBeNull()
+    program.end()
+  })
+
+  test('of a container that is not there is refused', async () => {
+    const client = await attach('ghost')
+    expect(client.head).toStartWith('HTTP/1.1 404')
+    client.socket.destroy()
+  })
 })

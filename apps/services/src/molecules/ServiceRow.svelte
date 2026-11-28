@@ -22,16 +22,13 @@
   const up = $derived(isUp(service))
 </script>
 
-<li class="row" class:selected data-testid={id}>
-  <button class="open" type="button" aria-current={selected ? 'true' : undefined} onclick={onopen} data-testid="{id}-open">
-    <StatusDot tone={toneOf(service.state)} label={stateLabel(service.state)} />
-    <span class="text">
-      <span class="name">{service.label}</span>
-      <span class="about">{stateLabel(service.state)}{service.description ? ` · ${service.description}` : ''}</span>
-    </span>
-    <ui-icon name="chevron.right" size={14}></ui-icon>
-  </button>
-  <span class="act">
+<ui-row tappable {selected} onpress={onopen} data-testid={id}>
+  <span slot="leading"><StatusDot tone={toneOf(service.state)} label={stateLabel(service.state)} /></span>
+  <span class="text" data-testid="{id}-open">
+    <span class="name">{service.label}</span>
+    <span class="about">{stateLabel(service.state)}{service.description ? ` · ${service.description}` : ''}</span>
+  </span>
+  <span class="act" slot="trailing">
     {#if busy}
       <ui-spinner label="Working on {service.label}" data-testid="{id}-busy"></ui-spinner>
     {:else}
@@ -43,6 +40,7 @@
         shape="circle"
         hit
         label="{up ? 'Stop' : 'Start'} {service.label}"
+        title="{up ? 'Stop' : 'Start'} {service.label}"
         onclick={ontoggle}
         data-testid="{id}-{up ? 'stop' : 'start'}"
       >
@@ -50,48 +48,16 @@
       </ui-button>
     {/if}
   </span>
-</li>
+</ui-row>
 
 <style>
-  .row {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    border-bottom: 1px solid var(--separator);
-  }
-  .open {
-    flex: 1;
-    min-width: 0;
-    min-height: 56px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 4px;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: none;
-    color: inherit;
-    font: inherit;
-    text-align: start;
-    cursor: pointer;
-  }
-  .selected .open {
-    background: var(--fill-tertiary);
-  }
-  .open:hover {
-    background: var(--fill-quaternary);
-  }
-  .open:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: -2px;
-  }
   .text {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    padding: 8px 0;
   }
   .name,
   .about {
@@ -99,17 +65,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* on the selection's fill the row sets these two (a row of the kit does the same) */
   .name {
+    color: var(--ui-value-main, var(--label));
     font: var(--type-body);
     font-weight: 600;
   }
   .about {
     font: var(--type-footnote);
-    color: var(--label-secondary);
-  }
-  ui-icon {
-    flex: none;
-    color: var(--label-tertiary);
+    color: var(--ui-value-secondary, var(--label-secondary));
   }
   /* the button and the spinner that stands in for it take the same room */
   .act {

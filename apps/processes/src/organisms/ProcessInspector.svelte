@@ -187,14 +187,14 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    margin-top: 14px;
+    gap: 12px;
+    margin-top: 16px;
   }
   .note {
-    margin-top: 6px;
+    margin-top: 4px;
   }
   ui-banner {
-    margin-top: 10px;
+    margin-top: 12px;
   }
   ui-list {
     padding-top: 12px;
@@ -202,10 +202,13 @@
   .stack {
     flex: 1;
     min-width: 0;
-    padding: 10px 0;
+    padding: 12px 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  strong {
+    font-weight: 600;
   }
   .mono {
     font-family: var(--font-mono);

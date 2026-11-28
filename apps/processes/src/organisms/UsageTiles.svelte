@@ -52,13 +52,13 @@
   .tiles {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 12px;
     padding: 4px 16px 12px;
   }
   .rates {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: 4px 10px;
+    gap: 4px 12px;
   }
   .rate {
     display: inline-flex;

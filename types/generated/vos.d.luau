@@ -4511,8 +4511,9 @@ export type vnd_agent_client_protocol_AcpError =
 	--- The connection is closed: by `close()`, by the agent, or by the engine shutting down.
 	| { kind: "closed", reason: string, message: string, op: string }
 
---- A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session; when the
---- last one goes, the permission requests that wait are answered `cancelled`.
+--- A session on a connection: the SDK's `ActiveSession`. Copies of the handle are the same session, and it keeps
+--- its connection open while it is held, whatever became of the `ConnectionTo` it was started on; when the last
+--- one goes, the permission requests that wait are answered `cancelled`.
 declare extern type vnd_agent_client_protocol_ActiveSession with
 	--- The session's id. Read-only.
 	session_id: string
@@ -4692,6 +4693,14 @@ export type vnd_agent_client_protocol_InitializeResponse = {
 	auth_methods: { vnd_agent_client_protocol_AuthMethod },
 }
 
+--- What `Lines.from_functions` carries messages with: two functions of the script's own, one JSON-RPC message per call. Both may wait.
+export type vnd_agent_client_protocol_LineTransport = {
+	--- The agent's next message, or `nil` once the agent's side has closed.
+	read: () -> string?,
+	--- Send one message to the agent.
+	write: (line: string) -> (),
+}
+
 --- A transport of one JSON-RPC message per line: the SDK's `Lines`.
 declare extern type vnd_agent_client_protocol_Lines with
 end
@@ -4701,6 +4710,11 @@ export type vnd_agent_client_protocol_LinesStatics = {
 	--- The lines of a `lib:websocket` socket: one per text frame, as `acpd` serves `/acp`. The socket is the
 	--- transport's from then on: the script's `receive` on it gives `closed`, and `close` still closes it.
 	new: (socket: lib_websocket_WebSocket) -> (vnd_agent_client_protocol_Lines?, vnd_agent_client_protocol_AcpError?),
+	--- The lines a script carries itself: `read()` gives the agent's next message (`nil` once its side closed)
+	--- and `write(line)` sends one (an agent on a container's or a program's standard streams, say). Both may
+	--- wait, and each runs as a call of its own while the connection does; an error either raises ends the
+	--- connection. Closing the connection stops calling them: the script closes what they read and write.
+	from_functions: (transport: vnd_agent_client_protocol_LineTransport) -> vnd_agent_client_protocol_Lines,
 }
 
 --- The MCP servers a session may be given besides `stdio` ones, which every agent takes.
@@ -4909,6 +4923,90 @@ export type vnd_agent_client_protocol = {
 
 -- ===== vnd:bollard =====
 
+--- A container's streams, attached (`attach_container`). It belongs to the script that made it and closes with
+--- it, or when the script lets go of it.
+declare extern type vnd_bollard_Attach with
+	--- The next piece of the container's output: `(piece, nil)`; `(nil, nil)` at the end (the container
+	--- stopped, or the connection closed); or `(nil, err)`, after which nothing follows.
+	---
+	--- Yields the calling coroutine while it waits.
+	next: (self: vnd_bollard_Attach) -> (vnd_bollard_LogPiece?, vnd_bollard_DockerError?)
+	--- The output as an iterator, which raises what `next()` returns as an error.
+	---
+	--- ```luau
+	--- local docker = assert(bollard.connect())
+	--- local attach = assert(docker:attach_container("web", { stream = true, stdout = true, stderr = true }))
+	--- for piece in attach:items() do
+	---     print(piece.stream, piece.data)
+	--- end
+	--- ```
+	items: (self: vnd_bollard_Attach) -> (() -> vnd_bollard_LogPiece?)
+	--- Write to the container's input (a string of bytes, or a buffer), and wait until it is sent. The
+	--- container's input must have been attached (`stdin`), and the container made with its input open
+	--- (`OpenStdin`). An input that was closed is `closed`.
+	---
+	--- Yields the calling coroutine while it waits.
+	write: (self: vnd_bollard_Attach, data: string) -> (boolean?, vnd_bollard_DockerError?)
+	--- Close the container's input: the container reads its end. The output can still be read. Closing again
+	--- does nothing.
+	---
+	--- Yields the calling coroutine while it waits.
+	close_input: (self: vnd_bollard_Attach) -> (boolean?, vnd_bollard_DockerError?)
+end
+
+--- The options of `attach_container`: which of the container's streams to attach to. Nothing when not given, as
+--- for Docker.
+export type vnd_bollard_AttachContainer = {
+	--- Stay attached and read what the container writes from now on. Default: `false`.
+	stream: boolean?,
+	--- Attach to its standard input, which `write` writes to. Default: `false`.
+	stdin: boolean?,
+	--- Read its standard output. Default: `false`.
+	stdout: boolean?,
+	--- Read its standard error. Default: `false`.
+	stderr: boolean?,
+	--- Read what it wrote before, first. Default: `false`.
+	logs: boolean?,
+	--- The keys that detach from the container when they are written to its input (`ctrl-p,ctrl-q`, Docker's
+	--- own, when not given).
+	detach_keys: string?,
+}
+
+--- The options of `build_image`.
+export type vnd_bollard_Build = {
+	--- The name to give the image, with its tag (`app:1`); the image is only known by its id when not given.
+	t: vnd_bollard_ImageRef?,
+	--- Where the Dockerfile is in the archive: `Dockerfile` when not given. Default: `"Dockerfile"`.
+	dockerfile: string?,
+	--- Labels to put on the image.
+	labels: { [string]: string }?,
+	--- The values of the Dockerfile's `ARG`s, by name.
+	buildargs: { [string]: string }?,
+	--- Remove the build's intermediate containers once it succeeds: `true` when not given, as for Docker. Default: `true`.
+	rm: boolean?,
+	--- Remove them even when it fails. Default: `false`.
+	forcerm: boolean?,
+	--- Use no cached layer. Default: `false`.
+	nocache: boolean?,
+	--- Pull the `FROM` images again even when they are on the host. Default: `false`.
+	pull: boolean?,
+}
+
+--- What a build reports as it goes, with Docker's field names: a line of its output (`stream`), the status of a
+--- pull it makes (`status`, `id`, `progressDetail`), or the image it made (`aux.ID`).
+export type vnd_bollard_BuildInfo = {
+	--- What the status is about (a layer).
+	id: string?,
+	--- A piece of the build's output (`Step 1/3 : FROM alpine`), with its line ends.
+	stream: string?,
+	--- A status (`Downloading`).
+	status: string?,
+	--- How far the status has got.
+	progressDetail: vnd_bollard_ProgressDetail?,
+	--- The image the build made.
+	aux: vnd_bollard_ImageId?,
+}
+
 --- A client for one daemon. Cheap to clone: every clone is the same client.
 declare extern type vnd_bollard_Client with
 	--- Ask the daemon whether it is there: `true`, or the error (`connect` when no daemon answers).
@@ -5043,6 +5141,33 @@ declare extern type vnd_bollard_Client with
 	---
 	--- Yields the calling coroutine while it waits.
 	exec: (self: vnd_bollard_Client, name: vnd_bollard_ContainerName, cmd: { string }, opts: vnd_bollard_ExecOptions?) -> (vnd_bollard_Exec?, vnd_bollard_DockerError?)
+	--- Attach to a container's streams, as `docker attach` does: Docker hijacks the connection, which then
+	--- carries the container's output one way and its input the other. Returns an `Attach`: its `next()` and
+	--- `items()` read the output as `logs` gives it (a container with a TTY sends everything as `"console"`),
+	--- `write` writes to the input, `close_input` ends it. A container that does not exist is `not_found`.
+	---
+	--- ```luau
+	--- local docker = assert(bollard.connect())
+	--- local attach = assert(docker:attach_container("agent", { stream = true, stdin = true, stdout = true }))
+	--- assert(attach:write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'))
+	--- local piece = assert(attach:next())
+	--- print(piece.stream, piece.data)
+	--- assert(attach:close_input())
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	attach_container: (self: vnd_bollard_Client, name: vnd_bollard_ContainerName, opts: vnd_bollard_AttachContainer?) -> (vnd_bollard_Attach?, vnd_bollard_DockerError?)
+	--- Unpack a tar archive (a string of its bytes, or a buffer) into a directory of a container, which need not
+	--- be running. A directory that is not there is `not_found`.
+	---
+	--- ```luau
+	--- local docker = assert(bollard.connect())
+	--- local archive = "..." -- a tar archive
+	--- assert(docker:upload_to_container("web", { path = "/usr/share/nginx/html" }, archive))
+	--- ```
+	---
+	--- Yields the calling coroutine while it waits.
+	upload_to_container: (self: vnd_bollard_Client, name: vnd_bollard_ContainerName, opts: vnd_bollard_Upload, archive: string) -> (boolean?, vnd_bollard_DockerError?)
 	--- The images on the host, as Docker's summaries (`Id`, `RepoTags`, `Size`, `Created`, `Containers`, ...).
 	---
 	--- Yields the calling coroutine while it waits.
@@ -5059,6 +5184,20 @@ declare extern type vnd_bollard_Client with
 	--- end
 	--- ```
 	pull_image: (self: vnd_bollard_Client, image: vnd_bollard_ImageRef, opts: vnd_bollard_Pull?) -> mlua_Stream<vnd_bollard_CreateImageInfo, vnd_bollard_DockerError>
+	--- Build an image from a build context: a tar archive (a string of its bytes, or a buffer) that holds the
+	--- Dockerfile and what it copies. A stream of Docker's progress (`stream`, `status`, `aux.ID`), which ends
+	--- when the build is over. It uses Docker's classic builder. The build runs as the stream is read and stops if
+	--- the stream is closed; a build that fails (a step that fails, a Dockerfile that is not there) is the error
+	--- of a `next()`.
+	---
+	--- ```luau
+	--- local docker = assert(bollard.connect())
+	--- local context = "..." -- a tar archive with a Dockerfile in it
+	--- for progress in docker:build_image(context, { t = "app:1", buildargs = { VERSION = "1" } }):items() do
+	---     if progress.stream then print(progress.stream) end
+	--- end
+	--- ```
+	build_image: (self: vnd_bollard_Client, context: string, opts: vnd_bollard_Build?) -> mlua_Stream<vnd_bollard_BuildInfo, vnd_bollard_DockerError>
 	--- Remove an image, by reference or id: Docker's list of what was untagged and deleted. An image a
 	--- container uses is `conflict` unless `force`.
 	---
@@ -5482,7 +5621,7 @@ export type vnd_bollard_DeviceRequest = {
 }
 
 --- The kinds of `vnd_bollard_DockerError`.
-export type vnd_bollard_DockerErrorKind = "invalid_input" | "connect" | "timed_out" | "not_found" | "conflict" | "api" | "bad_response" | "too_large" | "other"
+export type vnd_bollard_DockerErrorKind = "invalid_input" | "connect" | "timed_out" | "not_found" | "conflict" | "api" | "bad_response" | "closed" | "too_large" | "other"
 
 --- Why a Docker call failed.
 export type vnd_bollard_DockerError =
@@ -5502,6 +5641,9 @@ export type vnd_bollard_DockerError =
 	| { kind: "api", reason: string, status: number?, message: string, op: string }
 	--- Docker answered with something this client could not read.
 	| { kind: "bad_response", reason: string, message: string, op: string }
+	--- An attached container's input cannot be written: `close_input()` was called, the connection broke, or the
+	--- script stopped.
+	| { kind: "closed", reason: string, message: string, op: string }
 	--- A result was longer than this module reads into memory.
 	| { kind: "too_large", limit: number, message: string, op: string }
 	--- Anything else, reported and never hidden.
@@ -5725,6 +5867,12 @@ export type vnd_bollard_HostConfigLogConfig = {
 export type vnd_bollard_ImageDeleteResponseItem = {
 	Untagged: string?,
 	Deleted: string?,
+}
+
+--- The image a build made: Docker's `aux`.
+export type vnd_bollard_ImageId = {
+	--- Its id (`sha256:...`).
+	ID: string?,
 }
 
 export type vnd_bollard_ImageManifestSummary = {
@@ -6301,6 +6449,14 @@ export type vnd_bollard_TlsInfo = {
 	TrustRoot: string?,
 	CertIssuerSubject: string?,
 	CertIssuerPublicKey: string?,
+}
+
+--- Where `upload_to_container` unpacks its archive.
+export type vnd_bollard_Upload = {
+	--- The directory in the container to unpack the archive into; it must exist.
+	path: string,
+	--- Refuse to replace a directory with a file, or a file with a directory.
+	no_overwrite_dir_non_dir: boolean?,
 }
 
 --- A volume, with Docker's field names.

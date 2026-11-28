@@ -15,11 +15,7 @@
     },
     "apps/agents": {
       "name": "@vos-apps/agents",
-      "version": "0.6.0",
-      "dependencies": {
-        "micromark": "4.0.3",
-        "micromark-extension-gfm": "3.0.0",
-      },
+      "version": "0.7.1",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -28,6 +24,8 @@
         "@storybook/svelte-vite": "10.6.7",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "1.4.4",
+        "@vos/chat": "workspace:*",
+        "@vos/docker": "workspace:*",
         "@vos/storybook": "workspace:*",
         "@vos/vite-plugin": "workspace:*",
         "storybook": "10.6.7",
@@ -83,7 +81,7 @@
     },
     "apps/containers": {
       "name": "@vos-apps/containers",
-      "version": "0.1.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
         "@storybook/addon-docs": "10.6.7",
@@ -246,6 +244,26 @@
     },
     "apps/services": {
       "name": "@vos-apps/services",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+    },
+    "apps/skills": {
+      "name": "@vos-apps/skills",
       "version": "0.1.0",
       "devDependencies": {
         "@storybook/addon-a11y": "10.6.7",
@@ -447,6 +465,34 @@
         "svelte-check": "^4.7.6",
         "typescript": "^5.9.3",
         "vite": "^8.3.4",
+      },
+    },
+    "packages/chat": {
+      "name": "@vos/chat",
+      "version": "0.1.0",
+      "dependencies": {
+        "micromark": "4.0.3",
+        "micromark-extension-gfm": "3.0.0",
+      },
+      "devDependencies": {
+        "@storybook/addon-a11y": "10.6.7",
+        "@storybook/addon-docs": "10.6.7",
+        "@storybook/addon-svelte-csf": "5.1.6",
+        "@storybook/addon-themes": "10.6.7",
+        "@storybook/svelte-vite": "10.6.7",
+        "@sveltejs/vite-plugin-svelte": "^7.3.1",
+        "@types/bun": "1.4.4",
+        "@vos/kit": "workspace:*",
+        "@vos/storybook": "workspace:*",
+        "@vos/vite-plugin": "workspace:*",
+        "storybook": "10.6.7",
+        "svelte": "^5.57.2",
+        "svelte-check": "^4.7.6",
+        "typescript": "^5.9.3",
+        "vite": "^8.3.4",
+      },
+      "peerDependencies": {
+        "svelte": "^5.0.0",
       },
     },
     "packages/docker": {
@@ -945,6 +991,8 @@
 
     "@vos-apps/services": ["@vos-apps/services@workspace:apps/services"],
 
+    "@vos-apps/skills": ["@vos-apps/skills@workspace:apps/skills"],
+
     "@vos-apps/telemetry": ["@vos-apps/telemetry@workspace:apps/telemetry"],
 
     "@vos-apps/terminal": ["@vos-apps/terminal@workspace:apps/terminal"],
@@ -966,6 +1014,8 @@
     "@vos-fixtures/ticker": ["@vos-fixtures/ticker@workspace:e2e/apps/ticker"],
 
     "@vos-fixtures/typescript": ["@vos-fixtures/typescript@workspace:crates/vos-lua/tests/fixtures/typescript"],
+
+    "@vos/chat": ["@vos/chat@workspace:packages/chat"],
 
     "@vos/client": ["@vos/client@workspace:client"],
 

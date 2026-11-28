@@ -67,7 +67,6 @@
       <ui-section footer={removal.failure ?? undefined} footer-tone="error" data-testid="containers-remove-failure">
         <ui-row
           heading="Remove {container.name}"
-          action
           destructive
           tappable
           disabled={!ready}

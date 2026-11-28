@@ -97,12 +97,11 @@
     align-items: baseline;
     gap: 8px;
     min-height: 44px;
-    padding: 0 16px 6px;
+    padding: 0 16px 8px;
   }
   h1 {
     margin: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
   }
   .count {
     margin: 0;

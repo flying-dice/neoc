@@ -40,6 +40,24 @@ export const Block: Story = {
       ></ui-segmented>
     </div>`
 }
+/** Four options in a narrow column: at large text sizes a label that does not fit ends in an ellipsis inside its segment. */
+export const FourOptionsInANarrowColumn: Story = {
+  render: () =>
+    html`<div style="width:300px">
+      <ui-segmented
+        data-testid="seg-four"
+        label="Filter"
+        block
+        value="all"
+        .options=${[
+          { value: 'all', label: 'All' },
+          { value: 'active', label: 'Active' },
+          { value: 'completed', label: 'Completed' },
+          { value: 'archived', label: 'Archived' }
+        ]}
+      ></ui-segmented>
+    </div>`
+}
 export const WithDisabledSegment: Story = {
   render: () =>
     html`<ui-segmented
