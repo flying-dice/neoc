@@ -1,8 +1,9 @@
 <!-- @page AgentsPage — the whole app: the agents and chats beside the open chat, or one of the two in a narrow window; driven by one window's Agents state -->
 <script lang="ts">
+  import { ChatThread } from '@vos/chat'
+  import Avatar from '../atoms/Avatar.svelte'
   import AgentForm from '../organisms/AgentForm.svelte'
   import ChatSidebar from '../organisms/ChatSidebar.svelte'
-  import ChatThread from '../organisms/ChatThread.svelte'
   import type { Agents } from '../lib/agents.svelte'
 
   interface Props {
@@ -50,7 +51,7 @@
       {:else if open}
         <ChatThread
           conversation={open}
-          avatar={agents.avatarOf(open.chat)}
+          partner={open.chat.agent}
           draft={agents.draft}
           failure={agents.failure}
           back={narrow}
@@ -61,7 +62,14 @@
           onremove={() => (agents.asking = 'chat')}
           onback={() => agents.back()}
           {onlink}
-        />
+          testid="agents"
+        >
+          {#snippet badge()}
+            <span data-testid="agents-avatar-thread"
+              ><Avatar id={open.chat.agent_id} name={open.chat.agent} picture={agents.avatarOf(open.chat)} size={24} /></span
+            >
+          {/snippet}
+        </ChatThread>
       {:else}
         <div class="nothing">
           {#if agents.failure}

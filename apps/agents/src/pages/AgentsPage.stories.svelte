@@ -137,6 +137,8 @@
     await said(canvas, '12 times 7 is 84.')
     await expect(canvas.getByTestId('agents-chat-a')).toHaveAttribute('selected', '')
     await expect(canvas.getByTestId('agents-title')).toHaveTextContent('What is 12 times 7?')
+    // an agent without a picture: its initials beside its name in the chat's bar
+    await expect(canvas.getByTestId('agents-avatar-thread').querySelector('[role="img"]')).toHaveAttribute('data-initials', 'SA')
   }}
 />
 

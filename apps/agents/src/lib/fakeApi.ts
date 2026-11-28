@@ -9,6 +9,7 @@ type Agent = VosApp.Agents.Agent
 type Chat = VosApp.Agents.Chat
 type Conversation = VosApp.Agents.Conversation
 type Item = VosApp.Agents.Item
+import { ASKING, OPTIONS, PLAN, TOOL, itemOf, type Said } from '@vos/chat/samples'
 import type { AgentsEvents, AgentsRpc } from './agents.svelte'
 
 export const SCRIPTED: Agent = { id: 'scripted', name: 'Scripted agent', url: 'ws://localhost:5424/acp', token: false, folder: '/home/ada/project', avatar: '' }
@@ -19,21 +20,6 @@ export const PICTURE =
 
 /** An agent with a picture. */
 export const PICTURED: Agent = { id: 'writer', name: 'Writer', url: 'wss://writer.example.com/acp', token: true, folder: '/srv/writing', avatar: PICTURE }
-
-/** The options an agent offers when it asks before it changes a file. */
-export const OPTIONS = [
-  { option_id: 'allow', name: 'Allow', kind: 'allow_once' },
-  { option_id: 'always', name: 'Always allow', kind: 'allow_always' },
-  { option_id: 'reject', name: 'Reject', kind: 'reject_once' }
-]
-
-/** A change to a file, as a tool call carries it. */
-export const DIFF = {
-  type: 'diff',
-  path: '/home/ada/project/list.md',
-  patch: '--- /home/ada/project/list.md\n+++ /home/ada/project/list.md\n@@ -1,2 +1,3 @@\n # Shopping\n-Bread\n+Bread\n+Milk\n',
-  new_file: false
-}
 
 export interface FakeBackend {
   readonly rpc: AgentsRpc
@@ -59,32 +45,8 @@ const titleOf = (text: string): string => {
   return line.length <= TITLE_MAX ? line || 'New chat' : `${line.slice(0, TITLE_MAX - 1)}…`
 }
 
-/** What an item is made from: its kind and whatever of the rest it has. */
-export type Said = Pick<Item, 'kind'> & Partial<Omit<Item, 'id' | 'chat' | 'kind'>>
-
-const itemOf = (chat: string, id: number, said: Said): Item => ({ id, chat, text: '', name: '', data: '', done: true, ...said })
-
 /** One thing the scripted agent does: say a piece, add an item, or go on until stopped or answered (`null`). */
 type Step = string | Said | null
-
-/** A tool call of the scripted agent's: it adds milk to a list. */
-export const TOOL: Said = {
-  kind: 'tool',
-  name: 'Add milk to list.md',
-  data: JSON.stringify({ kind: 'edit', status: 'completed', content: [DIFF], locations: [{ path: DIFF.path, line: 2 }] })
-}
-/** The scripted agent's plan. */
-export const PLAN: Said = {
-  kind: 'plan',
-  data: JSON.stringify({
-    entries: [
-      { content: 'Find the list', priority: 'high', status: 'completed' },
-      { content: 'Add milk', priority: 'medium', status: 'in_progress' }
-    ]
-  })
-}
-/** The permission the scripted agent asks for. */
-export const ASKING: Said = { kind: 'permission', text: 'Add milk to list.md', data: JSON.stringify({ kind: 'edit', options: OPTIONS }), done: false }
 
 /** What the script does about a prompt. */
 function script(text: string): Step[] {
