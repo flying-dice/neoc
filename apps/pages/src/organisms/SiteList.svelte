@@ -34,7 +34,7 @@
 
 <section class="sites" aria-label="Sites">
   {#if editing}
-    <div class="scroll">
+    <div class="scroll form">
       <SiteForm draft={editing.draft} adding={editing.site === null} sharedPort={settings.port} busy={working} {ondraft} {onsave} {oncancel} />
     </div>
   {:else}
@@ -49,7 +49,7 @@
     </div>
     <div class="scroll">
       {#if sites.length > 0}
-        <ul class="list" data-testid="pages-sites">
+        <ui-list variant="inset" label="Sites" class="list" data-testid="pages-sites"><ui-section>
           {#each sites as site (site.id)}
             <SiteRow
               {site}
@@ -62,7 +62,7 @@
               onremove={() => onremove(site)}
             />
           {/each}
-        </ul>
+        </ui-section></ui-list>
       {:else}
         <ui-empty-state
           icon="globe"
@@ -99,12 +99,10 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 16px 16px;
+    padding: 4px 0 16px;
+    --list-inset: 16px;
   }
-  .list {
-    margin: 0;
-    padding: 0;
-    border-radius: var(--radius-lg);
-    background: var(--bg-secondary);
+  .form {
+    padding-inline: 16px;
   }
 </style>

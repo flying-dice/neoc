@@ -103,7 +103,7 @@
   .site {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   h2 {
     margin: 0 0 4px;
@@ -113,12 +113,12 @@
     font: var(--type-subheadline);
     font-weight: 600;
   }
-  /* a field with no words under it keeps the room they would take from the next label */
-  ui-text-field {
-    margin-bottom: 6px;
+    ui-text-field {
+    margin-bottom: 0;
   }
   .hint {
-    margin: -6px 0 6px;
+    margin: 0 0 8px;
+    max-width: 40em;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }

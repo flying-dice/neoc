@@ -63,7 +63,7 @@
     padding: 0 8px;
   }
   .manager {
-    padding: 8px 12px 12px;
+    padding: 8px 16px 12px;
     border-top: 1px solid var(--separator);
   }
   .about {

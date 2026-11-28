@@ -53,7 +53,7 @@
   .bar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-height: 44px;
   }
   .heading {
@@ -62,8 +62,7 @@
   }
   h1 {
     margin: 0;
-    font: var(--type-title3);
-    font-weight: 700;
+    font: var(--type-headline);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

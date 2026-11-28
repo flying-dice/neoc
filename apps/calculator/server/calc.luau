@@ -4,7 +4,7 @@
 -- tool and the keypad both run it, so `2 + 3 * 4` is 14 for an agent and for a person.
 local calc = {}
 
--- A failure calc raises on purpose is a plain sentence for a person ("Can't divide by zero") and for an agent, with
+-- A failure calc raises on purpose is a plain sentence for a person ("Can’t divide by zero") and for an agent, with
 -- no "calc.lua:56:" in front: an error object whose `tostring` is that sentence. Anything else that goes wrong
 -- (a bug) is an ordinary error with a source position, which `calc.reason` keeps from reaching the screen.
 type Failure = { message: string }
@@ -79,12 +79,12 @@ local function operate(op: string, a: number, b: number): number
     return a * b
   elseif op == "/" then
     if b == 0 then
-      return fail("Can't divide by zero")
+      return fail("Can’t divide by zero")
     end
     return a / b
   elseif op == "%" then
     if b == 0 then
-      return fail("Can't divide by zero") -- Lua's `a % 0` is nan
+      return fail("Can’t divide by zero") -- Lua's `a % 0` is nan
     end
     return a % b
   elseif op == "^" then

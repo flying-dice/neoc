@@ -70,11 +70,11 @@ describe('the skill form', () => {
     expect(skills.failure).toBe('There is a skill named deploy already.')
     skills.form!.name = 'my review'
     await skills.save()
-    expect(skills.failure).toContain("A skill's name is the name of its folder")
+    expect(skills.failure).toContain("A skill’s name is the name of its folder")
     skills.form!.name = 'review'
     skills.form!.files[0]!.path = '../escape.sh'
     await skills.save()
-    expect(skills.failure).toBe("../escape.sh must be a path in the skill's folder, with no empty part, no . and no ..")
+    expect(skills.failure).toBe("../escape.sh must be a path in the skill’s folder, with no empty part, no . and no ..")
     skills.close()
     expect(skills.failure).toBeNull()
     expect(skills.form).toBeNull()

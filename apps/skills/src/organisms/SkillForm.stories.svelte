@@ -64,8 +64,8 @@
 <!-- The backend refused the form: why, over the fields. -->
 <Story
   name="Refused"
-  args={{ form: { ...skillDraftOf(REVIEW), name: 'my skill' }, savable: true, failure: "A skill's name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit." }}
+  args={{ form: { ...skillDraftOf(REVIEW), name: 'my skill' }, savable: true, failure: "A skill’s name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit." }}
   play={async ({ canvas }) => {
-    await expect(canvas.getByTestId('skills-form-failure')).toHaveTextContent("A skill's name is the name of its folder")
+    await expect(canvas.getByTestId('skills-form-failure')).toHaveTextContent("A skill’s name is the name of its folder")
   }}
 />

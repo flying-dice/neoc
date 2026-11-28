@@ -193,7 +193,7 @@
           },
           "error": {
             "type": "string",
-            "description": "Why the sum failed (Can't divide by zero); absent when it did not. The client announces it."
+            "description": "Why the sum failed (Can’t divide by zero); absent when it did not. The client announces it."
           }
         },
         "required": [

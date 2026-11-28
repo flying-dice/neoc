@@ -5,7 +5,7 @@
  * public request is a tool), and answer the same.
  *
  * The journeys are one person's story, one after another on the shared host: add a skill with a file, change it and
- * remove it, and have another app read them. Each skill's name ends in this run's own mark, so what another run or
+ * remove it, and have another app read them. Each skill’s name ends in this run's own mark, so what another run or
  * another app's journeys left behind is not in the way.
  */
 import type { FrameLocator, Locator, Page } from '@playwright/test'
@@ -18,7 +18,7 @@ const part = (page: Page, name: string): Locator => frame(page).getByTestId(`${I
 // the kit's text field holds the real input in its shadow tree, its text area the real textarea
 const field = (page: Page, name: string): Locator => part(page, name).locator('input')
 const area = (page: Page, name: string): Locator => part(page, name).locator('textarea')
-// a skill's row, by its name (the row's heading, in its shadow tree)
+// a skill’s row, by its name (the row's heading, in its shadow tree)
 const rowOf = (page: Page, name: string): Locator => frame(page).getByTestId(/^skills-skill-/).filter({ hasText: name })
 
 const RUN = `${Date.now()}`
@@ -71,13 +71,13 @@ test.describe('Skills journeys', () => {
     // a name that cannot be a folder's is refused, with the reason, and the form stays
     await fill(page, 'release notes', TEXT)
     await part(page, 'form-save').click()
-    await expect(part(page, 'form-failure')).toContainText("A skill's name is the name of its folder")
-    // and so is a file whose path leaves the skill's folder
+    await expect(part(page, 'form-failure')).toContainText("A skill’s name is the name of its folder")
+    // and so is a file whose path leaves the skill’s folder
     await field(page, 'form-name').fill(NAME)
     await part(page, 'form-add-file').click()
     await field(page, 'form-file-0-path').fill('../outside.sh')
     await part(page, 'form-save').click()
-    await expect(part(page, 'form-failure')).toContainText("../outside.sh must be a path in the skill's folder")
+    await expect(part(page, 'form-failure')).toContainText("../outside.sh must be a path in the skill’s folder")
     await field(page, 'form-file-0-path').fill(FILE.path)
     await area(page, 'form-file-0-text').fill(FILE.text)
     await part(page, 'form-save').click()
@@ -101,7 +101,7 @@ test.describe('Skills journeys', () => {
     await openDesktop(page, { open: [ID] })
     await add(page, `other-${RUN}`, '# Other')
 
-    // another skill's name is refused
+    // another skill’s name is refused
     await rowOf(page, NAME).click()
     await field(page, 'form-name').fill(`other-${RUN}`)
     await part(page, 'form-save').click()

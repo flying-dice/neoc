@@ -88,7 +88,7 @@
             data-testid="dns-upstreams"
           ></ui-text-field>
         </ui-row>
-        <ui-row heading="Log every question">
+        <ui-row heading="Log Every Question">
           <ui-toggle
             slot="trailing"
             label="Log every question"
@@ -165,11 +165,12 @@
   .group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     padding-inline: 16px;
   }
   .hint {
-    margin: 0 0 6px;
+    margin: 0 0 8px;
+    max-width: 40em;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }

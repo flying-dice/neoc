@@ -87,14 +87,15 @@
   .group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
   }
   .title {
     font: var(--type-subheadline);
     font-weight: 600;
   }
   .hint {
-    margin: 0 0 6px;
+    margin: 0 0 8px;
+    max-width: 40em;
     font: var(--type-footnote);
     color: var(--label-secondary);
   }

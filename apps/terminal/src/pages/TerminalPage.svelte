@@ -78,6 +78,6 @@
     flex: 1 1 auto;
     min-height: 0;
     /* the top clears the window's grabber, which the shell draws over the frame */
-    padding: 28px 4px 4px 10px;
+    padding: 28px 4px 4px 16px;
   }
 </style>

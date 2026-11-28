@@ -57,6 +57,7 @@
 
 <section class="list" aria-label={title}>
   <header class="bar">
+    <div class="side">
     {#if back}
       <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -65,7 +66,9 @@
         Folders
       </ui-button>
     {/if}
+    </div>
     <h1 data-testid="notes-title">{searching ? 'Search' : title}</h1>
+    <div class="side end">
     {#if folder && !searching}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <ui-button
@@ -82,10 +85,11 @@
     {/if}
     {#if creatable}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <ui-button variant="plain" square hit label="New Note" onclick={oncreate} data-testid="notes-new">
+      <ui-button variant="plain" square hit label="New Note" title="New Note" onclick={oncreate} data-testid="notes-new">
         <ui-icon slot="icon" name="square.and.pencil"></ui-icon>
       </ui-button>
     {/if}
+    </div>
   </header>
   {#if folder && confirming}
     <ui-alert
@@ -163,13 +167,25 @@
     align-items: center;
     gap: 8px;
     min-height: 44px;
-    padding: 0 8px 0 16px;
+    padding: 0 12px 0 8px;
+  }
+  /* the title is centred between a leading and a trailing group of equal share */
+  .side {
+    flex: 1 1 0;
+    min-width: min-content;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .end {
+    justify-content: flex-end;
   }
   h1 {
-    margin: 0 auto 0 0;
+    margin: 0;
     min-width: 0;
-    font: var(--type-title2);
-    font-weight: 700;
+    font: var(--type-headline);
+    letter-spacing: var(--tracking-body);
+    text-align: center;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -188,7 +204,7 @@
   }
   .count {
     margin: 0;
-    padding: 8px 16px 10px;
+    padding: 8px 16px;
     border-top: 1px solid var(--separator);
     text-align: center;
     font: var(--type-footnote);

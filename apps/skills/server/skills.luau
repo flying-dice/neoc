@@ -103,27 +103,27 @@ end
 -- A name a folder can have, on any machine: letters, digits, `.`, `_` and `-`, starting with a letter or a digit.
 local NAME = "^[%w][%w%._%-]*$"
 
--- What is wrong with a path in the skill's folder, in the person's words; nil when nothing is.
+-- What is wrong with a path in the skill’s folder, in the person's words; nil when nothing is.
 local function badPath(path: string): string?
   if path == "" then
     return "Give each file of the skill its path."
   end
   if string.sub(path, 1, 1) == "/" or string.find(path, "\\", 1, true) then
-    return `{path} must be a path in the skill's folder, with / between its parts, like scripts/check.sh.`
+    return `{path} must be a path in the skill’s folder, with / between its parts, like scripts/check.sh.`
   end
   for part in string.gmatch(path .. "/", "([^/]*)/") do
     if part == "" or part == "." or part == ".." then
-      return `{path} must be a path in the skill's folder, with no empty part, no . and no ..`
+      return `{path} must be a path in the skill’s folder, with no empty part, no . and no ..`
     end
   end
   if path == "SKILL.md" then
-    return "SKILL.md is the skill's text: give the other files other paths."
+    return "SKILL.md is the skill’s text: give the other files other paths."
   end
   return nil
 end
 
 -- The name, text and files as they are kept, or what is wrong with them in the person's words. `except` is the skill
--- being changed, whose own name is no other skill's.
+-- being changed, whose own name is no other skill’s.
 local function checked(name: string, text: string, files: { File }?, except: string?): (string, { File }?, string?)
   name = strings.trim(name)
   if name == "" then
@@ -132,14 +132,14 @@ local function checked(name: string, text: string, files: { File }?, except: str
   if #name > 64 or not string.match(name, NAME) then
     return name,
       nil,
-      "A skill's name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit."
+      "A skill’s name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit."
   end
   local taken = db:one("select 1 as found from skills where name = :n and id <> :id", { n = name, id = except or "" })
   if taken then
     return name, nil, `There is a skill named {name} already.`
   end
   if strings.trim(text) == "" then
-    return name, nil, "Write the skill's SKILL.md."
+    return name, nil, "Write the skill’s SKILL.md."
   end
   local kept: { File } = {}
   local seen: { [string]: boolean } = {}

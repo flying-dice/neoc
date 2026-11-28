@@ -41,7 +41,7 @@
 <Story name="A result" args={{ display: '19', caption: '12 + 7' }} />
 
 <!-- The sum failed: the caption is the reason. -->
-<Story name="An error" args={{ display: 'Error', caption: "Can't divide by zero" }} />
+<Story name="An error" args={{ display: 'Error', caption: "Can’t divide by zero" }} />
 
 <!-- Nine digits and their separators do not fit at full size: the number shrinks to the column. -->
 <Story

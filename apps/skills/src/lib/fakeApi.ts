@@ -1,7 +1,7 @@
 /**
  * A stand-in for the Skills app's backend, for stories and unit tests: the skills kept in the page, with no host. It
- * follows the backend's rules (server/skills.luau): a name a folder can have and no other skill's, a SKILL.md that is
- * not blank, and files at paths in the skill's folder, one at each. A skill's description is the one-line
+ * follows the backend's rules (server/skills.luau): a name a folder can have and no other skill’s, a SKILL.md that is
+ * not blank, and files at paths in the skill’s folder, one at each. A skill’s description is the one-line
  * `description:` of its front matter (the backend also reads quoted and folded ones).
  */
 import type { SkillsEvents, SkillsRpc } from './skills.svelte'
@@ -48,9 +48,9 @@ const descriptionOf = (text: string): string => /^---\r?\n(?:.*\r?\n)*?descripti
 
 const badPath = (path: string): string | null => {
   if (path === '') return 'Give each file of the skill its path.'
-  if (path.startsWith('/') || path.includes('\\')) return `${path} must be a path in the skill's folder, with / between its parts, like scripts/check.sh.`
-  if (path.split('/').some((part) => part === '' || part === '.' || part === '..')) return `${path} must be a path in the skill's folder, with no empty part, no . and no ..`
-  if (path === 'SKILL.md') return "SKILL.md is the skill's text: give the other files other paths."
+  if (path.startsWith('/') || path.includes('\\')) return `${path} must be a path in the skill’s folder, with / between its parts, like scripts/check.sh.`
+  if (path.split('/').some((part) => part === '' || part === '.' || part === '..')) return `${path} must be a path in the skill’s folder, with no empty part, no . and no ..`
+  if (path === 'SKILL.md') return "SKILL.md is the skill’s text: give the other files other paths."
   return null
 }
 
@@ -79,9 +79,9 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const checked = (name: string, text: string, files: readonly SkillFile[] | undefined, self?: string): { name: string; files: SkillFile[] } => {
     const kept = name.trim()
     if (kept === '') throw new Refused('Give the skill a name.')
-    if (kept.length > 64 || !NAME.test(kept)) throw new Refused("A skill's name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit.")
+    if (kept.length > 64 || !NAME.test(kept)) throw new Refused("A skill’s name is the name of its folder: letters, digits, ., _ and -, starting with a letter or a digit.")
     if (skills.some((s) => s.name === kept && s.id !== self)) throw new Refused(`There is a skill named ${kept} already.`)
-    if (text.trim() === '') throw new Refused("Write the skill's SKILL.md.")
+    if (text.trim() === '') throw new Refused("Write the skill’s SKILL.md.")
     const seen = new Set<string>()
     const list: SkillFile[] = []
     for (const file of files ?? []) {
