@@ -7,6 +7,9 @@
 //! What counts as "this host" (so the PWA works from other devices on the LAN, and nothing else does):
 //!
 //! - any loopback address, `localhost`;
+//! - `host.docker.internal` and `host.containers.internal`: this machine as a container it runs reaches it (an app's
+//!   agent in a container uses the vos MCP server this way). `.internal` is never delegated in public DNS, so no
+//!   attacker can point it here;
 //! - every IP address of this machine's network interfaces (refreshed every few seconds);
 //! - the machine's own hostname, and any `*.local` name (mDNS cannot be pointed at us from the internet);
 //! - names the operator lists in `allowed_hosts` (for a reverse proxy or a DNS name), on any port.
@@ -30,6 +33,9 @@ use std::{
 
 /// How long the interface list is cached.
 const INTERFACE_TTL: Duration = Duration::from_secs(10);
+
+/// This machine's names as seen from a container it runs (Docker's and Podman's).
+const CONTAINER_NAMES: [&str; 2] = ["host.docker.internal", "host.containers.internal"];
 
 /// Where the host's own IP addresses come from. A function so tests can pretend to have a LAN address.
 pub type InterfaceIps = Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync>;
@@ -72,7 +78,8 @@ impl HostGuard {
     /// As [`HostGuard::new`], with the interface addresses and hostname given (tests).
     #[must_use]
     pub fn with_interfaces(port: u16, interfaces: InterfaceIps, hostname: Option<String>) -> Self {
-        let mut names = BTreeSet::from(["localhost".to_owned()]);
+        let mut names = BTreeSet::from(CONTAINER_NAMES.map(str::to_owned));
+        names.insert("localhost".to_owned());
         names
             .extend(hostname.map(|h| h.trim_end_matches('.').to_ascii_lowercase()).filter(|h| !h.is_empty()));
         let ips = interfaces().into_iter().collect();
@@ -277,6 +284,19 @@ mod tests {
         assert!(g.permits(Some("http://studio-mac.local:7400"), Some("studio-mac.local:7400")));
         assert!(g.permits(None, Some("anything-else.local:7400")), "*.local is mDNS");
         assert!(!g.permits(None, Some(".local:7400")));
+    }
+
+    #[test]
+    fn a_container_reaches_this_host_by_its_container_names_on_our_port() {
+        let g = guard();
+        assert!(g.permits(None, Some("host.docker.internal:7400")), "Docker's name");
+        assert!(g.permits(None, Some("host.containers.internal:7400")), "Podman's name");
+        assert!(!g.permits(None, Some("host.docker.internal:9999")), "another port");
+        assert!(!g.permits(None, Some("evil.docker.internal:7400")));
+        assert!(
+            !g.permits(Some("https://evil.example"), Some("host.docker.internal:7400")),
+            "Origin still checked"
+        );
     }
 
     #[test]
