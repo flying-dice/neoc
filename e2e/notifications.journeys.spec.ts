@@ -61,8 +61,13 @@ async function openNotifier(page: Page, theme?: 'light' | 'dark'): Promise<void>
 const banners = (page: Page) => page.getByTestId(/^notification-\d+$/)
 const bannerParts = (page: Page, part: 'open' | 'dismiss') => page.getByTestId(new RegExp(`^notification-\\d+-${part}$`))
 
-/** Bring another app forward, so the Notifier's window is no longer the one in front. */
+/**
+ * Bring another app forward, so the Notifier's window is no longer the one in front. On a phone the Dock is on the home
+ * screen only, so the person goes back to it first, with the window's ··· menu.
+ */
 async function moveAway(page: Page): Promise<void> {
+  const dock = (await page.getByTestId('dock').boundingBox())!
+  if (dock.y >= page.viewportSize()!.height) await chooseLayout(page, 'notifier', 'minimize')
   await page.getByTestId('dock-files').click()
   await expect(windowOf(page, 'files')).toBeVisible()
 }
