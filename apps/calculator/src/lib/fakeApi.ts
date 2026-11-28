@@ -29,7 +29,7 @@ const initial = (): Keypad => ({
 })
 
 function combine(a: number, op: Operator, b: number): number {
-  if (op === '/' && b === 0) throw new SumError("Can't divide by zero")
+  if (op === '/' && b === 0) throw new SumError("Can’t divide by zero")
   const result = op === '+' ? a + b : op === '-' ? a - b : op === '*' ? a * b : a / b
   return Number(result.toPrecision(12))
 }

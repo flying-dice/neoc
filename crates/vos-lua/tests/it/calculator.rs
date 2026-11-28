@@ -367,8 +367,8 @@ async fn division_by_zero_is_an_error_until_cleared_and_says_why() {
     for keys in ["8 div 0 eq", "8 div 0 add", "0 div 0 eq", "5 add 3 div 0 eq", "5 add 3 div 0 add"] {
         let mut pad = Keypad::open().await;
         pad.press(keys).await;
-        assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Can't divide by zero".into()), "{keys}");
-        assert_eq!(pad.announced(), "Can't divide by zero", "{keys}: the client announces the reason");
+        assert_eq!((pad.display(), pad.caption()), ("Error".into(), "Can’t divide by zero".into()), "{keys}");
+        assert_eq!(pad.announced(), "Can’t divide by zero", "{keys}: the client announces the reason");
         // keys with nothing to work on are ignored while the error shows
         pad.press("add sub mul div eq negate percent back").await;
         assert_eq!(pad.display(), "Error", "{keys}: ignored");

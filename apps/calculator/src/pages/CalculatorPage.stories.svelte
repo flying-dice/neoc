@@ -100,8 +100,8 @@
   name="Divide by zero"
   play={async ({ canvas, userEvent }) => {
     await tap(canvas, userEvent, ['8', 'div', '0', 'eq'])
-    await shows(canvas, 'Error', "Can't divide by zero")
-    await expect(canvas.getByTestId('calculator-announcer')).toHaveTextContent("Can't divide by zero")
+    await shows(canvas, 'Error', "Can’t divide by zero")
+    await expect(canvas.getByTestId('calculator-announcer')).toHaveTextContent("Can’t divide by zero")
   }}
 />
 
@@ -111,7 +111,7 @@
   tags={['play-only']}
   play={async ({ canvas, userEvent }) => {
     await tap(canvas, userEvent, ['8', 'div', '0', 'eq'])
-    await shows(canvas, 'Error', "Can't divide by zero")
+    await shows(canvas, 'Error', "Can’t divide by zero")
     await tap(canvas, userEvent, ['clear'])
     await shows(canvas, '0', '')
     await expect(canvas.getByTestId('calculator-announcer')).toHaveTextContent('')

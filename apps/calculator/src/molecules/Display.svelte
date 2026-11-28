@@ -10,13 +10,13 @@
   let { display, caption }: Props = $props()
 
   // the display shrinks to fit a long number in the column, as the iPadOS display does
-  const size = $derived(Math.min(64, Math.floor((280 * 1.75) / Math.max(display.length, 1))))
+  const size = $derived(Math.floor((280 * 1.75) / Math.max(display.length, 1)))
 </script>
 
 <p class="caption" data-testid="calculator-caption">{caption}</p>
 <p
   class="display"
-  style:font-size="{size}px"
+  style:font-size="min(calc(64px * var(--text-scale)), {size}px)"
   aria-label="Result {display}"
   aria-live="polite"
   data-testid="calculator-display"
@@ -29,6 +29,7 @@
     margin: 0;
     min-height: 1.4em;
     font: var(--type-body);
+    letter-spacing: var(--tracking-body);
     color: var(--label-secondary);
     text-align: end;
     white-space: nowrap;
@@ -38,11 +39,13 @@
   .display {
     margin: 0;
     font-family: var(--font-display);
-    font-weight: 300;
+    font-weight: 400;
+    letter-spacing: var(--tracking-large-title);
     line-height: 1.1;
     text-align: end;
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
     font-variant-numeric: tabular-nums;
   }
 </style>
