@@ -14,9 +14,10 @@
 --
 -- A turn: `_send` stores what the person said, answers at once, and leaves a task running the agent's turn. What the
 -- agent says and does reaches the open window as `item` notifications (a whole item, new or changed) and `piece`
--- notifications (text added to an item); a `turn` notification says the turn is over (complete, stopped or failed). A
--- window that missed some reads the chat again with `_open`. A permission the agent asks for during its turn is
--- answered with `_answer`, and the turn goes on.
+-- notifications (text added to an item), or, when that is more than a notification may hold, an `item_changed`
+-- notification: the window reads that item with `_read_item`. A `turn` notification says the turn is over (complete,
+-- stopped or failed). A window that missed some reads the chat again with `_open`. A permission the agent asks for
+-- during its turn is answered with `_answer`, and the turn goes on.
 local codec = require("./codec")
 local docker = require("vos:docker")
 local images = require("./images")
@@ -398,6 +399,10 @@ end)
 
 RPC.on_request("_open", function(params: agents_OpenParams, ctx: vos_app_Context): agents_OpenResult
   return conversation(params.chat) or ctx:fail("There is no such chat.")
+end)
+
+RPC.on_request("_read_item", function(params: agents_ReadItemParams, ctx: vos_app_Context): agents_ReadItemResult
+  return timeline.item(params.chat, params.item) or ctx:fail("There is no such item in that chat.")
 end)
 
 -- A chat is made by the first thing said in it: a new one is `agent` instead of `chat`, so opening a chat and leaving

@@ -1,7 +1,10 @@
 --!strict
 -- What was said and done in a chat, in order: the items. Each change is written to the database and sent to the open
 -- window: a whole item as an `item` notification, a piece of text added to one as a `piece` notification (an answer arrives in
--- hundreds of pieces, and the item is not sent again for each).
+-- hundreds of pieces, and the item is not sent again for each). A notification is a hint that the chat changed, and the
+-- host takes at most 64 KiB of one: what does not fit (a tool's result, say) is sent as an `item_changed` notification,
+-- which names the item, and the window reads it (`_read_item`).
+local codec = require("./codec")
 local db = app.db
 
 export type Kind = "user" | "assistant" | "reasoning" | "tool" | "plan" | "permission" | "note" | "error"
@@ -9,6 +12,10 @@ export type Kind = "user" | "assistant" | "reasoning" | "tool" | "plan" | "permi
 -- id), by which a later update finds it.
 export type Row = { id: number, key: string, kind: Kind, text: string, name: string, data: string, done: boolean }
 export type Fields = { key: string?, text: string?, name: string?, data: string?, done: boolean? }
+
+-- The most bytes of JSON one notification of ours takes. The host refuses more than 64 KiB; the rest is left for what
+-- the host adds, and for the difference between the two encoders.
+local MAX_NOTIFICATION = 60 * 1024
 
 local timeline = {}
 
@@ -43,6 +50,12 @@ function timeline.get(chat: string, id: number): Row?
   return if r then rowOf(r) else nil
 end
 
+-- an item as the window has it
+function timeline.item(chat: string, id: number): agents_Item?
+  local row = timeline.get(chat, id)
+  return if row then itemOf(chat, row) else nil
+end
+
 -- The item of that kind the agent named `key`, in this chat. With `after`, only an item added after the item of that
 -- id: an agent may use the same id again in a later turn (`call_1`), and it means a new thing by it.
 function timeline.find(chat: string, kind: Kind, key: string, after: number?): Row?
@@ -60,10 +73,27 @@ function timeline.last(chat: string): number
   return if r then r.id else 0
 end
 
+-- Whether the host takes `params` as a notification's: it refuses more than 64 KiB of JSON.
+local function fits(params: { [string]: any }): boolean
+  return #codec.encode(params) <= MAX_NOTIFICATION
+end
+
+-- Tell the window the item `id` of `chat` changed, and was too large to send: it reads the item.
+local function changed(chat: string, id: number)
+  RPC.send_notification("_item_changed", { chat = chat, item = id })
+end
+
 local function announce(chat: string, id: number)
   local row = timeline.get(chat, id)
-  if row then
-    RPC.send_notification("_item", { chat = chat, item = itemOf(chat, row) })
+  if not row then
+    return
+  end
+  -- an item whose text and data alone are over the limit does not fit: no need to encode it to learn that
+  local params = { chat = chat, item = itemOf(chat, row) }
+  if #row.text + #row.data <= MAX_NOTIFICATION and fits(params) then
+    RPC.send_notification("_item", params)
+  else
+    changed(chat, id)
   end
 end
 
@@ -119,7 +149,12 @@ function timeline.append(chat: string, id: number, piece: string)
     return
   end
   db:exec("update items set text = text || :p where thread_id = :c and id = :id", { p = piece, c = chat, id = id })
-  RPC.send_notification("_piece", { chat = chat, item = id, text = piece })
+  local params = { chat = chat, item = id, text = piece }
+  if fits(params) then
+    RPC.send_notification("_piece", params)
+  else
+    changed(chat, id)
+  end
 end
 
 -- Nothing in the chat is still coming: a turn that ended, however it ended, leaves no spinner behind, and no

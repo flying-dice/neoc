@@ -158,3 +158,98 @@ export function attributeRows(attributes: Record<string, unknown>): [string, str
     .sort(([a], [b]) => (a === 'target' ? 1 : b === 'target' ? -1 : a.localeCompare(b)))
     .map(([k, v]) => [k, attributeText(v)])
 }
+
+const isoOf = (ms: number): string => new Date(ms).toISOString()
+
+/** A log as it is copied: its time as ISO text and as milliseconds, its message, where it was written, and every field. */
+function logReport(log: Log): Record<string, unknown> {
+  return {
+    time: isoOf(log.timeMs),
+    timeMs: log.timeMs,
+    severity: log.severity,
+    message: log.body,
+    source: log.source,
+    app: log.app ?? null,
+    traceId: log.traceId ?? null,
+    spanId: log.spanId ?? null,
+    attributes: log.attributes
+  }
+}
+
+/** A span as it is copied: its place in the waterfall, its timing as ISO text and milliseconds, its outcome and every field. */
+function spanReport(span: Span, depth: number): Record<string, unknown> {
+  return {
+    name: span.name,
+    spanId: span.spanId,
+    parentSpanId: span.parentSpanId ?? null,
+    depth,
+    source: span.source,
+    app: span.app ?? null,
+    status: span.status,
+    start: isoOf(span.startMs),
+    startMs: span.startMs,
+    endMs: span.endMs,
+    durationMs: span.endMs - span.startMs,
+    attributes: span.attributes
+  }
+}
+
+/**
+ * Everything the window knows of one trace, as plain data to copy: how it went, every span in waterfall order with its
+ * depth, timing and fields, and every log, oldest first. `summary` is the trace's row of the list, when it is still there.
+ */
+export function traceReport(traceId: string, found: Found, summary: TraceSummary | null): Record<string, unknown> {
+  const bars = waterfall(found.spans)
+  const logs = [...found.logs].sort((a, b) => a.timeMs - b.timeMs)
+  const start = bars.length > 0 ? Math.min(...bars.map((b) => b.span.startMs)) : null
+  const end = bars.length > 0 ? Math.max(...bars.map((b) => b.span.endMs)) : null
+  return {
+    traceId,
+    name: summary?.name ?? bars[0]?.span.name ?? null,
+    app: summary?.app ?? bars[0]?.span.app ?? null,
+    start: start === null ? null : isoOf(start),
+    durationMs: start === null || end === null ? null : end - start,
+    failed: found.spans.filter((s) => s.status === 'error').length + logs.filter((l) => l.severity === 'error').length,
+    spans: bars.map((b) => spanReport(b.span, b.depth)),
+    logs: logs.map(logReport)
+  }
+}
+
+/**
+ * Everything the window knows of one log, as plain data to copy: the log, the span it was written in, and the trace it
+ * belongs to in full (`trace` is null for a log written outside any call, or when the trace could not be read: `note`
+ * says so).
+ */
+export function logExport(log: Log, trace: Found | null, summary: TraceSummary | null, note?: string): Record<string, unknown> {
+  const span = log.spanId ? (trace?.spans.find((s) => s.spanId === log.spanId) ?? null) : null
+  const depth = span ? (waterfall(trace?.spans ?? []).find((b) => b.span.spanId === span.spanId)?.depth ?? 0) : 0
+  return {
+    kind: 'log',
+    log: logReport(log),
+    span: span ? spanReport(span, depth) : null,
+    trace: log.traceId && trace ? traceReport(log.traceId, trace, summary) : null,
+    ...(note ? { note } : {})
+  }
+}
+
+/**
+ * The most spans, and the most logs, an export reads: the host keeps no more than that of either (`MAX_LOGS`), and answers
+ * with the newest when asked for fewer.
+ */
+export const EXPORT_LIMIT = 10_000
+
+/** The note an export carries when what was read reached the limit asked for, so the oldest may be missing; none otherwise. */
+export const cutOff = (found: Found, limit = EXPORT_LIMIT): string | undefined =>
+  found.spans.length >= limit || found.logs.length >= limit
+    ? `Only the newest ${limit} spans and ${limit} logs of the trace were read, so the oldest may be missing.`
+    : undefined
+
+/** A trace's export: its report, said to be a trace's, and the note (if any) of what it lacks. */
+export const traceExport = (traceId: string, found: Found, summary: TraceSummary | null, note?: string): Record<string, unknown> => ({
+  kind: 'trace',
+  ...traceReport(traceId, found, summary),
+  ...(note ? { note } : {})
+})
+
+/** An export as the text that is copied: JSON, indented, so a person can read it as well as a program. */
+export const exportText = (report: Record<string, unknown>): string => JSON.stringify(report, null, 2)

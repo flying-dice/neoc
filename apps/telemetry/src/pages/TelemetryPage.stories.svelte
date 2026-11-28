@@ -34,7 +34,8 @@
 {#snippet template(args: Args)}
   {@const backend = args.backend()}
   <!-- the failing render is never run: a story's page must not throw -->
-  {@const telemetry = new Telemetry(backend.reader, backend.rpc, { later: () => {} })}
+  <!-- and a copy goes nowhere real: the clipboard is a note of what was written -->
+  {@const telemetry = new Telemetry(backend.reader, backend.rpc, { later: () => {}, clipboard: { write: async () => {} }, after: () => {} })}
   <AppWindow title={app.title} width={args.width} height={args.height} minWidth={app.window.minW} minHeight={app.window.minH}>
     <!-- a story reads once: a window that read on a timer would change under the story's checks -->
     <TelemetryPage {telemetry} every={0} />
@@ -60,6 +61,17 @@
     await userEvent.click(canvas.getByTestId('telemetry-trace-log-1'))
     await appears(canvas, 'telemetry-log-details')
     await expect((canvas.getByTestId('telemetry-span-details') as HTMLElement & { header: string }).header).toBe('Span · rpc overview')
+  }}
+/>
+
+<!-- Copy on the trace puts everything about it on the clipboard, and the button says so. -->
+<Story
+  name="Copying a trace"
+  play={async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByTestId(`telemetry-trace-${RENDER_TRACE}`))
+    await appears(canvas, 'telemetry-span-2222222222222222')
+    await userEvent.click(canvas.getByTestId('telemetry-trace-copy'))
+    await waitFor(() => expect(canvas.getByTestId('telemetry-trace-copy-status')).toHaveTextContent('on the clipboard'))
   }}
 />
 

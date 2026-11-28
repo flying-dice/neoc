@@ -2,7 +2,7 @@
   "name": "@vos-apps/telemetry",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The traces and logs the host recorded: where an app's call went, and what failed on the way.",
   "vos": {
     "title": "Telemetry",
@@ -13,6 +13,9 @@
       "h": 700,
       "minW": 480,
       "minH": 420
+    },
+    "permissions": {
+      "clipboardWrite": {}
     }
   },
   "scripts": {

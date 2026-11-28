@@ -1,17 +1,23 @@
 <!-- @organism LogInspector — one log of the Logs view in full: what it says, its fields, and the way to the trace it belongs to -->
 <script lang="ts">
+  import CopyButton from '../molecules/CopyButton.svelte'
   import LogDetails from '../molecules/LogDetails.svelte'
   import { SEVERITY_LABEL, type Log } from '../lib/telemetry'
+  import type { Copied } from '../lib/telemetry.svelte'
 
   interface Props {
     log: Log
     back?: boolean
     onback?: () => void
+    /** How the last copy went. */
+    copied?: Copied
     /** Open the trace the log belongs to. */
     ontrace: (traceId: string) => void
+    /** Put everything known of the log on the clipboard. */
+    oncopy: () => void
   }
 
-  let { log, back = false, onback, ontrace }: Props = $props()
+  let { log, back = false, onback, copied = 'idle', ontrace, oncopy }: Props = $props()
 </script>
 
 <section class="inspector" aria-label="Log">
@@ -28,15 +34,17 @@
   <div class="scroll" tabindex="0" role="region" aria-label="Details of the log">
     <div class="head">
       <h1 class="ios-large-title" class:ios-red={log.severity === 'error'} data-testid="telemetry-log-severity">{SEVERITY_LABEL[log.severity]}</h1>
-      {#if log.traceId}
-        <div class="actions">
+      <div class="actions">
+        {#if log.traceId}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <ui-button variant="tinted" onclick={() => log.traceId && ontrace(log.traceId)} data-testid="telemetry-log-trace">
             <ui-icon slot="icon" name="network" size="16"></ui-icon>
             Show Trace
           </ui-button>
-        </div>
-      {:else}
+        {/if}
+        <CopyButton {copied} {oncopy} testid="telemetry-log-copy" />
+      </div>
+      {#if !log.traceId}
         <p class="ios-footnote ios-secondary">This log was written outside any call, so it has no trace.</p>
       {/if}
     </div>
@@ -79,5 +87,8 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
   }
 </style>

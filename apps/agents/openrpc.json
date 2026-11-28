@@ -2,7 +2,7 @@
   "openrpc": "1.4.0",
   "info": {
     "title": "Agents",
-    "version": "0.7.1"
+    "version": "0.7.2"
   },
   "methods": [
     {
@@ -442,6 +442,40 @@
       ]
     },
     {
+      "name": "_read_item",
+      "summary": "One item of a chat as it is now: what the window reads when it was told, with `_item_changed`, that an item changed and is too large to have been sent.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "description": "The id of the item.",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "result": {
+        "name": "item",
+        "schema": {
+          "$ref": "#/components/schemas/Item"
+        }
+      },
+      "errors": [
+        {
+          "code": -32010,
+          "message": "There is no such item in that chat."
+        }
+      ]
+    },
+    {
       "name": "_send",
       "summary": "Say something in a chat, or start one with an agent by saying the first thing in it (`agent` instead of `chat`): a chat is only made when something is said. Answers at once with the chat as it now stands; what the agent says and does follows as `item` and `piece` events and ends with a `turn` event. A container chat's first turn makes its container, and a program chat's turn starts its program when it is not running.",
       "params": [
@@ -629,6 +663,27 @@
           "description": "The text added.",
           "schema": {
             "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "_item_changed",
+      "summary": "An item of a chat is new or changed during a turn, and is too large to send (the host takes at most 64 KiB in a notification), or so is the text added to it: read the item with `_read_item`.",
+      "params": [
+        {
+          "name": "chat",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "description": "The id of the item.",
+          "schema": {
+            "type": "integer"
           }
         }
       ]

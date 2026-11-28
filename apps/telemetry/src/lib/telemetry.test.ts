@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { attributeRows, duration, matchingLogs, matchingTraces, waterfall, type Span } from './telemetry'
+import { attributeRows, duration, exportText, logExport, matchingLogs, matchingTraces, traceExport, waterfall, type Span } from './telemetry'
 import { FAILED_TRACE, LOGS, RENDER_TRACE, SPANS } from './fakeApi'
 
 describe('waterfall', () => {
@@ -49,4 +49,78 @@ test('attributes are listed by name, the record’s target last, values as text'
     ['units', '3'],
     ['target', 'vos_lua::vm']
   ])
+})
+
+describe('what is copied of a trace', () => {
+  const found = { spans: SPANS.filter((s) => s.traceId === RENDER_TRACE), logs: LOGS.filter((l) => l.traceId === RENDER_TRACE) }
+
+  test('is its spans in waterfall order with their depth, timing and fields, and its logs oldest first', () => {
+    const report = traceExport(RENDER_TRACE, { spans: [...found.spans].reverse(), logs: [...found.logs].reverse() }, null) as {
+      kind: string
+      name: string
+      app: string
+      durationMs: number
+      failed: number
+      spans: { name: string; depth: number; parentSpanId: string | null; durationMs: number; start: string; attributes: Record<string, unknown> }[]
+      logs: { message: string; time: string; attributes: Record<string, unknown> }[]
+    }
+    expect(report.kind).toBe('trace')
+    expect(report.name).toBe('rpc overview')
+    expect(report.app).toBe('services')
+    expect(report.durationMs).toBe(42)
+    // the error log of the page
+    expect(report.failed).toBe(1)
+    expect(report.spans.map((s) => [s.name, s.depth])).toEqual([
+      ['rpc overview', 0],
+      ['app.call', 1],
+      ['process.run', 2],
+      ['log.info', 2]
+    ])
+    expect(report.spans[0]!.parentSpanId).toBeNull()
+    expect(report.spans[1]!.parentSpanId).toBe('1111111111111111')
+    expect(report.spans[0]!.attributes).toEqual({ 'rpc.method': 'overview' })
+    expect(report.spans[0]!.start).toBe(new Date(SPANS[0]!.startMs).toISOString())
+    expect(report.logs.map((l) => l.message)).toEqual(['read the overview', expect.stringContaining('each_key_duplicate')])
+    expect(report.logs[1]!.attributes).toEqual({ 'exception.type': 'Error', 'vos.correlated': 'last-call' })
+  })
+
+  test('says what the list says of it when it is given the row, and is JSON a program can read back', () => {
+    const summary = { traceId: RENDER_TRACE, name: 'the row', app: 'rowapp', startMs: 0, durationMs: 1, spans: 4, errors: 1 }
+    const report = JSON.parse(exportText(traceExport(RENDER_TRACE, found, summary))) as { name: string; app: string; traceId: string }
+    expect([report.name, report.app, report.traceId]).toEqual(['the row', 'rowapp', RENDER_TRACE])
+  })
+
+  test('a trace with nothing in it is still a report', () => {
+    const report = traceExport('abc', { spans: [], logs: [] }, null) as { name: unknown; start: unknown; spans: unknown[]; logs: unknown[] }
+    expect([report.name, report.start, report.spans, report.logs]).toEqual([null, null, [], []])
+  })
+})
+
+describe('what is copied of a log', () => {
+  const error = LOGS[1]!
+  const found = { spans: SPANS.filter((s) => s.traceId === RENDER_TRACE), logs: LOGS.filter((l) => l.traceId === RENDER_TRACE) }
+
+  test('is the log with every field, the span it was written in, and its whole trace', () => {
+    const report = logExport(error, found, null) as {
+      kind: string
+      log: { message: string; severity: string; time: string; traceId: string; spanId: string; attributes: Record<string, unknown> }
+      span: { name: string; depth: number }
+      trace: { traceId: string; spans: unknown[]; logs: unknown[] }
+    }
+    expect(report.kind).toBe('log')
+    expect(report.log.message).toContain('each_key_duplicate')
+    expect(report.log.severity).toBe('error')
+    expect(report.log.time).toBe(new Date(error.timeMs).toISOString())
+    expect(report.log.attributes).toEqual({ 'exception.type': 'Error', 'vos.correlated': 'last-call' })
+    expect([report.span.name, report.span.depth]).toEqual(['rpc overview', 0])
+    expect(report.trace.traceId).toBe(RENDER_TRACE)
+    expect([report.trace.spans.length, report.trace.logs.length]).toEqual([4, 2])
+  })
+
+  test('that was written outside any call has no span and no trace; a trace that could not be read says so', () => {
+    const lone = { ...error, traceId: undefined, spanId: undefined }
+    expect(logExport(lone, null, null)).toMatchObject({ span: null, trace: null })
+    expect(logExport(lone, null, null)).not.toHaveProperty('note')
+    expect(logExport(error, null, null, 'The trace could not be read: gone')).toMatchObject({ span: null, trace: null, note: 'The trace could not be read: gone' })
+  })
 })

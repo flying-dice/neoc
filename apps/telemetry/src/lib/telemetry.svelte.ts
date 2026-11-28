@@ -2,9 +2,14 @@
 // sends. What it needs from outside arrives through the constructor (the reader, the backend, a way to run work later),
 // so a test or a story builds one with fakes.
 import {
+  cutOff,
+  EXPORT_LIMIT,
+  exportText,
+  logExport,
   logKey,
   matchingLogs,
   matchingTraces,
+  traceExport,
   waterfall,
   type Bar,
   type Found,
@@ -22,25 +27,47 @@ export interface TelemetryReader {
   query(q: LogQuery): Promise<Found>
 }
 
+/**
+ * Where what is copied goes (the page's `navigator.clipboard`, which the app's frame is allowed to write to). It is given
+ * the text as a promise, started in the click: a browser that is strict about when the clipboard may be written (WebKit)
+ * takes a write begun in the click, even when what it holds is read from the host afterwards.
+ */
+export interface Clipboard {
+  write(text: Promise<string>): Promise<void>
+}
+
 /** The backend's one method: a call to try tracing with (the app's private `_probe` on the bus: `App.svelte` sends it). */
 export interface ProbeRpc {
   probe(params: VosApp.Telemetry.ProbeParams): Promise<VosApp.Telemetry.ProbeResult>
 }
 
-/** What the window traces its own work with (`vos.tracing`'s `span`): a probe is a span, and its call a child of it. */
+/**
+ * What the window traces its own work with (`vos.tracing`): a probe is a span, and its call a child of it; a failure it
+ * catches and turns into something to show is a warning (the platform records a bus call's failure, not these).
+ */
 export interface Tracer {
   span(name: string, fields?: { readonly [key: string]: unknown }): { in_scope<T>(body: () => T): T }
+  warn(message: string, fields?: { readonly [key: string]: unknown }): void
 }
 
 /** No tracing at all (a test, a story): the work runs as it is. */
-export const untraced: Tracer = { span: () => ({ in_scope: (body) => body() }) }
+export const untraced: Tracer = { span: () => ({ in_scope: (body) => body() }), warn: () => {} }
 
 export interface TelemetryOptions {
   /** Runs the page's failing render outside any handler, as a framework's render would (a timer, by default). */
   later?: (fn: () => void) => void
   /** Traces the probes (by default, nothing does). */
   tracer?: Tracer
+  /** Where a copy goes (by default, nowhere: a copy is refused). */
+  clipboard?: Clipboard
+  /** Runs work after a wait, in milliseconds (a timer, by default). */
+  after?: (fn: () => void, ms: number) => void
 }
+
+/** How the last copy went: nothing yet (or long enough ago), put on the clipboard, or refused by it. */
+export type Copied = 'idle' | 'copied' | 'refused'
+/** How long "Copied" is said before the button says Copy again, in milliseconds. */
+export const COPIED_FOR = 2500
 
 /** The two things the window shows. */
 export type View = 'traces' | 'logs'
@@ -80,17 +107,28 @@ export class Telemetry {
   #source = $state<SourceFilter>('all')
   #failedOnly = $state(false)
   #probing = $state<Probe | null>(null)
+  #copied = $state<Copied>('idle')
+  #copies = 0
+  // what is on show changes (a trace opened, a view or a level shown) => a new scope; a poll does not
+  #scope = 0
+  #refreshes = 0
+  // the latest-started read whose answer is kept
+  #applied = 0
 
   readonly #reader: TelemetryReader
   readonly #rpc: ProbeRpc
   readonly #later: (fn: () => void) => void
   readonly #tracer: Tracer
+  readonly #clipboard: Clipboard | null
+  readonly #after: (fn: () => void, ms: number) => void
 
   constructor(reader: TelemetryReader, rpc: ProbeRpc, options: TelemetryOptions = {}) {
     this.#reader = reader
     this.#rpc = rpc
     this.#later = options.later ?? ((fn) => void setTimeout(fn))
     this.#tracer = options.tracer ?? untraced
+    this.#clipboard = options.clipboard ?? null
+    this.#after = options.after ?? ((fn, ms) => void setTimeout(fn, ms))
   }
 
   get loaded(): boolean {
@@ -125,6 +163,10 @@ export class Telemetry {
   }
   get probing(): Probe | null {
     return this.#probing
+  }
+  /** How the last copy of a log or a trace went. */
+  get copied(): Copied {
+    return this.#copied
   }
   get traceCount(): number {
     return this.#traces.length
@@ -174,29 +216,56 @@ export class Telemetry {
     return this.#logs.find((l) => logKey(l) === this.#entry) ?? null
   }
 
-  /** Read what the view shows again. Never rejects: a failure is kept, to be shown. */
+  /**
+   * Read what the view shows again. Never rejects: a failure is kept, to be shown. What a read gives is kept only if it
+   * is still of what is on show (not if another trace was opened, another view or level shown, while it was out) and no
+   * read that began after it has already answered. A poll that overlaps another of the same view is not overtaken by it:
+   * a slow reader still shows each answer that is the newest so far.
+   */
   async refresh(): Promise<void> {
+    const run = ++this.#refreshes
+    const scope = this.#scope
+    const current = (): boolean => scope === this.#scope && run > this.#applied
     try {
       if (this.#view === 'traces') {
-        this.#traces = await this.#reader.traces()
+        const traces = await this.#reader.traces()
         const selected = this.#selected
-        if (selected) this.#trace = await this.#reader.query({ traceId: selected, limit: 1000 })
+        const trace = selected ? await this.#reader.query({ traceId: selected, limit: 1000 }) : null
+        if (!current()) return
+        this.#applied = run
+        this.#traces = traces
+        if (trace) this.#trace = trace
       } else {
         const found = await this.#reader.query({ severity: this.#level, limit: 300 })
+        if (!current()) return
+        this.#applied = run
         this.#logs = [...found.logs].reverse()
       }
       this.#failure = null
       this.#unavailable = null
     } catch (e) {
-      if (codeOf(e) === NOT_OFFERED) this.#unavailable = 'This host page does not offer telemetry to this app.'
-      else this.#failure = messageOf(e)
+      if (!current()) return
+      this.#applied = run
+      // a poll that fails again, the same way, is the same failure: it is warned of when it starts or changes, not on each tick
+      if (codeOf(e) === NOT_OFFERED) {
+        const said = 'This host page does not offer telemetry to this app.'
+        if (this.#unavailable !== said) this.#tracer.warn('this host page does not offer telemetry', { error: messageOf(e) })
+        this.#unavailable = said
+      } else {
+        const said = messageOf(e)
+        if (this.#failure !== said) this.#tracer.warn('could not read the telemetry', { error: said, view: this.#view })
+        this.#failure = said
+      }
     } finally {
-      this.#loaded = true
+      // the page is loaded when what is on show has been read; a read of what is not on show tells nothing
+      if (scope === this.#scope) this.#loaded = true
     }
   }
 
   show(view: View): void {
     if (view !== this.#view) this.#query = ''
+    this.#forgetCopy()
+    this.#scope++
     this.#view = view
     this.#pane = 'content'
     void this.refresh()
@@ -205,6 +274,8 @@ export class Telemetry {
   /** Open a trace in the detail column, from the list or from a log. */
   async open(traceId: string): Promise<void> {
     this.#view = 'traces'
+    this.#forgetCopy()
+    this.#scope++
     this.#selected = traceId
     this.#choice = null
     this.#trace = null
@@ -214,6 +285,7 @@ export class Telemetry {
 
   /** Open a log of the Logs view in the detail column. */
   inspect(log: Log): void {
+    this.#forgetCopy()
     this.#entry = logKey(log)
     this.#pane = 'detail'
   }
@@ -223,6 +295,80 @@ export class Telemetry {
     const now = this.#choice
     const same = now?.kind === pick.kind && (now.kind === 'span' ? now.id === (pick as { id: string }).id : now.key === (pick as { key: string }).key)
     this.#choice = same ? null : pick
+  }
+
+  /**
+   * Put everything known of the open trace on the clipboard: its spans and logs, as JSON, read again now with the most
+   * the host keeps (what the window shows is the last 1,000). One that could not be read again is copied as it was
+   * loaded, and the copy says so.
+   */
+  async copyTrace(): Promise<void> {
+    const traceId = this.#selected
+    const loaded = this.#trace
+    if (!traceId || !loaded) return
+    // of this trace, as it is now: the window may show another by the time the host answers
+    const summary = this.summary
+    await this.#copy(async () => {
+      try {
+        const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
+        return exportText(traceExport(traceId, found, summary, cutOff(found)))
+      } catch (e) {
+        this.#tracer.warn('could not read the trace again to copy it', { error: messageOf(e), traceId })
+        // what the window had is a stand-in only if it is of this trace
+        if (!loaded.spans.every((s) => s.traceId === traceId) || !loaded.logs.every((l) => l.traceId === traceId)) {
+          throw new Error('The trace could not be read again, and the window has no copy of it.')
+        }
+        return exportText(traceExport(traceId, loaded, summary, `The trace could not be read again, so this is what the window had: ${messageOf(e)}`))
+      }
+    })
+  }
+
+  /**
+   * Put everything known of a log on the clipboard, as JSON: the log, its span and, read now, the trace it belongs to
+   * (the Logs view holds no trace). A trace that cannot be read is left out, and the copy says so.
+   */
+  async copyLog(log: Log): Promise<void> {
+    await this.#copy(async () => {
+      const traceId = log.traceId
+      if (!traceId) return exportText(logExport(log, null, null))
+      const summary = this.#traces.find((t) => t.traceId === traceId) ?? null
+      try {
+        const found = await this.#reader.query({ traceId, limit: EXPORT_LIMIT })
+        return exportText(logExport(log, found, summary, cutOff(found)))
+      } catch (e) {
+        this.#tracer.warn('could not read the trace of the log to copy it', { error: messageOf(e), traceId })
+        return exportText(logExport(log, null, summary, `The trace could not be read: ${messageOf(e)}`))
+      }
+    })
+  }
+
+  /** What was copied is no longer what is shown: an answer about it must not be given for what is shown now. */
+  #forgetCopy(): void {
+    this.#copies++
+    this.#copied = 'idle'
+  }
+
+  /**
+   * Copy what `text` makes; how it went is `copied` for a while, if what is shown has not changed by then. Never rejects.
+   * `text` is called at once, in the click.
+   */
+  async #copy(text: () => Promise<string>): Promise<void> {
+    const copy = ++this.#copies
+    let answer: Copied
+    try {
+      if (!this.#clipboard) throw new Error('There is no clipboard.')
+      await this.#clipboard.write(text())
+      answer = 'copied'
+    } catch (e) {
+      this.#tracer.warn('could not copy to the clipboard', { error: messageOf(e) })
+      answer = 'refused'
+    }
+    if (copy !== this.#copies) return
+    this.#copied = answer
+    // the answer stays for a while, unless another copy, or another thing on show, has come by then
+    this.#after(() => {
+      if (copy === this.#copies) this.#copied = 'idle'
+    }, COPIED_FOR)
   }
 
   /** A narrow window goes back one column. */
@@ -235,6 +381,7 @@ export class Telemetry {
   }
 
   filter(level: Level): void {
+    this.#scope++
     this.#level = level
     void this.refresh()
   }

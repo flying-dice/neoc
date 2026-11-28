@@ -27,6 +27,9 @@ const picker = (page: Page, name: string): Locator => part(page, name).locator('
 const agentRow = (page: Page, name: string): Locator => frame(page).getByTestId(/^agents-agent-/).filter({ hasText: name })
 const item = (page: Page, kind: string): Locator => frame(page).getByTestId(new RegExp(`^agents-item-${kind}-\\d+$`))
 
+/** A result of some 170 KB, where the host takes at most 64 KiB in one notification: a numbered line, 30,000 times over. */
+const BIG_RESULT = Array.from({ length: 30000 }, (_, i) => `L${i + 1}`).join('\n')
+
 const agent = new FakeAgent([
   [
     (text) => text === 'hello',
@@ -118,6 +121,17 @@ const agent = new FakeAgent([
       turn.update({ sessionUpdate: 'tool_call', toolCallId: 'x1', title: 'rm b.md', kind: 'execute', status: 'in_progress', rawInput: { command: 'rm b.md' } })
       turn.update({ sessionUpdate: 'tool_call_update', toolCallId: 'x1', status: 'failed', rawOutput: { exit: 1 } })
       turn.say('b.md could not be removed.')
+    }
+  ],
+  // a tool that answers with far more than one notification may hold, then goes on
+  [
+    (text) => text === 'read the big file',
+    async (turn) => {
+      turn.update({ sessionUpdate: 'tool_call', toolCallId: 'big1', title: 'Read big.log', kind: 'read', status: 'in_progress', rawInput: { path: '/home/ada/big.log' } })
+      turn.update({ sessionUpdate: 'tool_call_update', toolCallId: 'big1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: BIG_RESULT } }] })
+      // and an answer in one piece that is just as large
+      turn.say(BIG_RESULT)
+      turn.say('That was all of it.')
     }
   ],
   [
@@ -543,6 +557,30 @@ test.describe('Agents journeys', () => {
     await item(page, 'tool').nth(2).locator('summary').click()
     await expect(item(page, 'tool').nth(2)).toContainText('"command": "rm b.md"')
     await expect(item(page, 'tool').nth(2)).toContainText('"exit": 1')
+  })
+
+  test('AG20: a tool that gives back far more than a notification holds, and an answer as large, show in the chat and the turn goes on', async ({ page }) => {
+    await chatting(page)
+    await say(page, 'read the big file')
+    // the turn goes on past what it was too large to announce
+    await expect(thread(page)).toContainText('That was all of it.')
+    await turnOver(page)
+    await expect(frame(page).getByTestId(/^agents-item-error-/)).toHaveCount(0)
+    await item(page, 'tool').locator('summary').click()
+    // the tool's result is there whole, and so is the answer
+    await expect(item(page, 'tool')).toContainText('L1\nL2\n')
+    await expect(item(page, 'tool')).toContainText('L30000')
+    const answer = frame(page).getByTestId(/^agents-message-assistant-/)
+    await expect(answer).toContainText('L30000')
+    await expect(answer).toContainText('That was all of it.')
+    // and it is the same when the chat is read again from the backend
+    await chooseLayout(page, ID, 'close')
+    await expect(windowOf(page, ID)).toHaveCount(0)
+    await openFromHome(page, ID)
+    await frame(page).getByTestId(/^agents-chat-/).filter({ hasText: 'read the big file' }).click()
+    await expect(thread(page)).toContainText('That was all of it.')
+    await item(page, 'tool').locator('summary').click()
+    await expect(item(page, 'tool')).toContainText('L30000')
   })
 })
 

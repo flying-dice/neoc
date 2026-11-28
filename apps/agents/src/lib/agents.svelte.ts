@@ -26,14 +26,15 @@ export interface AgentsRpc {
   images(): Promise<VosApp.Agents.ImageChoice>
   chats(): Promise<Chat[]>
   open(params: VosApp.Agents.OpenParams): Promise<Conversation>
+  readItem(params: VosApp.Agents.ReadItemParams): Promise<Item>
   send(params: VosApp.Agents.SendParams): Promise<Conversation>
   answer(params: VosApp.Agents.AnswerParams): Promise<Conversation>
   stop(params: VosApp.Agents.StopParams): Promise<Conversation>
   removeChat(params: VosApp.Agents.RemoveChatParams): Promise<Chat[]>
 }
 /**
- * Where the window hears the backend's notifications (`item`, `piece`, `turn`: `App.svelte` wires them to the bus) and
- * the host's events (`host:reconnected`).
+ * Where the window hears the backend's notifications (`item`, `piece`, `item_changed`, `turn`: `App.svelte` wires them
+ * to the bus) and the host's events (`host:reconnected`).
  */
 export interface AgentsEvents {
   on(name: string, fn: (data: unknown) => void): () => void
@@ -43,6 +44,11 @@ export interface AgentsEvents {
 interface Changed {
   chat: string
   item: Item
+}
+/** An item that changed and is too large to send: the window reads it. */
+interface Reference {
+  chat: string
+  item: number
 }
 /** Text added to an item, as the backend sends it while the text comes. */
 interface Piece {
@@ -63,6 +69,7 @@ export interface Choices<T> {
   problem: string | null
 }
 
+const readKey = (chat: string, item: number): string => `${chat}/${item}`
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const none = <T>(): Choices<T> => ({ items: [], problem: null })
 
@@ -95,6 +102,10 @@ export class Agents {
 
   readonly #rpc: AgentsRpc
   readonly #events: AgentsEvents
+  // the items being read, by chat and id: `again` says the item changed since the read began, so it is read once more
+  readonly #reading = new Map<string, { again: boolean }>()
+  // how many whole conversations have been installed (an answer of the backend, not a change of the one shown)
+  #installed = 0
 
   constructor(rpc: AgentsRpc, events: AgentsEvents) {
     this.#rpc = rpc
@@ -163,7 +174,7 @@ export class Agents {
   /** Run a call that answers with a chat. It never rejects: a failure is kept, to be shown. */
   async #show(call: Promise<Conversation>): Promise<boolean> {
     try {
-      this.#open = await call
+      this.#install(await call)
       this.#chats = await this.#rpc.chats()
       this.#failure = null
       return true
@@ -190,7 +201,7 @@ export class Agents {
     try {
       ;[this.#agents, this.#chats] = await Promise.all([this.#rpc.agents(), this.#rpc.chats()])
       const last = this.#open?.chat.id
-      if (last !== undefined && last !== '' && this.#chats.some((c) => c.id === last)) this.#open = await this.#rpc.open({ chat: last })
+      if (last !== undefined && last !== '' && this.#chats.some((c) => c.id === last)) this.#install(await this.#rpc.open({ chat: last }))
       this.#failure = null
       this.#loaded = true
     } catch (e) {
@@ -230,6 +241,8 @@ export class Agents {
     const stops = [
       this.#events.on('item', (data) => this.#change(data as Changed)),
       this.#events.on('piece', (data) => this.#add(data as Piece)),
+      // an item too large to have been sent
+      this.#events.on('item_changed', (data) => this.#read(data as Reference)),
       // the turn is over (complete, stopped or failed): read the chat as the backend has it
       this.#events.on('turn', (data) => {
         const chat = (data as { chat: string }).chat
@@ -241,16 +254,86 @@ export class Agents {
     return () => stops.forEach((stop) => stop())
   }
 
-  #change({ chat, item }: Changed): void {
+  /** Show a conversation the backend gave whole: what a read that began before it was made of is older than it. */
+  #install(conversation: Conversation | null): void {
+    this.#open = conversation
+    this.#installed++
+  }
+
+  #change(changed: Changed): void {
+    // a read that is out is of an older item than this
+    const reading = this.#reading.get(readKey(changed.chat, changed.item.id))
+    if (reading) reading.again = true
+    this.#put(changed)
+  }
+
+  #put({ chat, item }: Changed): void {
     const open = this.#open
     if (open?.chat.id !== chat) return
     const known = open.items.some((i) => i.id === item.id)
-    const items = known ? open.items.map((i) => (i.id === item.id ? item : i)) : [...open.items, item]
+    // a new item goes where its id puts it: one read later than a newer item that was sent whole still comes before it
+    const after = open.items.findIndex((i) => i.id > item.id)
+    const items = known
+      ? open.items.map((i) => (i.id === item.id ? item : i))
+      : after < 0
+        ? [...open.items, item]
+        : [...open.items.slice(0, after), item, ...open.items.slice(after)]
     // the agent waits while a permission it asked for has no answer
     this.#open = { ...open, items, waiting: items.some((i) => i.kind === 'permission' && !i.done) }
   }
 
+  /**
+   * Read an item the backend did not send: it was more than a notification may hold. An item is read one at a time. What
+   * a read gives is shown only if nothing newer has come while it was out: a whole conversation installed since is newer
+   * than it (the item is read again), and so is a change that came of an item already shown (read again too, so what is
+   * shown is never older than the last change). An item not shown yet is shown even then, and read again. A read that
+   * fails while a change is waiting is read again, and says nothing: the failure is older than the change.
+   */
+  #read({ chat, item }: Reference): void {
+    if (this.#open?.chat.id !== chat) return
+    const key = readKey(chat, item)
+    const reading = this.#reading.get(key)
+    if (reading) {
+      reading.again = true
+      return
+    }
+    const state = { again: false }
+    this.#reading.set(key, state)
+    void (async () => {
+      try {
+        for (;;) {
+          state.again = false
+          const installed = this.#installed
+          let read: { item: Item } | { failure: unknown }
+          try {
+            read = { item: await this.#rpc.readItem({ chat, item }) }
+          } catch (failure) {
+            read = { failure }
+          }
+          // the chat was left or deleted while the item was read: nothing to say about it
+          const open = this.#open
+          if (open?.chat.id !== chat) return
+          // a whole conversation was installed since the read began: what came (or failed) is older than it
+          if (installed !== this.#installed) continue
+          if ('failure' in read) {
+            // a change that came during the read has the item read again: that is newer than this failure
+            if (state.again) continue
+            this.#failure = messageOf(read.failure)
+            return
+          }
+          const newer = state.again && open.items.some((i) => i.id === read.item.id)
+          if (!newer) this.#put({ chat, item: read.item })
+          if (!state.again) return
+        }
+      } finally {
+        this.#reading.delete(key)
+      }
+    })()
+  }
+
   #add(piece: Piece): void {
+    const reading = this.#reading.get(readKey(piece.chat, piece.item))
+    if (reading) reading.again = true
     const open = this.#open
     if (open?.chat.id !== piece.chat) return
     this.#open = { ...open, items: open.items.map((i) => (i.id === piece.item ? { ...i, text: i.text + piece.text } : i)) }
@@ -258,7 +341,7 @@ export class Agents {
 
   /** Close whatever the detail column shows. */
   #clear(): void {
-    this.#open = null
+    this.#install(null)
     this.form = null
     this.picking = false
     this.#failure = null

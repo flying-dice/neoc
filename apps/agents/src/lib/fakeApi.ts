@@ -298,6 +298,11 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     images: async () => (engine.reachable ? { images: [...IMAGES], problem: '' } : { images: [], problem: engine.problem }),
     chats: async () => chats.map((c) => ({ ...c.chat })),
     open: async ({ chat }) => view(chat),
+    readItem: async ({ chat, item }) => {
+      const found = find(chat).items.find((i) => i.id === item)
+      if (!found) throw new Refused('There is no such item in that chat.')
+      return { ...found }
+    },
     send: async ({ chat: given, agent, text }) => {
       if (text.trim() === '') throw new Refused('Write something first.')
       // a new chat is made by its first message
@@ -375,6 +380,7 @@ export function createFailingBackend(message: string): FakeBackend {
       images: refuse,
       chats: refuse,
       open: refuse,
+      readItem: refuse,
       send: refuse,
       answer: refuse,
       stop: refuse,
