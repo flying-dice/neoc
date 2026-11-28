@@ -45,6 +45,7 @@
       shape="circle"
       hit
       label={action}
+      title={action}
       disabled={draft.trim() === '' || problem !== null}
       data-testid="{testid}-add"
     >
@@ -68,7 +69,7 @@
     min-width: 0;
   }
   .problem {
-    margin: 6px 4px 0;
+    margin: 8px 4px 0;
     font: var(--type-footnote);
     color: var(--ios-red);
   }
