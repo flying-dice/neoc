@@ -247,9 +247,28 @@ describe('copying what is known of a trace or a log', () => {
     }
     const messages = () => warned.splice(0).map(([message]) => message)
 
-    await given({ failWith: rpcError(-32000, 'The host went away') }).telemetry.refresh()
+    // a poll that goes on failing the same way is warned of once; a read that works re-arms it; another failure warns again
+    const polled = given({ failWith: rpcError(-32000, 'The host went away') })
+    await polled.telemetry.refresh()
+    await polled.telemetry.refresh()
+    await polled.telemetry.refresh()
     expect(messages()).toEqual(['could not read the telemetry'])
-    await given({ failWith: rpcError(-32601, 'This host does not offer vos/telemetry/query') }).telemetry.refresh()
+    const reader = polled.backend.reader.traces
+    polled.backend.reader.traces = () => Promise.resolve([])
+    await polled.telemetry.refresh()
+    expect(polled.telemetry.failure).toBeNull()
+    expect(messages()).toEqual([])
+    polled.backend.reader.traces = reader
+    await polled.telemetry.refresh()
+    await polled.telemetry.refresh()
+    expect(messages()).toEqual(['could not read the telemetry'])
+    polled.backend.reader.traces = () => Promise.reject(rpcError(-32000, 'The host answered nothing'))
+    await polled.telemetry.refresh()
+    expect(messages()).toEqual(['could not read the telemetry'])
+
+    const off = given({ failWith: rpcError(-32601, 'This host does not offer vos/telemetry/query') })
+    await off.telemetry.refresh()
+    await off.telemetry.refresh()
     expect(messages()).toEqual(['this host page does not offer telemetry'])
 
     const refused = given({}, { write: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) })

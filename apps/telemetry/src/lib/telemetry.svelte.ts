@@ -225,12 +225,15 @@ export class Telemetry {
       this.#failure = null
       this.#unavailable = null
     } catch (e) {
+      // a poll that fails again, the same way, is the same failure: it is warned of when it starts or changes, not on each tick
       if (codeOf(e) === NOT_OFFERED) {
-        this.#tracer.warn('this host page does not offer telemetry', { error: messageOf(e) })
-        this.#unavailable = 'This host page does not offer telemetry to this app.'
+        const said = 'This host page does not offer telemetry to this app.'
+        if (this.#unavailable !== said) this.#tracer.warn('this host page does not offer telemetry', { error: messageOf(e) })
+        this.#unavailable = said
       } else {
-        this.#tracer.warn('could not read the telemetry', { error: messageOf(e), view: this.#view })
-        this.#failure = messageOf(e)
+        const said = messageOf(e)
+        if (this.#failure !== said) this.#tracer.warn('could not read the telemetry', { error: said, view: this.#view })
+        this.#failure = said
       }
     } finally {
       this.#loaded = true
