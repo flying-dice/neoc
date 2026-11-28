@@ -288,6 +288,52 @@ describe('a build', () => {
     const mine = (await call('GET', `/images/json?filters=${encodeURIComponent(JSON.stringify({ label: ['vos.app=copilot'] }))}`)).body
     expect(mine.map((image: { RepoTags: string[] }) => image.RepoTags[0])).toEqual(['agent:1'])
   })
+
+  /** A tar archive of one file, as a build context is sent: a 512-byte header, the file in 512-byte blocks, two empty blocks. */
+  const tar = (path: string, text: string): Uint8Array<ArrayBuffer> => {
+    const body = Buffer.from(text)
+    const header = Buffer.alloc(512)
+    header.write(path, 0)
+    header.write('0000644\0', 100)
+    header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124)
+    header.write('ustar\0', 257)
+    return new Uint8Array(Buffer.concat([header, body, Buffer.alloc((512 - (body.length % 512)) % 512), Buffer.alloc(1024)]))
+  }
+  type Said = { stream?: string; aux?: { ID: string }; error?: string; errorDetail?: { code: number; message: string } }
+  const build = async (tag: string, dockerfile: string): Promise<Said[]> => {
+    const res = await fetch(`${base}/build?t=${encodeURIComponent(tag)}`, { method: 'POST', body: tar('Dockerfile', dockerfile) })
+    return (await res.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Said)
+  }
+  const tagged = (tag: string) => docker.images().find((i) => i.tags.includes(tag))
+
+  test("reports each instruction of the context's Dockerfile as a step", async () => {
+    const steps = await build('tools:1', 'FROM alpine:3.20\n# a comment\nRUN apk add curl\n')
+    expect(steps.filter((s) => s.stream?.startsWith('Step')).map((s) => s.stream)).toEqual(['Step 1/2 : FROM alpine:3.20\n', 'Step 2/2 : RUN apk add curl\n'])
+    expect(steps.at(-1)?.stream).toBe('Successfully tagged tools:1\n')
+  })
+
+  test('of a changed Dockerfile is a new image, which the name moves to; the same Dockerfile again is the same image', async () => {
+    await build('tools:1', 'FROM alpine:3.20\n')
+    const first = tagged('tools:1')!.id
+    const steps = await build('tools:1', 'FROM alpine:3.21\n')
+    const second = tagged('tools:1')!.id
+    expect(second).not.toBe(first)
+    expect(steps.find((s) => s.aux)?.aux?.ID).toBe(second)
+    expect(docker.images().find((i) => i.id === first)?.tags, 'the image before keeps no name').toEqual([])
+    await build('tools:1', 'FROM alpine:3.21\n')
+    expect(tagged('tools:1')!.id).toBe(second)
+  })
+
+  test('that runs `exit <n>` fails there as Docker does, and makes no image', async () => {
+    const steps = await build('broken:1', 'FROM alpine:3.20\nRUN exit 3\nRUN echo never\n')
+    const message = "The command '/bin/sh -c exit 3' returned a non-zero code: 3"
+    expect(steps.at(-1)).toEqual({ errorDetail: { code: 3, message }, error: message })
+    expect(steps.some((s) => s.stream?.includes('echo never'))).toBe(false)
+    expect(tagged('broken:1')).toBeUndefined()
+  })
 })
 
 test('an archive uploaded into a container is kept with its path', async () => {

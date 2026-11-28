@@ -9,7 +9,8 @@
  * and the containers that were made exactly as they were asked for (which is what the journeys look at), changes them
  * as Docker would (refusing what Docker refuses, in its words: an image a container was made from, a volume a
  * container uses, a network a running container is on), and reports each change on `/events`, which is how an app's
- * backend hears of it. It builds images (any context makes the image the build names), takes archives uploaded into a
+ * backend hears of it. It builds images (the Dockerfile of the context is read, not run, and the name moves to the image
+ * it makes; a `RUN exit <n>` fails as Docker fails it), takes archives uploaded into a
  * container, and lets a journey stand in for the program a container runs: what a client attached to a container
  * writes to its input, the journey reads, and what the journey writes is the container's output.
  */
@@ -216,6 +217,20 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   return text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
 }
 
+
+/** A file of a tar archive (a build context) by its path there, as text; `undefined` when it has none, or is no tar. */
+function tarFile(archive: Uint8Array, path: string): string | undefined {
+  const field = (from: number, length: number): string => Buffer.from(archive.subarray(from, from + length)).toString('utf8').replace(/\0.*$/s, '')
+  for (let at = 0; at + 512 <= archive.length; ) {
+    const name = field(at, 100)
+    const size = parseInt(field(at + 124, 12).trim() || '0', 8)
+    // two empty blocks end the archive; a header that is none ends the reading
+    if (name === '' || Number.isNaN(size)) return undefined
+    if (name.replace(/^\.\//, '') === path) return Buffer.from(archive.subarray(at + 512, at + 512 + size)).toString('utf8')
+    at += 512 + Math.ceil(size / 512) * 512
+  }
+  return undefined
+}
 
 /** Docker's hex digest of a text: an id that is the same on every machine for the same thing. */
 const digest = (text: string): string => createHash('sha256').update(text).digest('hex')
@@ -699,22 +714,46 @@ export async function startFakeDocker(options: Options = {}): Promise<FakeDocker
       return json(res, removed.status, removed.body)
     }
     if (method === 'POST' && path === '/build') {
-      // the context is read and not looked into: the image is the one the build names, with the labels it gives
-      await bytesOf(req)
+      // the Dockerfile of the context is read, not run: each instruction is a step, a `RUN exit <n>` fails as Docker
+      // fails it, and the image follows from the name and the Dockerfile, so a changed Dockerfile is a new image that
+      // takes the name. A context with no Dockerfile builds the image the build names. Either has the labels it gives
+      const dockerfile = tarFile(await bytesOf(req), url.searchParams.get('dockerfile') ?? 'Dockerfile')
       const named = url.searchParams.get('t')
       const image = named === null ? undefined : /:[^/]*$/.test(named) ? named : `${named}:latest`
-      const built = image === undefined ? imageOf([], undefined, `build#${images.length}`) : (imageBy(image)?.image ?? imageOf([image]))
+      const steps = (dockerfile ?? 'FROM scratch')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('#'))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      const say = (line: object): void => void res.write(`${JSON.stringify(line)}\n`)
+      for (const [i, step] of steps.entries()) {
+        say({ stream: `Step ${i + 1}/${steps.length} : ${step}\n` })
+        const exit = /^RUN\s+exit\s+(\d+)$/i.exec(step)?.[1]
+        if (exit !== undefined && Number(exit) !== 0) {
+          const message = `The command '/bin/sh -c exit ${exit}' returned a non-zero code: ${exit}`
+          say({ errorDetail: { code: Number(exit), message }, error: message })
+          return void res.end()
+        }
+        say({ stream: ' ---> Using cache\n' })
+      }
+      const fresh = image === undefined ? undefined : imageOf([image], undefined, dockerfile === undefined ? '' : `\n${dockerfile}`)
+      const built =
+        image === undefined || fresh === undefined
+          ? imageOf([], undefined, `build#${images.length}`)
+          : (images.find((i) => i.id === fresh.id) ?? (dockerfile === undefined ? imageBy(image)?.image : undefined) ?? fresh)
       const labels = url.searchParams.get('labels')
       if (labels) Object.assign(built.labels, JSON.parse(labels) as Record<string, string>)
       const id = built.id
-      res.writeHead(200, { 'content-type': 'application/json' })
-      const say = (line: object): void => void res.write(`${JSON.stringify(line)}\n`)
-      say({ stream: `Step 1/1 : FROM scratch\n` })
-      say({ stream: ' ---> Using cache\n' })
       say({ aux: { ID: id } })
       say({ stream: `Successfully built ${id.slice(7, 19)}\n` })
       if (!images.includes(built)) images.push(built)
-      if (image !== undefined) say({ stream: `Successfully tagged ${image}\n` })
+      if (image !== undefined) {
+        // the name moves to the new image: the one that had it keeps its other names, or none
+        for (const other of images) if (other !== built) other.tags = other.tags.filter((t) => t !== image)
+        if (!built.tags.includes(image)) built.tags.push(image)
+        report('image', 'tag', id, { name: image })
+        say({ stream: `Successfully tagged ${image}\n` })
+      }
       return void res.end()
     }
     if (method === 'GET' && path === '/networks') {

@@ -1,8 +1,9 @@
 --!strict
--- The Containers app's backend: the Docker containers and Compose stacks of a machine. It keeps nothing of its own
+-- The Containers app's backend: the Docker containers and Compose stacks of a machine. Of Docker's it keeps nothing
 -- (the choice of which Docker is kept by `vos:docker`): the containers are Docker's, read each time they are asked for.
 -- Every call that changes something answers with the overview as it now stands, so the window that asked draws what
--- Docker has.
+-- Docker has. What it keeps is its own: the image recipes (recipes.luau), each a name and the Dockerfile an image of
+-- that name is built from.
 --
 -- Docker changes without the app (a container exits, someone runs `docker compose up` in a terminal): a task watches
 -- Docker's events for as long as the app is loaded and tells the open windows with the `changed` notification, and
@@ -12,7 +13,8 @@
 -- cannot change most of what a container was made with, so it is made again) and removes one. They pull, remove and
 -- prune Docker's images, and make, remove and prune its volumes and networks (`_images`, `_volume_create`, ...): each
 -- of those calls answers with its list as it now stands. While an image is pulled for them, the windows hear how it
--- goes (`_pulling`).
+-- goes (`_pulling`). They keep recipes (`_recipes`, `_add_recipe`, `_update_recipe`, `_remove_recipe`), each answering
+-- with the recipes as they now stand, and build one (`_build`): the windows hear how the build goes (`_building`).
 --
 -- An agent can do what a person does most: see what runs (`list_containers`) and what images, volumes and networks
 -- there are (`list_images`, `list_volumes`, `list_networks`), read a container's logs (`container_logs`), and start,
@@ -22,7 +24,22 @@
 -- private (`_overview`, `_start`, ...).
 local engine = require("./engine")
 local objects = require("./objects")
+local recipes = require("./recipes")
 local task = require("std:task")
+local db = app.db
+
+db:migrate {
+  [1] = [[
+    create table recipes (
+      id text primary key,
+      tag text not null unique,
+      dockerfile text not null,
+      image text not null default '',
+      built text not null default '',
+      problem text not null default ''
+    );
+  ]],
+}
 
 -- how long the windows are left alone after being told of a change, in seconds: Docker reports a restart as several
 -- events, and a stack as several times that
@@ -183,6 +200,51 @@ RPC.on_request("_images_prune", function(_params: {}, ctx: vos_app_Context): con
     return ctx:fail(problem or "Docker did not prune its images.")
   end
   return { images = images(ctx), removed = removed, space = space or 0 }
+end)
+
+RPC.on_request("_recipes", function(): containers_RecipesResult
+  return recipes.all()
+end)
+
+RPC.on_request(
+  "_add_recipe",
+  function(params: containers_AddRecipeParams, ctx: vos_app_Context): containers_AddRecipeResult
+    local problem = recipes.add(params.tag, params.dockerfile)
+    return if problem then ctx:fail(problem) else recipes.all()
+  end
+)
+
+RPC.on_request(
+  "_update_recipe",
+  function(params: containers_UpdateRecipeParams, ctx: vos_app_Context): containers_UpdateRecipeResult
+    local recipe = recipes.find(params.recipe)
+    if not recipe then
+      return ctx:fail("There is no such recipe.")
+    end
+    local problem = recipes.update(recipe, params.tag, params.dockerfile)
+    return if problem then ctx:fail(problem) else recipes.all()
+  end
+)
+
+RPC.on_request(
+  "_remove_recipe",
+  function(params: containers_RemoveRecipeParams, ctx: vos_app_Context): containers_RemoveRecipeResult
+    local recipe = recipes.find(params.recipe)
+    if not recipe then
+      return ctx:fail("There is no such recipe.")
+    end
+    recipes.remove(recipe)
+    return recipes.all()
+  end
+)
+
+RPC.on_request("_build", function(params: containers_BuildParams, ctx: vos_app_Context): containers_BuildResult
+  local recipe = recipes.find(params.recipe)
+  if not recipe then
+    return ctx:fail("There is no such recipe.")
+  end
+  recipes.build(recipe)
+  return recipes.all()
 end)
 
 RPC.on_request(

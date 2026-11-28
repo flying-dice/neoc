@@ -6,6 +6,8 @@
  * checked for some of what the backend checks, in its words. Its images, volumes and networks know the containers that
  * use them, and are refused what Docker refuses: an image a container was made from, unless forced (never one a running
  * container was made from), a volume a container uses, a network a running container is on, Docker's own networks.
+ * It keeps image recipes, and builds one as the backend does: its lines told as it goes (`building`), a Dockerfile with
+ * a `RUN exit <n>` failing there as Docker fails it, and the name moved to the new image.
  */
 type Container = VosApp.Containers.Container
 type Details = VosApp.Containers.Details
@@ -14,6 +16,7 @@ type Network = VosApp.Containers.Network
 type Overview = VosApp.Containers.Overview
 type Port = VosApp.Containers.Port
 type Pulling = VosApp.Containers.PullingParams
+type Recipe = VosApp.Containers.Recipe
 type Spec = VosApp.Containers.Spec
 type Stack = VosApp.Containers.Stack
 type State = VosApp.Containers.State
@@ -31,6 +34,8 @@ export interface FakeBackend {
   reach(reachable: boolean): void
   /** A container writes a line. */
   write(container: string, line: string): void
+  /** End the builds held (`holdBuilds`). */
+  finish(): void
 }
 
 export interface FakeOptions {
@@ -52,10 +57,32 @@ export interface FakeOptions {
   networks?: readonly Kept<Network>[]
   /** Docker's volumes (default: one for each container). */
   volumes?: readonly Kept<Volume>[]
+  /** The image recipes kept (default: none). */
+  recipes?: readonly Recipe[]
+  /** A build does not end until `finish()`: the window shows it under way. */
+  holdBuilds?: boolean
 }
 
 /** An image, a volume or a network as the fake keeps it: the containers that use it are worked out when it is listed. */
 export type Kept<T> = Omit<T, 'containers'>
+
+/** A recipe of the fake, as the backend lists it. */
+export const recipe = (tag: string, more: Partial<Recipe> = {}): Recipe => ({
+  id: `recipe-${tag}`,
+  tag,
+  dockerfile: 'FROM alpine:3.20\nRUN apk add --no-cache curl',
+  image: '',
+  current: false,
+  problem: '',
+  building: false,
+  ...more
+})
+
+/** The Docker message of a `RUN exit <n>` with n other than 0, as a build fails at it; null for a Dockerfile that builds. */
+export function buildFailure(dockerfile: string): string | null {
+  const m = /^\s*RUN\s+exit\s+([1-9]\d*)\s*$/im.exec(dockerfile)
+  return m ? `The command '/bin/sh -c exit ${m[1]}' returned a non-zero code: ${m[1]}` : null
+}
 
 /** An image of the fake: its id and size follow from its names. */
 export function image(tags: string[], more: Partial<Kept<Image>> = {}): Kept<Image> {
@@ -232,6 +259,10 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const refusing = new Set(options.refusing ?? [])
   const written = new Map<string, string[]>(containers.map((c) => [c.id, [`${c.name} started`, 'listening']]))
   const listeners = new Map<string, Set<(data: unknown) => void>>()
+  let recipes: Recipe[] = (options.recipes ?? []).map((r) => ({ ...r }))
+  let held: (() => void)[] = []
+  // what each recipe's image was built from: its name and Dockerfile
+  const builtFrom = new Map<string, string>()
 
   const emit = (name: string, data?: unknown): void => listeners.get(name)?.forEach((fn) => fn(data))
   const answered = <T>(answer: () => T): Promise<T> => new Promise((resolve, reject) => setTimeout(() => {
@@ -306,6 +337,56 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
   const NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/
   const short = (id: string): string => id.replace(/^sha256:/, '').slice(0, 12)
   const pretty = (names: string[]): string => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`)
+
+  const listedRecipes = (): Recipe[] => [...recipes].sort((a, b) => a.tag.localeCompare(b.tag)).map((r) => ({ ...r }))
+  const tagged = (name: string): string => (/:[^/]*$/.test(name) ? name : `${name}:latest`)
+  /** The recipe's name and Dockerfile, checked as the backend checks them, in its words. */
+  function recipeChecked(tag: string, dockerfile: string, except?: string): string {
+    const name = tag.trim()
+    if (name === '') throw new Refused('Say what the image is called, like tools:1.')
+    if (!/^[a-z0-9][a-z0-9._/-]*(:[\w][\w.-]*)?$/.test(name)) {
+      throw new Refused(`${name} is not the name of an image. An image is named like tools, tools:1 or ghcr.io/owner/tools:1.`)
+    }
+    const full = tagged(name)
+    if (recipes.some((r) => r.tag === full && r.id !== except)) throw new Refused(`Another recipe builds ${full} already.`)
+    if (dockerfile.trim() === '') throw new Refused('Write the Dockerfile the image is built from.')
+    return full
+  }
+  const recipeBy = (id: string): Recipe => {
+    const found = recipes.find((r) => r.id === id)
+    if (!found) throw new Refused('There is no such recipe.')
+    return found
+  }
+  /** Build a recipe's image, as the backend does: on a later turn, its lines told, the name moved to the new image. */
+  function build(found: Recipe): void {
+    if (found.building) return
+    found.building = true
+    const { id, tag, dockerfile } = found
+    const tell = (line: string, status: VosApp.Containers.BuildStatus): void => emit('building', { recipe: id, line, status })
+    const run = (): void => {
+      const kept = recipes.find((r) => r.id === id)
+      tell(`Building ${tag}`, 'running')
+      const steps = dockerfile.split('\n').filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
+      steps.forEach((step, i) => tell(`Step ${i + 1}/${steps.length} : ${step.trim()}`, 'running'))
+      const failure = problem || buildFailure(dockerfile)
+      if (kept) kept.building = false
+      if (failure) {
+        const said = problem || `The image could not be built: ${failure}`
+        if (kept) kept.problem = said
+        tell(said, 'failed')
+        return
+      }
+      const built = image([tag], { id: image([`${tag}\n${dockerfile}`]).id })
+      images = [...images.map((i) => ({ ...i, tags: i.tags.filter((t) => t !== tag) })).filter((i) => i.id !== built.id), built]
+      builtFrom.set(id, `${tag}
+${dockerfile}`)
+      if (kept) Object.assign(kept, { image: built.id, current: kept.tag === tag && kept.dockerfile === dockerfile, problem: '' })
+      tell(`Successfully tagged ${tag}`, 'running')
+      tell(`Built ${tag}.`, 'done')
+    }
+    if (options.holdBuilds) held.push(run)
+    else setTimeout(run, pace)
+  }
 
   /**
    * Make a container from a spec, as the backend does: checked, its image pulled (and the pull told) when Docker does
@@ -535,6 +616,32 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
         const lines = written.get(id) ?? []
         const shown = lines.slice(-(tail ?? 200))
         return { container: id, text: shown.map((line) => `${line}\n`).join(''), truncated: shown.length < lines.length }
+      }),
+    recipes: () => answered(listedRecipes),
+    addRecipe: ({ tag, dockerfile }) =>
+      answered(() => {
+        const full = recipeChecked(tag, dockerfile)
+        recipes = [...recipes, recipe(full, { id: `recipe-${recipes.length + 1}-${full}`, dockerfile })]
+        return listedRecipes()
+      }),
+    updateRecipe: ({ recipe: id, tag, dockerfile }) =>
+      answered(() => {
+        const found = recipeBy(id)
+        const full = recipeChecked(tag, dockerfile, id)
+        Object.assign(found, { tag: full, dockerfile, current: found.image !== '' && builtFrom.get(id) === `${full}
+${dockerfile}` })
+        return listedRecipes()
+      }),
+    removeRecipe: ({ recipe: id }) =>
+      answered(() => {
+        recipeBy(id)
+        recipes = recipes.filter((r) => r.id !== id)
+        return listedRecipes()
+      }),
+    build: ({ recipe: id }) =>
+      answered(() => {
+        build(recipeBy(id))
+        return listedRecipes()
       })
   }
 
@@ -562,6 +669,11 @@ export function createFakeBackend(options: FakeOptions = {}): FakeBackend {
     write(name, line) {
       const found = containers.find((c) => c.name === name)
       if (found) log(found.id, line)
+    },
+    finish() {
+      const runs = held
+      held = []
+      runs.forEach((run) => run())
     }
   }
 }
@@ -595,12 +707,18 @@ export function createFailingBackend(message: string): FakeBackend {
       restartStack: refuse,
       removeStack: refuse,
       details: refuse,
-      logs: refuse
+      logs: refuse,
+      recipes: refuse,
+      addRecipe: refuse,
+      updateRecipe: refuse,
+      removeRecipe: refuse,
+      build: refuse
     },
     events: { on: () => () => {} },
     emit: () => {},
     outside: () => {},
     reach: () => {},
-    write: () => {}
+    write: () => {},
+    finish: () => {}
   }
 }
