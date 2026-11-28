@@ -31,7 +31,7 @@
     <!-- ui-button is a button (its own role and keys); Svelte cannot see inside it -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <ui-button variant="plain" hit onclick={oncancel} data-testid="skills-form-cancel">Cancel</ui-button>
-    <h1>{adding ? 'New skill' : form.skill?.name}</h1>
+    <h1>{adding ? 'New Skill' : form.skill?.name}</h1>
     <ui-button type="submit" variant="plain" hit disabled={!savable} data-testid="skills-form-save">{adding ? 'Add' : 'Save'}</ui-button>
   </header>
   <div class="fields">
@@ -100,7 +100,6 @@
           </ui-row>
           <ui-row
             heading="Remove this file"
-            action
             destructive
             tappable
             onpress={() => (form.files = form.files.filter((f) => f.key !== file.key))}
@@ -113,7 +112,7 @@
       </ui-section>
       {#if !adding}
         <ui-section footer="An agent given it before keeps its copy.">
-          <ui-row heading="Remove this skill" action destructive tappable onpress={onremove} data-testid="skills-form-remove"></ui-row>
+          <ui-row heading="Remove this skill" destructive tappable onpress={onremove} data-testid="skills-form-remove"></ui-row>
         </ui-section>
       {/if}
     </ui-list>
@@ -128,15 +127,20 @@
     padding-top: 28px;
     display: flex;
     flex-direction: column;
-    background: var(--bg-secondary);
   }
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
-    padding: 0 8px 6px;
+    padding: 0 8px 8px;
     border-bottom: 1px solid var(--separator);
+  }
+  .bar > ui-button:first-child {
+    justify-self: start;
+  }
+  .bar > ui-button:last-child {
+    justify-self: end;
   }
   h1 {
     margin: 0;
@@ -150,11 +154,12 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 16px 12px;
+    --list-inset: 16px;
+    padding: 16px 0;
   }
   ui-banner {
     display: block;
-    margin: 0 0 12px;
+    margin: 0 16px 12px;
   }
   ui-row {
     --row-gap: 12px;
@@ -176,6 +181,7 @@
   }
   ui-text-area::part(input) {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font: var(--type-footnote);
+    font-family: var(--font-mono);
   }
 </style>

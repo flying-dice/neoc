@@ -14,9 +14,9 @@
 </script>
 
 <section class="library" aria-label="Skills" data-testid="skills-library">
-  <header class="bar">
-    <h1>Skills</h1>
-  </header>
+  <div class="bar">
+    <h1 class="ios-large-title">Skills</h1>
+  </div>
   <div class="fields">
     <ui-list variant="inset" label="Skills">
       <ui-section footer="A skill is a SKILL.md and the files beside it. The apps that run agents give their agents the skills chosen there.">
@@ -37,24 +37,18 @@
     padding-top: 28px;
     display: flex;
     flex-direction: column;
-    background: var(--bg-secondary);
   }
   .bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 34px;
-    padding: 0 8px 6px 16px;
-    border-bottom: 1px solid var(--separator);
+    padding: 0 16px 8px;
   }
   h1 {
     margin: 0;
-    font: var(--type-headline);
   }
   .fields {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 16px 12px;
+    --list-inset: 16px;
+    padding: 8px 0 16px;
   }
 </style>
