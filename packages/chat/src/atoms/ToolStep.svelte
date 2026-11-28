@@ -159,7 +159,7 @@
     margin-top: 0;
   }
   .uri {
-    margin-inline-start: 6px;
+    margin-inline-start: 8px;
   }
   .said {
     margin: 0;
@@ -168,7 +168,7 @@
   }
   pre {
     margin: 4px 0 0;
-    padding: 6px 8px;
+    padding: 4px 8px;
     max-height: 240px;
     overflow: auto;
     white-space: pre-wrap;

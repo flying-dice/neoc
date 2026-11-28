@@ -59,8 +59,8 @@
   .user {
     align-self: flex-end;
     max-width: min(85%, 60ch);
-    padding: 8px 14px;
-    border-radius: 20px;
+    padding: 8px 16px;
+    border-radius: var(--radius-xl);
     background: var(--fill-tertiary);
     color: var(--label);
   }
@@ -85,14 +85,14 @@
   img {
     display: block;
     max-width: 100%;
-    border-radius: var(--radius-sm, 4px);
+    border-radius: var(--radius-sm);
   }
   pre {
     margin: 4px 0 0;
     max-height: 240px;
     overflow: auto;
     white-space: pre-wrap;
+    font: var(--type-footnote);
     font-family: var(--font-mono);
-    font-size: 12px;
   }
 </style>

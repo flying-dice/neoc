@@ -124,7 +124,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 8px 6px 16px;
+    padding: 0 8px 4px 16px;
     border-bottom: 1px solid var(--separator);
   }
   h1 {
@@ -138,7 +138,7 @@
   .with {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     margin: 0 0 0 auto;
     font: var(--type-footnote);
     color: var(--label-secondary);

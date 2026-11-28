@@ -53,7 +53,7 @@
 
 <style>
   .composer {
-    padding: 6px 12px 12px;
+    padding: 8px 12px 12px;
   }
   /* one pill holds the field and the button, as a chat app's composer does */
   .pill {

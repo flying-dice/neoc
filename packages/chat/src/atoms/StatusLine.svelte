@@ -22,14 +22,14 @@
   .status {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
     padding: 0 16px;
     font: var(--type-subheadline);
     color: var(--label-secondary);
   }
   .shown {
-    padding-block: 6px 2px;
+    padding-block: 4px 2px;
   }
   .text {
     min-width: 0;

@@ -56,11 +56,10 @@
   }
   .markdown :global(h1) {
     font: var(--type-title3);
-    font-weight: 700;
+    font-weight: 600;
   }
-  .markdown :global(h2) {
-    font: var(--type-headline);
-    font-size: calc(18px * var(--text-scale, 1));
+  .markdown :global(:is(strong, b)) {
+    font-weight: 600;
   }
   .markdown :global(:is(ul, ol)) {
     padding-inline-start: 22px;
@@ -90,9 +89,9 @@
     color: var(--label-secondary);
   }
   .markdown :global(code) {
+    font: var(--type-subheadline);
     font-family: var(--font-mono);
-    font-size: 0.88em;
-    padding: 1px 5px;
+    padding: 2px 4px;
     border-radius: var(--radius-xs);
     background: var(--fill-tertiary);
   }
@@ -108,7 +107,7 @@
     padding: 0;
     border-radius: 0;
     background: none;
-    font-size: inherit;
+    font: inherit;
     font-family: var(--font-mono);
     white-space: pre;
     overflow-wrap: normal;
@@ -121,7 +120,7 @@
     font: var(--type-subheadline);
   }
   .markdown :global(:is(th, td)) {
-    padding: 6px 10px;
+    padding: 8px 12px;
     border: 1px solid var(--separator);
     text-align: start;
     vertical-align: top;

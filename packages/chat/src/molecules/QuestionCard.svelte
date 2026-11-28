@@ -59,7 +59,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px 14px;
+    padding: 12px 16px;
     border-radius: var(--radius-xl);
     border: 1px solid var(--separator);
     background: var(--bg-secondary);
