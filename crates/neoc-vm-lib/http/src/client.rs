@@ -85,8 +85,8 @@ pub enum FetchError {
         /// The limit that was passed.
         max_redirects: u32,
     },
-    /// A body read whole is longer than `max_body`.
-    #[error("the response body is longer than max_body ({max_body} bytes)")]
+    /// A body read whole, or a line or a server-sent event being read from it, is longer than `max_body`.
+    #[error("the response body, or a line or event of it, is longer than max_body ({max_body} bytes)")]
     TooLarge {
         /// The limit that was passed, in bytes.
         max_body: u64,
@@ -213,10 +213,12 @@ impl Cancel {
 }
 
 /// The lines of `body`, without their `\n` or `\r\n`; the last one too when the body does not end with a newline.
-/// Bytes that are not UTF-8 become U+FFFD. Cancelled, the stream gives `cancelled` and ends, and the body goes.
+/// Bytes that are not UTF-8 become U+FFFD. Cancelled, the stream gives `cancelled` and ends, and the body goes; so
+/// does a line longer than `max_body` (`too_large`), which is not kept.
 pub(crate) fn lines(
     body: neoc_net::Body,
     cancel: Cancel,
+    max_body: u64,
 ) -> impl futures_util::Stream<Item = Result<String, FetchError>> + Send {
     struct State {
         body: Option<neoc_net::Body>,
@@ -231,7 +233,7 @@ pub(crate) fn lines(
     }
     futures_util::stream::unfold(
         State { body: Some(body), pending: Vec::new(), cancel },
-        |mut state| async move {
+        move |mut state| async move {
             loop {
                 if state.body.is_some() && state.cancel.is_cancelled() {
                     state.body = None;
@@ -251,6 +253,12 @@ pub(crate) fn lines(
                     let last = std::mem::take(&mut state.pending);
                     return Some((Ok(line(last)), state));
                 };
+                // no newline in what is kept: it is all one line, which a peer must not grow without end
+                if state.pending.len() as u64 > max_body {
+                    state.body = None;
+                    state.pending = Vec::new();
+                    return Some((Err(FetchError::TooLarge { max_body }), state));
+                }
                 let read = async { body.chunk().await.map_err(FetchError::from) };
                 match state.cancel.or_cancelled(read).await {
                     Ok(Some(chunk)) => state.pending.extend_from_slice(&chunk),
@@ -336,13 +344,17 @@ impl Source {
             ready: std::collections::VecDeque<sse::Item>,
             /// The last event id, across connections, as the HTML standard's `EventSource` keeps it.
             last_id: String,
+            /// A line or an event outgrew `max_body`: once what came before it is given, the stream ends so.
+            too_large: bool,
             ended: bool,
         }
+        let parser = sse::Parser::new(self.options.max_body);
         let state = State {
             source: self,
-            connection: Some(Connection { body: first, parser: sse::Parser::default() }),
+            connection: Some(Connection { body: first, parser }),
             ready: std::collections::VecDeque::new(),
             last_id: String::new(),
+            too_large: false,
             ended: false,
         };
         futures_util::stream::unfold(state, |mut state| async move {
@@ -362,11 +374,17 @@ impl Source {
                     }
                     continue;
                 }
+                if state.too_large {
+                    state.ended = true;
+                    let max_body = state.source.options.max_body;
+                    return Some((Err(FetchError::TooLarge { max_body }), state));
+                }
                 let Some(connection) = state.connection.as_mut() else {
                     tokio::time::sleep(state.source.retry).await;
                     match state.source.open(&state.last_id).await {
                         Ok(body) => {
-                            state.connection = Some(Connection { body, parser: sse::Parser::default() });
+                            let parser = sse::Parser::new(state.source.options.max_body);
+                            state.connection = Some(Connection { body, parser });
                         }
                         // the network: try again, as a browser does
                         Err(
@@ -385,6 +403,12 @@ impl Source {
                     Ok(Some(chunk)) => {
                         let items = connection.parser.feed(&chunk);
                         state.ready.extend(items);
+                        // a line or an event that outgrew the limit: the connection goes, and the stream ends (a
+                        // reconnection would only be sent the same)
+                        if connection.parser.too_large() {
+                            state.connection = None;
+                            state.too_large = true;
+                        }
                     }
                     // what was not ended by a blank line is not dispatched
                     Ok(None) => {

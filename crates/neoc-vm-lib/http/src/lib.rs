@@ -572,8 +572,8 @@ pub mod http {
         pub follow_redirects: bool,
         /// The most redirects to follow; one more is a `too_many_redirects` error.
         pub max_redirects: u32,
-        /// The most bytes `text()` and `json()` read; a longer body fails with `too_large`. `read()` and `lines()`
-        /// are not capped.
+        /// The most bytes `text()` and `json()` read, and the longest line `lines()` keeps; past it they fail with
+        /// `too_large`. `read()` is not capped.
         pub max_body: u64,
     }
 
@@ -618,7 +618,7 @@ pub mod http {
         pub follow_redirects: bool,
         /// The most redirects to follow.
         pub max_redirects: u32,
-        /// The most bytes the response's `text()` and `json()` read.
+        /// The most bytes the response's `text()` and `json()` read, and the longest line its `lines()` keeps.
         pub max_body: u64,
     }
 
@@ -657,6 +657,9 @@ pub mod http {
         pub reconnect: bool,
         /// Seconds to wait before a reconnection, until the server's `retry:` says otherwise.
         pub retry: f64,
+        /// The most bytes one event may take while it is read (its lines, until the blank line that ends it); a
+        /// longer one ends the stream with `too_large`.
+        pub max_body: u64,
     }
 
     impl Default for EventsOptions {
@@ -668,6 +671,7 @@ pub mod http {
                 idle_timeout: None,
                 reconnect: true,
                 retry: 3.0,
+                max_body: DEFAULT_MAX_BODY,
             }
         }
     }
@@ -770,7 +774,7 @@ pub mod http {
             None,
             true,
             DEFAULT_REDIRECTS,
-            DEFAULT_MAX_BODY,
+            opts.max_body,
         );
         let source = Source { url, options, reconnect: opts.reconnect, retry, spawn: spawner(&lua) };
         Ok(Stream::new(source.connect().await?))
@@ -983,14 +987,17 @@ pub mod http {
 
         /// The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
         /// `items()`. Bytes that are not UTF-8 become U+FFFD.
-        /// Cancelled, the stream gives `cancelled` and ends.
+        /// Cancelled, the stream gives `cancelled` and ends. A line longer than `max_body` ends it with `too_large`,
+        /// and the connection is closed.
         pub async fn lines(&self) -> Result<Stream<String, FetchError>, FetchError> {
             let mut state = self.head.body.lock().await;
             if self.head.cancel.is_cancelled() {
                 *state = BodyState::Done;
             }
             match std::mem::replace(&mut *state, BodyState::Lines) {
-                BodyState::Unread(body) => Ok(Stream::new(client::lines(body, self.head.cancel.clone()))),
+                BodyState::Unread(body) => {
+                    Ok(Stream::new(client::lines(body, self.head.cancel.clone(), self.head.max_body)))
+                }
                 BodyState::Lines => Err(being_read()),
                 BodyState::Done => {
                     *state = BodyState::Done;

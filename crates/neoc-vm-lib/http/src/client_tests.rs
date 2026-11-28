@@ -419,3 +419,65 @@ async fn an_event_the_connection_cut_short_does_not_move_the_last_event_id() {
     assert_eq!(got, "delivered=1 again=2");
     assert_eq!(seen.lock()[..2], ["None", r#"Some("1")"#]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_line_or_an_event_that_never_ends_stops_at_max_body_and_closes_the_connection() {
+    let (closed_tx, mut closed) = tokio::sync::mpsc::unbounded_channel();
+    // one complete line or event, then bytes that never end it, for as long as the client reads
+    let port = serve(move |req: Request<Incoming>| {
+        let guard = Dropped(closed_tx.clone());
+        async move {
+            let (content_type, first, more) = if req.uri().path() == "/events" {
+                ("text/event-stream", "data: a\n\n", "data: x\n")
+            } else {
+                ("text/plain", "ok\n", "xxxxxxxx")
+            };
+            let pieces = futures_util::StreamExt::chain(
+                futures_util::stream::iter([first]),
+                futures_util::stream::repeat(more),
+            );
+            let frames = futures_util::StreamExt::map(pieces, move |piece| {
+                let _ = &guard;
+                Ok::<_, Infallible>(Frame::data(Bytes::from_static(piece.as_bytes())))
+            });
+            Response::builder()
+                .header("content-type", content_type)
+                .body(StreamBody::new(frames).boxed())
+                .unwrap()
+        }
+    })
+    .await;
+    let lua = neoc_vm_core::make_engine().unwrap();
+    let got = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        run(
+            &lua,
+            port,
+            r#"
+            local res = assert(http.fetch(base .. "/lines", { max_body = 64 }))
+            local lines = assert(res:lines())
+            local line = assert(lines:next())
+            local _, too_long = lines:next()
+            local after, after_err = lines:next()
+            local events = assert(http.events(base .. "/events", { max_body = 64 }))
+            local event = assert(events:next())
+            local _, too_big = events:next()
+            local later, later_err = events:next()
+            return table.concat({
+                line, too_long.kind, tostring(after), tostring(after_err),
+                event.data, too_big.kind, tostring(later), tostring(later_err),
+            }, " ")
+            "#,
+        ),
+    )
+    .await
+    .expect("the reads end");
+    assert_eq!(got, "ok too_large nil nil a too_large nil nil");
+    // both connections were closed, not kept growing
+    for _ in 0..2 {
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(5), closed.recv())
+            .await
+            .expect("a connection closed");
+        assert_eq!(seen, Some("closed"));
+    }
+}

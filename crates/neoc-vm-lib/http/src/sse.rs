@@ -25,8 +25,12 @@ pub(crate) enum Item {
 }
 
 /// The parser's state across chunks: the line not ended yet, and the event being built.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Parser {
+    /// The most bytes the line not ended yet and the event being built may hold together.
+    limit: u64,
+    /// They held more: the parser stopped, and the stream is to end.
+    too_large: bool,
     pending: Vec<u8>,
     /// The last chunk ended with `\r`: a `\n` that starts the next one belongs to it.
     after_cr: bool,
@@ -39,8 +43,40 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
-    /// Feed the next piece of the stream; what its complete lines did.
-    pub(crate) fn feed(&mut self, mut chunk: &[u8]) -> Vec<Item> {
+    /// A parser whose line not ended yet and event being built hold at most `limit` bytes together.
+    pub(crate) fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            too_large: false,
+            pending: Vec::new(),
+            after_cr: false,
+            started: false,
+            event: String::new(),
+            data: String::new(),
+            id: None,
+        }
+    }
+
+    /// A line or an event outgrew the limit: nothing more is parsed, and what was kept is let go of.
+    pub(crate) fn too_large(&self) -> bool {
+        self.too_large
+    }
+
+    /// Feed the next piece of the stream; what its complete lines did. Past the limit, nothing.
+    pub(crate) fn feed(&mut self, chunk: &[u8]) -> Vec<Item> {
+        if self.too_large {
+            return Vec::new();
+        }
+        let items = self.parse(chunk);
+        let held =
+            self.pending.len() + self.event.len() + self.data.len() + self.id.as_ref().map_or(0, String::len);
+        if held as u64 > self.limit {
+            *self = Self { too_large: true, ..Self::new(self.limit) };
+        }
+        items
+    }
+
+    fn parse(&mut self, mut chunk: &[u8]) -> Vec<Item> {
         let mut items = Vec::new();
         if self.after_cr {
             self.after_cr = false;
@@ -135,7 +171,7 @@ mod tests {
 
     #[test]
     fn fields_take_effect_as_they_are_read() {
-        let mut parser = Parser::default();
+        let mut parser = Parser::new(1 << 20);
         let items =
             parser.feed(b"retry: 50\nid: 1\nevent: greet\ndata: a\ndata: b\n\nid\n\nretry: x\nretry: 7\n\n");
         assert_eq!(
@@ -154,7 +190,7 @@ mod tests {
 
     #[test]
     fn every_line_end_works_across_chunks_and_an_unended_event_is_not_dispatched() {
-        let mut parser = Parser::default();
+        let mut parser = Parser::new(1 << 20);
         let mut items = parser.feed("\u{feff}data: one\r".as_bytes());
         items.extend(parser.feed(b"\n\r\ndata:two\r\r: a comment\ndata"));
         items.extend(parser.feed(b"\n\ndata: cut"));
@@ -163,14 +199,31 @@ mod tests {
 
     #[test]
     fn an_id_in_a_block_the_stream_never_ended_is_not_committed() {
-        let mut parser = Parser::default();
+        let mut parser = Parser::new(1 << 20);
         let items = parser.feed(b"id: 1\ndata: delivered\n\nid: 2\ndata: partial\n");
         assert_eq!(items, [Item::Id("1".to_owned()), event("message", "delivered")]);
     }
 
     #[test]
+    fn a_line_or_an_event_past_the_limit_stops_the_parser() {
+        // a line that never ends
+        let mut parser = Parser::new(8);
+        assert_eq!(parser.feed(b"data: 12"), []);
+        assert!(!parser.too_large());
+        assert_eq!(parser.feed(b"3"), []);
+        assert!(parser.too_large());
+        assert_eq!(parser.feed(b"\n\n"), [], "nothing more is parsed");
+        // an event that never ends, line by short line
+        let mut parser = Parser::new(8);
+        assert_eq!(parser.feed(b"data: a\n\ndata: 1\ndata: 2\ndata: 3\n"), [event("message", "a")]);
+        assert!(!parser.too_large());
+        parser.feed(b"data: 4\ndata: 5\n");
+        assert!(parser.too_large());
+    }
+
+    #[test]
     fn an_id_with_a_nul_is_ignored_and_a_blank_line_without_data_dispatches_nothing() {
-        let mut parser = Parser::default();
+        let mut parser = Parser::new(1 << 20);
         assert_eq!(parser.feed(b"id: a\0b\nevent: x\n\ndata\n\n"), [event("message", "")]);
     }
 }

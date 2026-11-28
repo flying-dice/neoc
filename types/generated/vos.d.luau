@@ -1610,6 +1610,9 @@ export type lib_http_EventsOptions = {
 	reconnect: boolean?,
 	--- Seconds to wait before a reconnection, until the server's `retry:` says otherwise. Default: `3.0`.
 	retry: number?,
+	--- The most bytes one event may take while it is read (its lines, until the blank line that ends it); a
+	--- longer one ends the stream with `too_large`. Default: `67108864`.
+	max_body: number?,
 }
 
 --- The kinds of `lib_http_FetchError`.
@@ -1631,7 +1634,7 @@ export type lib_http_FetchError =
 	| { kind: "timed_out", limit: lib_http_TimeLimit, reason: string, message: string, op: string }
 	--- More redirects than `max_redirects` allows.
 	| { kind: "too_many_redirects", max_redirects: number, message: string, op: string }
-	--- A body read whole is longer than `max_body`.
+	--- A body read whole, or a line or a server-sent event being read from it, is longer than `max_body`.
 	| { kind: "too_large", max_body: number, message: string, op: string }
 	--- The connection ended or failed after it was made, before the response was complete.
 	| { kind: "connection_lost", reason: string, message: string, op: string }
@@ -1668,8 +1671,8 @@ export type lib_http_FetchOptions = {
 	follow_redirects: boolean?,
 	--- The most redirects to follow; one more is a `too_many_redirects` error. Default: `16`.
 	max_redirects: number?,
-	--- The most bytes `text()` and `json()` read; a longer body fails with `too_large`. `read()` and `lines()`
-	--- are not capped. Default: `67108864`.
+	--- The most bytes `text()` and `json()` read, and the longest line `lines()` keeps; past it they fail with
+	--- `too_large`. `read()` is not capped. Default: `67108864`.
 	max_body: number?,
 }
 
@@ -1709,7 +1712,7 @@ export type lib_http_RequestOptions = {
 	follow_redirects: boolean?,
 	--- The most redirects to follow. Default: `16`.
 	max_redirects: number?,
-	--- The most bytes the response's `text()` and `json()` read. Default: `67108864`.
+	--- The most bytes the response's `text()` and `json()` read, and the longest line its `lines()` keeps. Default: `67108864`.
 	max_body: number?,
 }
 
@@ -1745,7 +1748,8 @@ declare extern type lib_http_Response with
 	json: (self: lib_http_Response) -> (lib_json_Node?, lib_http_FetchError?)
 	--- The rest of the body as lines, without their `\n` or `\r\n`, read as they arrive: `next()` or
 	--- `items()`. Bytes that are not UTF-8 become U+FFFD.
-	--- Cancelled, the stream gives `cancelled` and ends.
+	--- Cancelled, the stream gives `cancelled` and ends. A line longer than `max_body` ends it with `too_large`,
+	--- and the connection is closed.
 	---
 	--- Yields the calling coroutine while it waits.
 	lines: (self: lib_http_Response) -> (mlua_Stream<string, lib_http_FetchError>?, lib_http_FetchError?)
